@@ -126,17 +126,27 @@ public final class ProjectSession: ObservableObject {
     }
 
     /// Resolve the durable active marker into the sole mutable in-memory project value.
-    public func bootstrap() async throws {
+    public func bootstrap(initialProject: (() async throws -> WritingProjectID?)? = nil) async throws {
         guard phase != .suspended, !isTransitioning else {
             throw ProjectSessionError.transitionInProgress
         }
+        isTransitioning = true
+        defer { finishTransition() }
         phase = .loading
         lastErrorMessage = nil
         do {
-            let project = try await preparedForAdoption(store.activeProject())
+            let existing = try await store.activeProject()
+            let initialID = existing == nil ? try await initialProject?() : nil
+            let initial: WritingProject?
+            if let initialID { initial = try await store.load(id: initialID) }
+            else { initial = existing }
+            let candidate = try await preparedForAdoption(initial)
             let catalog: ProjectAssetCatalog?
-            if let project { catalog = try await store.assetCatalog(id: project.id) }
+            if let candidate { catalog = try await store.assetCatalog(id: candidate.id) }
             else { catalog = nil }
+            let project: WritingProject?
+            if let initialID { project = try await store.activateAndLoad(id: initialID, expected: candidate) }
+            else { project = candidate }
             assetCatalog = catalog
             adopt(project)
             hasLoadedActiveProject = true
@@ -152,12 +162,18 @@ public final class ProjectSession: ObservableObject {
 
     /// Switch only after ProjectStore has verified and activated the target.
     public func activateProject(id: WritingProjectID) async throws {
+        try await activateProject(preparing: { id })
+    }
+
+    /// Fence editing and termination for the entire import, including preparation.
+    public func activateProject(preparing prepare: () async throws -> WritingProjectID) async throws {
         try beginTransition()
         defer { finishTransition() }
         cancelAutosave()
         do {
             try await flush()
             phase = .loading
+            let id = try await prepare()
             let expected = prepareProject == nil ? nil : try await preparedForAdoption(store.load(id: id))
             let catalog = try await store.assetCatalog(id: id)
             let project = try await store.activateAndLoad(id: id, expected: expected)

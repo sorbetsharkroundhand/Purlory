@@ -25,10 +25,15 @@ public final class ImportProjectCoordinator {
 
     @discardableResult
     public func importProject(from sourceDirectory: URL) async throws -> WritingProjectID {
-        let id = try await store.prepareProjectImport(from: sourceDirectory)
-        try await cancellationCheckpoint()
-        try await session.activateProject(id: id)
-        return id
+        var imported: WritingProjectID?
+        try await session.activateProject(preparing: {
+            let id = try await self.store.prepareProjectImport(from: sourceDirectory)
+            try await self.cancellationCheckpoint()
+            imported = id
+            return id
+        })
+        guard let imported else { throw ProjectStoreError.invalidManifest }
+        return imported
     }
 
     @discardableResult
@@ -39,7 +44,8 @@ public final class ImportProjectCoordinator {
         if Self.containsProjectManifest(in: directory) {
             return try await importProject(from: directory)
         }
-        return try await importLegacy(from: directory.appendingPathComponent("entries.json"),
+        guard let source = try LegacyProjectMigrator.source(in: directory) else { throw LegacyStartupError.noLegacyLibrary }
+        return try await importLegacy(from: source,
             mode: legacyMode, title: "Imported Project").projectID
     }
 
@@ -55,12 +61,17 @@ public final class ImportProjectCoordinator {
         mode: WritingMode,
         title: String
     ) async throws -> LegacyMigrationResult {
-        let result = try await store.prepareLegacyMigration(
-            from: sourceURL,
-            mode: mode,
-            title: title)
-        try await cancellationCheckpoint()
-        try await session.activateProject(id: result.projectID)
+        var prepared: LegacyMigrationResult?
+        try await session.activateProject(preparing: {
+            let result = try await self.store.prepareLegacyMigration(from: sourceURL, mode: mode, title: title)
+            try await self.cancellationCheckpoint()
+            prepared = result
+            return result.projectID
+        })
+        guard let result = prepared else { throw ProjectStoreError.invalidLegacy }
+        if !result.reusedExistingProject, let selection = result.selectedDocumentID {
+            session.selectDocument(selection)
+        }
         return result
     }
 }

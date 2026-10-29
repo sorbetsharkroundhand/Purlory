@@ -5,6 +5,7 @@ public struct LegacyMigrationResult: Equatable, Sendable {
     public var migratedDocumentCount: Int
     public var sourceFingerprint: String
     public var reusedExistingProject: Bool
+    public var selectedDocumentID: WritingDocumentID? = nil
 }
 
 struct MigrationReceipt: Codable {
@@ -16,11 +17,14 @@ struct MigrationReceipt: Codable {
 enum LegacyProjectMigrator {
     struct Snapshot {
         var sourceData: Data
+        var archiveData: Data
         var entries: [JournalEntry]
         var assets: [String: Data]
+        var activeID: UUID?
+        var journalSource: Data?
     }
 
-    private struct LegacyArchive: Decodable {
+    private struct LegacyArchive: Codable {
         var entries: [JournalEntry]
         var activeID: UUID?
         var folders: [JournalFolder]?
@@ -51,7 +55,23 @@ enum LegacyProjectMigrator {
         let source = try Data(contentsOf: sourceURL)
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        let archive = try decoder.decode(LegacyArchive.self, from: source)
+        let archive: LegacyArchive
+        let archiveData: Data
+        let isJournal = sourceURL.pathExtension.lowercased() == "md"
+        if isJournal {
+            guard let body = String(data: source, encoding: .utf8) else { throw ProjectStoreError.invalidLegacy }
+            // Stable identity makes retries of the same old single-document archive idempotent.
+            let hex = Array(ProjectDigest.hash(source).prefix(32))
+            let uuid = [String(hex[0..<8]), String(hex[8..<12]), String(hex[12..<16]), String(hex[16..<20]), String(hex[20..<32])].joined(separator: "-")
+            guard let id = UUID(uuidString: uuid) else { throw ProjectStoreError.invalidLegacy }
+            archive = LegacyArchive(entries: [JournalEntry(id: id, title: "Journal", createdAt: Date(timeIntervalSince1970: 0), body: body)],
+                activeID: id, folders: [], expandedFolderIDs: [])
+            let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601; encoder.outputFormatting = [.sortedKeys]
+            archiveData = try encoder.encode(archive)
+        } else {
+            archive = try decoder.decode(LegacyArchive.self, from: source)
+            archiveData = source
+        }
         guard Set(archive.entries.map(\.id)).count == archive.entries.count else {
             throw ProjectStoreError.invalidLegacy
         }
@@ -61,7 +81,41 @@ enum LegacyProjectMigrator {
         if FileManager.default.fileExists(atPath: images.path) {
             try collectAssets(relative: "images", under: base, into: &assets)
         }
-        return Snapshot(sourceData: source, entries: archive.entries, assets: assets)
+        return Snapshot(sourceData: source, archiveData: archiveData, entries: orderedEntries(archive.entries),
+            assets: assets, activeID: archive.activeID, journalSource: isJournal ? source : nil)
+    }
+
+    /// Only the configured root is inspected. Recovery archives require explicit selection.
+    static func source(in directory: URL) throws -> URL? {
+        try ProjectPaths.rejectSymlink(directory)
+        let entries = try ProjectPaths.checked("entries.json", under: directory)
+        if FileManager.default.fileExists(atPath: entries.path) { return entries }
+        let names: [String]
+        do { names = try FileManager.default.contentsOfDirectory(atPath: directory.path) }
+        catch let error as CocoaError where error.code == .fileReadNoSuchFile { return nil }
+        if names.contains(where: { $0.hasPrefix("entries-recovered-") || $0.hasPrefix("entries.corrupt-") }) {
+            throw LegacyStartupError.recoverySelectionRequired
+        }
+        let journal = try ProjectPaths.checked("journal.md", under: directory)
+        return FileManager.default.fileExists(atPath: journal.path) ? journal : nil
+    }
+
+    /// Preserve each folder's manual order, or the historical newest-first fallback.
+    private static func orderedEntries(_ entries: [JournalEntry]) -> [JournalEntry] {
+        var ranks: [Int: Double] = [:]
+        for group in Dictionary(grouping: entries.indices, by: { entries[$0].folderID }).values {
+            if group.contains(where: { entries[$0].sortOrder == nil }) {
+                let ordered = group.sorted {
+                    entries[$0].createdAt == entries[$1].createdAt ? $0 < $1 : entries[$0].createdAt > entries[$1].createdAt
+                }
+                for (rank, index) in ordered.enumerated() { ranks[index] = Double(rank) }
+            } else {
+                for index in group { ranks[index] = entries[index].sortOrder }
+            }
+        }
+        return entries.indices.sorted {
+            ranks[$0] == ranks[$1] ? $0 < $1 : (ranks[$0] ?? 0) < (ranks[$1] ?? 0)
+        }.map { entries[$0] }
     }
 
     private static func collectAssets(relative: String, under base: URL, into assets: inout [String: Data]) throws {
@@ -101,6 +155,12 @@ enum LegacyProjectMigrator {
 }
 
 extension ProjectStore {
+    func prepareLocalLegacyProject(in directory: URL) throws -> LegacyMigrationResult? {
+        guard let source = try LegacyProjectMigrator.source(in: directory) else { return nil }
+        let snapshot = try LegacyProjectMigrator.read(from: source)
+        let mode: WritingMode = snapshot.entries.contains { $0.resolvedKind == .novel } ? .fiction : .general
+        return try prepareLegacyMigration(from: source, mode: mode, title: "Legacy Library")
+    }
     /// Recover metadata from our verified copy, never from the live legacy store.
     func prepareDocumentNavigation(_ project: WritingProject) throws -> WritingProject {
         guard project.userData[ProjectNavigation.key] == nil, let source = try legacySource(id: project.id) else { return project }
@@ -139,11 +199,7 @@ extension ProjectStore {
                     let manifest = try readManifest(id: receipt.projectID)
                     _ = try materialize(manifest)
                     if receipt.requestFingerprint == requestHash,
-                        manifest.legacySource?.contentHash == sourceHash,
-                        manifest.assets.count == snapshot.assets.count,
-                        manifest.assets.allSatisfy({ asset in
-                            snapshot.assets[asset.reference].map { ProjectDigest.hash($0) == asset.file.contentHash } == true
-                        }) {
+                        manifest.legacySource?.contentHash == ProjectDigest.hash(snapshot.archiveData) {
                         reusedID = receipt.projectID
                     }
                 } catch is CancellationError {
@@ -156,8 +212,9 @@ extension ProjectStore {
             if reusedID == nil {
                 var project = WritingProject(id: id, title: title, mode: mode,
                     documents: snapshot.entries.map(LegacyEntryAdapter.document(from:)))
-                try LegacyProjectMigrator.restoreNavigation(from: snapshot.sourceData, into: &project)
-                try saveUnlocked(project, importedAssets: snapshot.assets, source: snapshot.sourceData)
+                try LegacyProjectMigrator.restoreNavigation(from: snapshot.archiveData, into: &project)
+                if let journal = snapshot.journalSource { project.userData["legacy-journal.md"] = journal }
+                try saveUnlocked(project, importedAssets: snapshot.assets, source: snapshot.archiveData)
                 let verifiedProject = try loadUnlocked(id: id)
                 guard verifiedProject == project,
                     zip(verifiedProject.documents, project.documents).allSatisfy({
@@ -174,7 +231,8 @@ extension ProjectStore {
             try Task.checkCancellation()
             try files.writeAtomically(JSONEncoder().encode(receipt), to: receiptURL)
             return LegacyMigrationResult(projectID: id, migratedDocumentCount: snapshot.entries.count,
-                sourceFingerprint: sourceHash, reusedExistingProject: reusedID != nil)
+                sourceFingerprint: sourceHash, reusedExistingProject: reusedID != nil,
+                selectedDocumentID: snapshot.activeID.map(WritingDocumentID.init(rawValue:)))
         }
     }
 }
