@@ -108,7 +108,7 @@ public final class ModelDownloadManager: ObservableObject {
         case .failed(let reason): .failed(reason)
         }
     }
-    nonisolated static func transfer(_ manifest: ModelInstallManifest, _ file: ModelInstallManifest.File, _ destination: URL) async throws {
+    package nonisolated static func transfer(_ manifest: ModelInstallManifest, _ file: ModelInstallManifest.File, _ destination: URL) async throws {
         if let reason = currentStartBlock() { throw TransferBlocked(reason: reason) }
         let parts = manifest.id.split(separator: "/")
         let repo = Repo.ID(namespace: String(parts[0]), name: String(parts[1]))

@@ -18,7 +18,7 @@ public struct PurloryStorageLocation: Sendable {
     }()
 
     public var projectsDirectory: URL { rootDirectory.appendingPathComponent("Projects", isDirectory: true) }
-    var knowledgeDirectory: URL { rootDirectory.appendingPathComponent("knowledge", isDirectory: true) }
-    var metricsFileURL: URL { rootDirectory.appendingPathComponent("metrics.jsonl") }
-    var stopwordsFileURL: URL { rootDirectory.appendingPathComponent("character-stopwords.txt") }
+    package var knowledgeDirectory: URL { rootDirectory.appendingPathComponent("knowledge", isDirectory: true) }
+    package var metricsFileURL: URL { rootDirectory.appendingPathComponent("metrics.jsonl") }
+    package var stopwordsFileURL: URL { rootDirectory.appendingPathComponent("character-stopwords.txt") }
 }

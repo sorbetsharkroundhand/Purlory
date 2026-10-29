@@ -27,6 +27,14 @@ let package = Package(
     targets: [
         .target(name: "PurloryFoundation"),
         .target(name: "PurloryStorage", dependencies: ["PurloryFoundation"]),
+        .target(name: "PurloryInference", dependencies: [
+                "PurloryFoundation",
+                .product(name: "MLXLLM", package: "mlx-swift-lm"),
+                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
+                .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "HuggingFace", package: "swift-huggingface"),
+                .product(name: "Tokenizers", package: "swift-transformers"),
+        ]),
         // Prepared from the checksum-pinned manifest before package loading/building.
         .binaryTarget(name: "Kiwi", path: "Packages/PurloryKoreanBackend/Artifacts/KiwiStatic.xcframework"),
         .target(name: "CKiwiBridge", dependencies: ["Kiwi"],
@@ -44,13 +52,8 @@ let package = Package(
         .target(
             name: "PurloryCore",
             dependencies: [
-                "PurloryFoundation", "PurloryStorage",
+                "PurloryFoundation", "PurloryStorage", "PurloryInference",
                 "PurloryKoreanBackend",
-                .product(name: "MLXLLM", package: "mlx-swift-lm"),
-                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
-                .product(name: "MLX", package: "mlx-swift"),
-                .product(name: "HuggingFace", package: "swift-huggingface"),
-                .product(name: "Tokenizers", package: "swift-transformers"),
                 .product(name: "SwiftMath", package: "SwiftMath"),
             ],
             path: "Sources/PurloryCore",
@@ -66,14 +69,14 @@ let package = Package(
         // Mac에서: swift run -c release PurloryBench [--model <hf-id>] …
         .executableTarget(
             name: "PurloryBench",
-            dependencies: ["PurloryCore"],
+            dependencies: ["PurloryCore", "PurloryInference"],
             path: "Sources/PurloryBench"
         ),
         // Deterministic editor/storage and pinned offline NLP regressions.
         // No Ghost model or Metal execution is required.
         .testTarget(
             name: "PurloryCoreTests",
-            dependencies: ["PurloryCore", "PurloryKoreanBackend", "PurloryFoundation", "PurloryStorage"],
+            dependencies: ["PurloryCore", "PurloryKoreanBackend", "PurloryFoundation", "PurloryStorage", "PurloryInference"],
             path: "Tests/PurloryCoreTests",
             resources: [.copy("Fixtures/KoreanDiagnostics"), .copy("Fixtures/NativeWorkspaceHTML")]
         ),

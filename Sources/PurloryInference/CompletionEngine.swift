@@ -369,32 +369,14 @@ public actor CompletionEngine {
         }
     }
 
-    /// 구 API 호환(PurloryBench 단발 측정 등) — 조립기 없이 prefix만으로 생성.
-    /// 앱 경로는 컨트롤러가 조립기를 거쳐 `complete(prompt:)`를 쓴다.
-    public func complete(
-        prefix: String,
-        parameters: CompletionParameters,
-        onLoadProgress: (@Sendable (Double) -> Void)? = nil
-    ) async throws -> Completion {
-        try await complete(
-            prompt: ContextAssembler.assemble(
-                prefix: prefix, document: nil, style: parameters.promptStyle),
-            parameters: parameters,
-            onLoadProgress: onLoadProgress
-        )
-    }
-
     /// PurloryBench 전용: 내부 token loop가 만들어진 정확한 시점을 알려, 콜드
     /// 프리필 도중이 아니라 생성 진행 중 취소를 재현한다 (PLAN §12).
-    @_spi(Benchmark)
-    public func completeForCancellationStress(
-        prefix: String,
+    package func completeForCancellationStress(
+        prompt: AssembledPrompt,
         parameters: CompletionParameters,
         stopAfterFirstChunk: Bool = false,
         onGenerationStarted: @escaping @Sendable () -> Void
     ) async throws -> Completion {
-        let prompt = ContextAssembler.assemble(
-            prefix: prefix, document: nil, style: parameters.promptStyle)
         let cache = promptCache
         return try await withLoadedContainer(
             modelID: parameters.modelID, onProgress: nil
@@ -528,10 +510,10 @@ public actor CompletionEngine {
         }
     }
 
-    enum ReadyInstructionError: Error, Equatable { case modelUnavailable, promptTooLong, unsupportedResponse }
+    package enum ReadyInstructionError: Error, Equatable { case modelUnavailable, promptTooLong, unsupportedResponse }
 
     /// Optional explicit answers never trigger model setup and use fresh instruction state.
-    func streamInstructionIfReady(system: String, user: String, parameters: CompletionParameters,
+    package func streamInstructionIfReady(system: String, user: String, parameters: CompletionParameters,
                                   onChunk: @escaping @Sendable (String) throws -> Void) async throws {
         guard let loaded = container, !parameters.modelID.isEmpty, loadedModelID == parameters.modelID,
               await modelLifetime.reserveReadyOperation(modelID: parameters.modelID) else { throw ReadyInstructionError.modelUnavailable }

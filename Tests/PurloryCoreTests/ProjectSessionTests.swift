@@ -1,3 +1,4 @@
+@_spi(Benchmark) @testable import PurloryInference
 @testable import PurloryStorage
 import Combine
 import AppKit

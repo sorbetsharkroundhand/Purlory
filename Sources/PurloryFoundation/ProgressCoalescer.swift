@@ -6,7 +6,7 @@ import Foundation
 ///
 /// 시계는 주입한다 — 테스트가 실제 대기 없이 경과를 만든다. 잠금으로 여러
 /// 스레드의 틱에도 판정이 한 번만 나온다.
-final class ProgressCoalescer: @unchecked Sendable {
+package final class ProgressCoalescer: @unchecked Sendable {
     private let lock = NSLock()
     private var lastAt: ContinuousClock.Instant?
     private var lastFraction: Double = -1
@@ -14,7 +14,7 @@ final class ProgressCoalescer: @unchecked Sendable {
     private let now: @Sendable () -> ContinuousClock.Instant
 
     /// 최종 값(1.0)은 항상 통과 — 마지막 상태가 잘리지 않게.
-    init(
+    package init(
         minInterval: Duration = .milliseconds(250),
         now: @escaping @Sendable () -> ContinuousClock.Instant = { ContinuousClock.now }
     ) {
@@ -25,7 +25,7 @@ final class ProgressCoalescer: @unchecked Sendable {
     /// 이 틱을 상태 반영할 만한가 — 첫 틱·최종 틱은 항상, 그 외엔 "마지막
     /// 발행"으로부터 최소 간격이 지났을 때만 참. 차단된 틱은 기준 시각을
     /// 미루지 않는다 — 그렇지 않으면 연속 틱이 간격을 영영 못 채운다.
-    func shouldEmit(_ fraction: Double) -> Bool {
+    package func shouldEmit(_ fraction: Double) -> Bool {
         lock.lock()
         defer { lock.unlock() }
         let current = now()

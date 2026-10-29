@@ -1,3 +1,4 @@
+@_spi(Benchmark) import PurloryInference
 import Foundation
 import CryptoKit
 import Darwin

@@ -1,3 +1,4 @@
+@_spi(Benchmark) @testable import PurloryInference
 import Combine
 import XCTest
 @testable import PurloryCore

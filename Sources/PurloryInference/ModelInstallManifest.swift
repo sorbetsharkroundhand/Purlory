@@ -33,9 +33,9 @@ public struct ModelInstallManifest: Codable, Equatable, Sendable {
     }
 }
 
-enum ModelInstallError: LocalizedError {
+package enum ModelInstallError: LocalizedError {
     case metadata, integrity, busy
-    var errorDescription: String? {
+    package var errorDescription: String? {
         switch self {
         case .metadata: "이 모델의 고정된 설치 정보가 없습니다. 다른 모델을 선택하세요. 원고 편집은 계속할 수 있습니다."
         case .integrity: "모델 파일 검증에 실패했습니다. 다시 내려받으세요. 원고 편집은 계속할 수 있습니다."

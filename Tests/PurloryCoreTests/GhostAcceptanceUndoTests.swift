@@ -1,3 +1,4 @@
+@testable import PurloryInference
 import AppKit
 import XCTest
 @testable import PurloryCore

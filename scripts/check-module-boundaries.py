@@ -14,9 +14,10 @@ def dependencies(name):
                 result.add(dependency[kind][0])
     return result
 
-required = {'PurloryFoundation', 'PurloryStorage'}
+required = {'PurloryFoundation', 'PurloryStorage', 'PurloryInference'}
 missing = required - targets.keys()
 assert not missing, f'Missing required boundary targets: {sorted(missing)}'
 assert not dependencies('PurloryFoundation'), 'Foundation must not depend on UI, domains or packages'
 assert dependencies('PurloryStorage') == {'PurloryFoundation'}, 'Storage must depend only on generic Foundation'
+assert not (dependencies('PurloryInference') & {'PurloryCore', 'PurloryStorage', 'PurloryIntelligence', 'PurloryWorkspaceUI'}), 'Inference must not depend on domain/UI composition'
 print('Generic Foundation/Storage module boundaries verified')
