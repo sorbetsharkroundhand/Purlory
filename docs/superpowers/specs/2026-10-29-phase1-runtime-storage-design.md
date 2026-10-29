@@ -1,6 +1,8 @@
 # Phase 1: Project-only runtime and incremental CAS saves
 
-Status: approved by the owner on 2026-10-29; implementation and verification in progress.
+Status: approved, implemented and locally verified on 2026-10-29. See
+[verification evidence](../../release/phase1-runtime-storage-verification-2026-10-29.md)
+for results and the remaining owner/release checks.
 
 ## Intent and scope
 
