@@ -1,3 +1,4 @@
+@testable import PurloryStorage
 import Foundation
 @testable import PurloryCore
 

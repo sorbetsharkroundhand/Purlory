@@ -3,8 +3,8 @@ import Foundation
 
 /// 디스크 작업은 actor 안에서 수행한다. 같은 루트의 다른 인스턴스/프로세스도 잠근다 (PLAN §5.2).
 public actor ProjectStore {
-    let root: URL
-    let files: any ProjectFileSystem
+    package let root: URL
+    package let files: any ProjectFileSystem
     var saveBaseline: ProjectSaveBaseline?
 
     public init(root: URL, fileSystem: any ProjectFileSystem = LocalProjectFileSystem()) {
@@ -45,7 +45,7 @@ public actor ProjectStore {
     }
 
     /// Another process may establish an active project while startup prepares a copy.
-    func activateInitialProject(id: WritingProjectID, expected: WritingProject?) throws -> WritingProject {
+    package func activateInitialProject(id: WritingProjectID, expected: WritingProject?) throws -> WritingProject {
         try withStoreLock {
             guard !files.fileExists(at: try rootURL("active-project.json")) else {
                 throw ProjectStoreError.changedDuringSave
@@ -159,7 +159,7 @@ public actor ProjectStore {
         }
     }
 
-    func withStoreLock<T>(_ operation: () throws -> T) throws -> T {
+    package func withStoreLock<T>(_ operation: () throws -> T) throws -> T {
         try Task.checkCancellation()
         try ProjectPaths.rejectSymlink(root)
         try files.createDirectory(at: root)
@@ -175,13 +175,13 @@ public actor ProjectStore {
         return try operation()
     }
 
-    func rootURL(_ path: String) throws -> URL { try ProjectPaths.checked(path, under: root) }
+    package func rootURL(_ path: String) throws -> URL { try ProjectPaths.checked(path, under: root) }
 
-    func projectURL(_ id: WritingProjectID, _ path: String) throws -> URL {
+    package func projectURL(_ id: WritingProjectID, _ path: String) throws -> URL {
         try rootURL("\(id.rawValue.uuidString)/\(path)")
     }
 
-    func readManifest(id: WritingProjectID, name: String = "project.json") throws -> ProjectManifest {
+    package func readManifest(id: WritingProjectID, name: String = "project.json") throws -> ProjectManifest {
         let manifest = try JSONDecoder().decode(ProjectManifest.self, from: files.read(projectURL(id, name)))
         guard ProjectManifest.supportsSchema(manifest.schemaVersion) else {
             throw ProjectStoreError.unsupportedSchema(manifest.schemaVersion)
@@ -215,7 +215,7 @@ public actor ProjectStore {
         return manifest
     }
 
-    func verified(_ record: ProjectFileRecord, in id: WritingProjectID) throws -> Data {
+    package func verified(_ record: ProjectFileRecord, in id: WritingProjectID) throws -> Data {
         guard ProjectDigest.isValid(record.contentHash) else { throw ProjectStoreError.invalidManifest }
         let data = try files.read(projectURL(id, record.relativePath))
         guard ProjectDigest.hash(data) == record.contentHash else {
@@ -224,11 +224,11 @@ public actor ProjectStore {
         return data
     }
 
-    func materialize(_ manifest: ProjectManifest) throws -> WritingProject {
+    package func materialize(_ manifest: ProjectManifest) throws -> WritingProject {
         try materialize(manifest, read: { try verified($0, in: manifest.id) })
     }
 
-    func materialize(_ manifest: ProjectManifest, read: (ProjectFileRecord) throws -> Data) throws -> WritingProject {
+    package func materialize(_ manifest: ProjectManifest, read: (ProjectFileRecord) throws -> Data) throws -> WritingProject {
         var documents: [WritingDocument] = []
         for record in manifest.documents {
             try Task.checkCancellation()
@@ -257,17 +257,17 @@ public actor ProjectStore {
             userData: userData)
     }
 
-    func loadUnlocked(id: WritingProjectID) throws -> WritingProject { try materialize(readManifest(id: id)) }
+    package func loadUnlocked(id: WritingProjectID) throws -> WritingProject { try materialize(readManifest(id: id)) }
 
-    func documentPath(id: WritingDocumentID, kind: WritingDocument.Kind, hash: String) -> String {
+    package func documentPath(id: WritingDocumentID, kind: WritingDocument.Kind, hash: String) -> String {
         "\(kind == .note ? "Notes" : "Documents")/\(id.rawValue.uuidString)/\(hash).md"
     }
 
-    func intelligencePath(_ documentID: WritingDocumentID) -> String {
+    package func intelligencePath(_ documentID: WritingDocumentID) -> String {
         "Intelligence/\(documentID.rawValue.uuidString).knowledge.json"
     }
 
-    func userDataPath(key: String, hash: String) throws -> String {
+    package func userDataPath(key: String, hash: String) throws -> String {
         try ProjectUserDataKey.validate(key)
         guard ProjectDigest.isValid(hash) else { throw ProjectStoreError.invalidManifest }
         return "UserData/records/\(ProjectDigest.hash(Data(key.utf8)))/\(hash).data"
@@ -280,7 +280,7 @@ public actor ProjectStore {
         }
     }
 
-    func writeImmutable(_ data: Data, path: String, id: WritingProjectID) throws {
+    package func writeImmutable(_ data: Data, path: String, id: WritingProjectID) throws {
         try Task.checkCancellation()
         let url = try projectURL(id, path)
         if files.fileExists(at: url) {
@@ -292,7 +292,7 @@ public actor ProjectStore {
         guard try files.read(url) == data else { throw ProjectStoreError.damagedFile(path) }
     }
 
-    func saveUnlocked(_ project: WritingProject, importedAssets: [String: Data] = [:], source: Data? = nil) throws {
+    package func saveUnlocked(_ project: WritingProject, importedAssets: [String: Data] = [:], source: Data? = nil) throws {
         let baseline = saveBaseline
         // Any throw leaves no reusable baseline, including a failed manifest commit.
         saveBaseline = nil
@@ -384,7 +384,7 @@ public actor ProjectStore {
             versions: versions.filter { livePaths.contains($0.key) })
     }
 
-    func activateUnlocked(id: WritingProjectID, expected: WritingProject? = nil) throws -> WritingProject {
+    package func activateUnlocked(id: WritingProjectID, expected: WritingProject? = nil) throws -> WritingProject {
         let project = try loadUnlocked(id: id)
         if let expected, project != expected { throw ProjectStoreError.changedDuringSave }
         let data = try JSONEncoder().encode(id)

@@ -4,7 +4,7 @@ import Foundation
 public struct ProjectBackupPreview: Sendable {
     public let project: WritingProject
     public let assetCount: Int
-    let manifestFingerprint: String
+    package let manifestFingerprint: String
 }
 
 extension ProjectStore {

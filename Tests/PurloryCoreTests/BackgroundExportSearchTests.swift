@@ -1,3 +1,4 @@
+@testable import PurloryStorage
 import XCTest
 
 @testable import PurloryCore

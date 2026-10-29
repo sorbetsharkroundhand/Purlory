@@ -1,3 +1,4 @@
+@testable import PurloryStorage
 import Combine
 import AppKit
 import Foundation

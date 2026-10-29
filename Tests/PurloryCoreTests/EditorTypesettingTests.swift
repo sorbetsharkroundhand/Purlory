@@ -1,3 +1,4 @@
+@testable import PurloryStorage
 import AppKit
 import SwiftUI
 import XCTest

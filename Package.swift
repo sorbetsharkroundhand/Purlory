@@ -25,6 +25,8 @@ let package = Package(
         .package(url: "https://github.com/mgriebling/SwiftMath", from: "1.5.0"),
     ],
     targets: [
+        .target(name: "PurloryFoundation"),
+        .target(name: "PurloryStorage", dependencies: ["PurloryFoundation"]),
         // Prepared from the checksum-pinned manifest before package loading/building.
         .binaryTarget(name: "Kiwi", path: "Packages/PurloryKoreanBackend/Artifacts/KiwiStatic.xcframework"),
         .target(name: "CKiwiBridge", dependencies: ["Kiwi"],
@@ -42,6 +44,7 @@ let package = Package(
         .target(
             name: "PurloryCore",
             dependencies: [
+                "PurloryFoundation", "PurloryStorage",
                 "PurloryKoreanBackend",
                 .product(name: "MLXLLM", package: "mlx-swift-lm"),
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
@@ -70,7 +73,7 @@ let package = Package(
         // No Ghost model or Metal execution is required.
         .testTarget(
             name: "PurloryCoreTests",
-            dependencies: ["PurloryCore", "PurloryKoreanBackend"],
+            dependencies: ["PurloryCore", "PurloryKoreanBackend", "PurloryFoundation", "PurloryStorage"],
             path: "Tests/PurloryCoreTests",
             resources: [.copy("Fixtures/KoreanDiagnostics"), .copy("Fixtures/NativeWorkspaceHTML")]
         ),

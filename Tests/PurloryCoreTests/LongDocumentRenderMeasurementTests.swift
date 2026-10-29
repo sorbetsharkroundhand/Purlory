@@ -1,3 +1,4 @@
+@testable import PurloryStorage
 import AppKit
 import CryptoKit
 import Darwin
