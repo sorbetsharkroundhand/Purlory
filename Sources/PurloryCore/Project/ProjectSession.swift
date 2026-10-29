@@ -145,7 +145,7 @@ public final class ProjectSession: ObservableObject {
             if let candidate { catalog = try await store.assetCatalog(id: candidate.id) }
             else { catalog = nil }
             let project: WritingProject?
-            if let initialID { project = try await store.activateAndLoad(id: initialID, expected: candidate) }
+            if let initialID { project = try await store.activateInitialProject(id: initialID, expected: candidate) }
             else { project = candidate }
             assetCatalog = catalog
             adopt(project)
@@ -575,6 +575,7 @@ public final class ProjectSession: ObservableObject {
     /// Keep mutations fenced after a successful final save until the process exits.
     /// A failed save reopens editing and reconnects the surviving project consumers.
     func flushForTermination() async throws {
+        guard phase != .loading else { throw ProjectSessionError.transitionInProgress }
         try beginTransition()
         do {
             try await flush()
@@ -583,6 +584,17 @@ public final class ProjectSession: ObservableObject {
             if let snapshot = selectedDocumentSnapshot { documentDidChange?(snapshot) }
             throw error
         }
+    }
+
+    /// Explicit save accepts marked text before fencing and reconnects the same editor.
+    public func saveNow() async throws {
+        guard phase != .loading else { throw ProjectSessionError.transitionInProgress }
+        try beginTransition()
+        defer {
+            finishTransition()
+            if let snapshot = selectedDocumentSnapshot { documentDidChange?(snapshot) }
+        }
+        try await flush()
     }
 
     public func reportError(_ error: Error) {

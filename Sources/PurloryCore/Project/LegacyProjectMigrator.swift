@@ -13,7 +13,7 @@ struct MigrationReceipt: Codable {
     var projectID: WritingProjectID
 }
 
-/// EntryStore를 생성하면 복구·저장 부수효과가 생기므로 파일 값만 읽는다 (PLAN §5.2).
+/// Read legacy values without invoking EntryStore's recovery or persistence side effects.
 enum LegacyProjectMigrator {
     struct Snapshot {
         var sourceData: Data
@@ -36,7 +36,7 @@ enum LegacyProjectMigrator {
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
         let archive = try decoder.decode(LegacyArchive.self, from: data)
         var navigation = ProjectNavigation()
-        navigation.folders = (archive.folders ?? []).sorted { ($0.sortOrder ?? 0) < ($1.sortOrder ?? 0) }.map {
+        navigation.folders = orderedFolders(archive.folders ?? []).map {
             ProjectFolder(id: $0.id, name: $0.name, parentID: $0.parentID)
         }
         let ids = Set(project.documents.map(\.id)), folders = Set(navigation.folders.map(\.id))
@@ -98,6 +98,20 @@ enum LegacyProjectMigrator {
         }
         let journal = try ProjectPaths.checked("journal.md", under: directory)
         return FileManager.default.fileExists(atPath: journal.path) ? journal : nil
+    }
+
+    /// Missing ranks historically seeded the entire sibling group from its array order.
+    private static func orderedFolders(_ folders: [JournalFolder]) -> [JournalFolder] {
+        var ranks: [Int: Double] = [:]
+        for group in Dictionary(grouping: folders.indices, by: { folders[$0].parentID }).values {
+            let needsSeed = group.contains { folders[$0].sortOrder == nil }
+            for (rank, index) in group.sorted().enumerated() {
+                ranks[index] = needsSeed ? Double(rank) : folders[index].sortOrder
+            }
+        }
+        return folders.indices.sorted {
+            ranks[$0] == ranks[$1] ? $0 < $1 : (ranks[$0] ?? 0) < (ranks[$1] ?? 0)
+        }.map { folders[$0] }
     }
 
     /// Preserve each folder's manual order, or the historical newest-first fallback.
@@ -212,6 +226,9 @@ extension ProjectStore {
             if reusedID == nil {
                 var project = WritingProject(id: id, title: title, mode: mode,
                     documents: snapshot.entries.map(LegacyEntryAdapter.document(from:)))
+                if project.documents.isEmpty {
+                    project.documents = [WritingDocument(id: WritingDocumentID(), title: "Untitled", body: "", kind: .manuscript)]
+                }
                 try LegacyProjectMigrator.restoreNavigation(from: snapshot.archiveData, into: &project)
                 if let journal = snapshot.journalSource { project.userData["legacy-journal.md"] = journal }
                 try saveUnlocked(project, importedAssets: snapshot.assets, source: snapshot.archiveData)

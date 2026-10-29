@@ -44,6 +44,16 @@ public actor ProjectStore {
         try withStoreLock { try activateUnlocked(id: id, expected: expected) }
     }
 
+    /// Another process may establish an active project while startup prepares a copy.
+    func activateInitialProject(id: WritingProjectID, expected: WritingProject?) throws -> WritingProject {
+        try withStoreLock {
+            guard !files.fileExists(at: try rootURL("active-project.json")) else {
+                throw ProjectStoreError.changedDuringSave
+            }
+            return try activateUnlocked(id: id, expected: expected)
+        }
+    }
+
     public func activeProject() throws -> WritingProject? {
         try withStoreLock {
             let url = try rootURL("active-project.json")

@@ -42,14 +42,14 @@ public struct ProjectCommandActions {
             session.restoreDocument(id)
         }
         save = {
-            try await session.flush()
+            try await session.saveNow()
         }
     }
 }
 
 public struct PurloryCommands: Commands {
     @ObservedObject private var session: ProjectSession
-    @ObservedObject private var legacyWorkspace: LegacyWorkspaceController
+    private let startup: ProjectStartupCoordinator
     @ObservedObject private var editorRequests: ProjectEditorRequests
     private let projectStore: ProjectStore
     /// 에디터 포커스 여부 — 없으면 서식·찾기 명령을 비활성화해 "눌러도 무반응"을
@@ -61,12 +61,12 @@ public struct PurloryCommands: Commands {
 
     public init(
         session: ProjectSession,
-        legacyWorkspace: LegacyWorkspaceController,
+        startup: ProjectStartupCoordinator,
         projectStore: ProjectStore,
         editorRequests: ProjectEditorRequests
     ) {
         self._session = ObservedObject(wrappedValue: session)
-        self._legacyWorkspace = ObservedObject(wrappedValue: legacyWorkspace)
+        self.startup = startup
         self.projectStore = projectStore
         self._editorRequests = ObservedObject(wrappedValue: editorRequests)
     }
@@ -75,79 +75,70 @@ public struct PurloryCommands: Commands {
         // 파일 ▸ 프로젝트 문서와 verified project creation/import flows.
         CommandGroup(replacing: .newItem) {
             Button("새 문서") {
-                if let store = legacyWorkspace.legacyStore { store.newEntry() }
-                else {
-                    ProjectCommandActions(session: session).newDocument(.manuscript)
-                    editorRequests.focusEditor()
-                }
+                ProjectCommandActions(session: session).newDocument(.manuscript)
+                editorRequests.focusEditor()
             }
                 .keyboardShortcut("n", modifiers: .command)
-                .disabled(!hasWorkspace || legacyWorkspace.isTransitioning)
+                .disabled(!hasWorkspace || session.isTransitioning)
 
             Divider()
 
             Button("새 Fiction 프로젝트…") { presentNewProject(mode: .fiction) }
                 .keyboardShortcut("n", modifiers: [.command, .shift])
-                .disabled(legacyWorkspace.mode == .legacy || legacyWorkspace.isTransitioning)
+                .disabled(session.isTransitioning || session.phase == .loading)
             Button("새 General 프로젝트…") { presentNewProject(mode: .general) }
                 .keyboardShortcut("n", modifiers: [.command, .option])
-                .disabled(legacyWorkspace.mode == .legacy || legacyWorkspace.isTransitioning)
+                .disabled(session.isTransitioning || session.phase == .loading)
             Button("프로젝트 가져오기…") { presentFolderImport() }
-                .disabled(legacyWorkspace.mode == .legacy || legacyWorkspace.isTransitioning)
+                .disabled(session.isTransitioning || session.phase == .loading)
             Button("이전 저장본에서 복구…") {
                 Task {
                     if await ProjectRecoveryPanel.present(session: session) { editorRequests.focusEditor() }
                 }
             }
-            .disabled(legacyWorkspace.mode == .legacy || legacyWorkspace.isTransitioning
-                || session.isTransitioning || (session.phase != .ready && session.phase != .failed))
+            .disabled(session.isTransitioning || session.phase == .loading
+                || (session.phase != .ready && session.phase != .failed))
             Divider()
-            Button(legacyWorkspace.mode == .legacy ? "프로젝트로 돌아가기" : "레거시 라이브러리 열기") {
+            Button("이전 라이브러리를 프로젝트로 열기") {
                 Task {
-                    do {
-                        if legacyWorkspace.mode == .legacy { try await legacyWorkspace.leave() }
-                        else { try await legacyWorkspace.enter() }
-                    } catch { presentError(title: "작업 공간을 전환하지 못했습니다", error: error) }
+                    do { try await startup.openLegacyLibrary(); editorRequests.focusEditor() }
+                    catch { presentError(title: "이전 원고를 열지 못했습니다", error: error) }
                 }
             }
-            .disabled(legacyWorkspace.isTransitioning || session.phase == .loading)
+            .disabled(session.isTransitioning || session.phase == .loading)
+            Button("이전 원고 파일 선택…") { presentFolderImport(legacyArchive: true) }
+                .disabled(session.isTransitioning || session.phase == .loading)
         }
 
         CommandGroup(replacing: .saveItem) {
             Button("저장") {
-                Task { try? await legacyWorkspace.flushActiveOwner() }
+                Task { try? await ProjectCommandActions(session: session).save() }
             }
             .keyboardShortcut("s", modifiers: .command)
-            .disabled(!hasWorkspace || legacyWorkspace.isTransitioning)
+            .disabled(!hasWorkspace || session.isTransitioning)
         }
 
         // 파일 저장 영역 옆에 이름 바꾸기 · 내보내기 · 인쇄.
         CommandGroup(after: .saveItem) {
             Button("문서 이름 바꾸기") {
-                if let store = legacyWorkspace.legacyStore { renameLegacyEntry(in: store) }
-                else {
-                    sidebarVisible = true
-                    editorRequests.beginRename()
-                }
+                sidebarVisible = true
+                editorRequests.beginRename()
             }
-            .disabled(!hasWorkspace || legacyWorkspace.isTransitioning)
+            .disabled(!hasWorkspace || session.isTransitioning)
 
             Button("문서를 휴지통으로 이동", role: .destructive) {
-                if let store = legacyWorkspace.legacyStore { store.delete(store.activeID) }
-                else {
-                    ProjectCommandActions(session: session).trashDocument()
-                    editorRequests.focusEditor()
-                }
+                ProjectCommandActions(session: session).trashDocument()
+                editorRequests.focusEditor()
             }
-            .disabled(!hasWorkspace || legacyWorkspace.isTransitioning)
+            .disabled(!hasWorkspace || session.isTransitioning)
 
             Divider()
 
             Button("Markdown으로 내보내기…") { presentProjectExport(epub: false) }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
-                .disabled(!canExport || legacyWorkspace.isTransitioning)
+                .disabled(!canExport || session.isTransitioning)
             Button("EPUB으로 내보내기…") { presentProjectExport(epub: true) }
-                .disabled(!canExport || legacyWorkspace.isTransitioning)
+                .disabled(!canExport || session.isTransitioning)
             Button("인쇄…") { printActiveManuscript() }
                 .keyboardShortcut("p", modifiers: .command)
                 .disabled(!hasWorkspace)
@@ -222,7 +213,7 @@ public struct PurloryCommands: Commands {
         // 보기 ▸ 검색 · 사이드바 · 외형.
         CommandMenu("보기") {
             Button("검색 객체 열기") { editorRequests.spatialWorkspace?.openSearch() }
-                .disabled(!session.isEditorEditable || legacyWorkspace.mode == .legacy || legacyWorkspace.isTransitioning)
+                .disabled(!session.isEditorEditable || session.isTransitioning || session.phase == .loading)
             Button("빠른 명령 팔레트…") {
                 _ = WorkspaceQuickCommandPanel.present(
                     session: session,
@@ -232,40 +223,39 @@ public struct PurloryCommands: Commands {
                 )
             }
                 .keyboardShortcut("p", modifiers: [.command, .shift])
-                .disabled(!session.isEditorEditable || legacyWorkspace.mode == .legacy || legacyWorkspace.isTransitioning)
+                .disabled(!session.isEditorEditable || session.isTransitioning || session.phase == .loading)
             Button("원문 확인·질문…") { SourceSearchPanel.present(session: session, requests: editorRequests) }
                 .keyboardShortcut("k", modifiers: [.command, .option])
-                .disabled(!session.isEditorEditable || legacyWorkspace.mode == .legacy || legacyWorkspace.isTransitioning)
+                .disabled(!session.isEditorEditable || session.isTransitioning || session.phase == .loading)
             Button("이전 집필 위치로 돌아가기") { editorRequests.returnToWriting(in: session) }
                 .keyboardShortcut("k", modifiers: [.command, .shift])
-                .disabled(!session.isEditorEditable || legacyWorkspace.mode == .legacy
+                .disabled(!session.isEditorEditable
                     || editorRequests.sourceReturnPoint?.key.projectID != session.activeProject?.id)
             Divider()
             // 문서 내 검색 — 에디터의 performKeyEquivalent(⌘F)가 우선 처리하고,
             // 한글 IME 등으로 뷰에 닿지 못한 경우 이 메뉴가 안전망이 된다.
             Group {
                 Button("문서에서 찾기") {
-                    if let spatial = editorRequests.spatialWorkspace, legacyWorkspace.mode != .legacy { spatial.openSearch(scope: .document) }
+                    if let spatial = editorRequests.spatialWorkspace { spatial.openSearch(scope: .document) }
                     else { send(#selector(BlockTextView.purloryFindInDocument(_:))) }
                 }
                     .keyboardShortcut("f", modifiers: .command)
                 Button("다음 찾기") {
-                    if legacyWorkspace.mode != .legacy, let advance = editorRequests.spatialWorkspace?.advanceSearch { advance(1) }
+                    if let advance = editorRequests.spatialWorkspace?.advanceSearch { advance(1) }
                     else { send(#selector(BlockTextView.purloryFindNext(_:))) }
                 }
                     .keyboardShortcut("g", modifiers: .command)
                 Button("이전 찾기") {
-                    if legacyWorkspace.mode != .legacy, let advance = editorRequests.spatialWorkspace?.advanceSearch { advance(-1) }
+                    if let advance = editorRequests.spatialWorkspace?.advanceSearch { advance(-1) }
                     else { send(#selector(BlockTextView.purloryFindPrevious(_:))) }
                 }
                     .keyboardShortcut("g", modifiers: [.command, .shift])
             }
             .disabled(hasPurloryEditor != true)
 
-            Button(legacyWorkspace.mode == .legacy ? "라이브러리 검색" : "프로젝트 검색") {
+            Button("프로젝트 검색") {
                 sidebarVisible = true
-                if let store = legacyWorkspace.legacyStore { store.requestSearchFocus() }
-                else { editorRequests.spatialWorkspace?.openSearch() }
+                editorRequests.spatialWorkspace?.openSearch()
             }
             .keyboardShortcut("f", modifiers: [.command, .shift])
 
@@ -350,12 +340,12 @@ public struct PurloryCommands: Commands {
         }
     }
 
-    private func presentFolderImport() {
-        guard let selection = ProjectImportPanel.select() else { return }
+    private func presentFolderImport(legacyArchive: Bool = false) {
+        guard let selection = legacyArchive ? ProjectImportPanel.selectLegacyArchive() : ProjectImportPanel.select() else { return }
         Task { @MainActor in
             do {
                 try await ImportProjectCoordinator(store: projectStore, session: session)
-                    .importFolder(from: selection.directory, legacyMode: selection.legacyMode)
+                    .importFolder(from: selection.directory, legacyMode: selection.legacyMode, legacyFileName: selection.legacyFileName)
                 editorRequests.focusEditor()
             } catch {
                 presentError(title: "가져오지 못했습니다", error: error)
@@ -364,25 +354,6 @@ public struct PurloryCommands: Commands {
     }
 
     private func presentProjectExport(epub: Bool) {
-        if let entry = legacyWorkspace.legacyStore?.activeEntry {
-            if epub { EpubExporter.exportWithPanel(entry) }
-            else {
-                let panel = NSSavePanel()
-                panel.allowedContentTypes = [.plainText]
-                panel.nameFieldStringValue = entry.title.replacingOccurrences(of: "/", with: "-") + ".md"
-                guard panel.runModal() == .OK, let url = panel.url else { return }
-                do {
-                    let report = try MarkdownExporter.export(entry, to: url)
-                    if !report.missingSources.isEmpty {
-                        let alert = NSAlert()
-                        alert.messageText = "일부 이미지 없이 내보냈습니다"
-                        alert.informativeText = report.missingSources.joined(separator: "\n")
-                        alert.runModal()
-                    }
-                } catch { presentError(title: "내보내지 못했습니다", error: error) }
-            }
-            return
-        }
         guard let document = session.selectedDocument, let assets = session.assetCatalog,
             assets.projectID == session.activeProject?.id else { return }
         let panel = NSSavePanel()
@@ -415,7 +386,7 @@ public struct PurloryCommands: Commands {
     }
 
     private func printActiveManuscript() {
-        guard let body = legacyWorkspace.legacyStore?.activeEntry?.body ?? session.selectedDocument?.body else { return }
+        guard let body = session.selectedDocument?.body else { return }
         let page = NSTextView(
             frame: NSRect(x: 0, y: 0, width: 620, height: 792))
         page.textStorage?.setAttributedString(NSAttributedString(
@@ -442,25 +413,11 @@ public struct PurloryCommands: Commands {
     }
 
     private var hasWorkspace: Bool {
-        session.selectedDocument != nil || legacyWorkspace.legacyStore?.activeEntry != nil
+        session.selectedDocument != nil
     }
 
     private var canExport: Bool {
-        legacyWorkspace.legacyStore?.activeEntry != nil
-            || (session.selectedDocument != nil && session.assetCatalog != nil)
-    }
-
-    private func renameLegacyEntry(in store: EntryStore) {
-        let id = store.activeID
-        let alert = NSAlert()
-        alert.messageText = "문서 이름 바꾸기"
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
-        field.stringValue = store.activeEntry?.title ?? ""
-        alert.accessoryView = field
-        alert.addButton(withTitle: "이름 바꾸기")
-        alert.addButton(withTitle: "취소")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        store.rename(id, to: field.stringValue)
+        session.selectedDocument != nil && session.assetCatalog != nil
     }
 
     /// 현재 유효 외형이 다크인가 — 명시값이 있으면 그대로, "시스템 따름"이면 실제

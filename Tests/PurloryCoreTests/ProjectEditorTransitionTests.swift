@@ -45,7 +45,6 @@ final class ProjectEditorTransitionTests: XCTestCase {
         editor.setSelectedRange(selected)
         let termination = ProjectTerminationCoordinator(
             session: harness.fixture.session,
-            legacyWorkspace: harness.legacyWorkspace,
             persistPositions: { harness.positionStore.persistNow() },
             shutdown: {}, drain: {})
 
@@ -120,7 +119,7 @@ final class ProjectEditorTransitionTests: XCTestCase {
         window.isReleasedWhenClosed = false
         window.testUndo.groupsByEvent = false
         let host = NSHostingView(rootView: ContentView(projectSession: session,
-            legacyWorkspace: LegacyWorkspaceController(session: session), editorRequests: requests,
+            startup: ProjectStartupCoordinator(session: session, store: store, storageLocation: .init(rootDirectory: fixture.legacyRoot)), editorRequests: requests,
             completion: completion, indexer: indexer, livingMargin: LivingMarginModel(),
             firstRunFlow: FirstRunFlow(session: session, store: store, editorRequests: requests)))
         window.contentView = host
@@ -221,7 +220,7 @@ private final class ProjectPositionViewHarness {
         window.isReleasedWhenClosed = false
         host = NSHostingView(rootView: ContentView(
             projectSession: fixture.session,
-            legacyWorkspace: legacyWorkspace,
+            startup: ProjectStartupCoordinator(session: fixture.session, store: fixture.store, storageLocation: .init(rootDirectory: fixture.legacyRoot)),
             editorRequests: requests,
             completion: completion,
             indexer: indexer,

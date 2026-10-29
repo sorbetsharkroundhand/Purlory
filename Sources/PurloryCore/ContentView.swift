@@ -20,7 +20,7 @@ enum ContentViewRoute: Equatable {
 /// Project writing workspace with one authoritative session and editor bridge.
 public struct ContentView: View {
     @ObservedObject private var projectSession: ProjectSession
-    @ObservedObject private var legacyWorkspace: LegacyWorkspaceController
+    private let startup: ProjectStartupCoordinator
     @ObservedObject private var editorRequests: ProjectEditorRequests
     @ObservedObject private var completion: CompletionController
     private let indexer: BackgroundIndexer
@@ -33,7 +33,7 @@ public struct ContentView: View {
     @AppStorage("purlory.appearance") private var appearance = ""
     public init(
         projectSession: ProjectSession,
-        legacyWorkspace: LegacyWorkspaceController,
+        startup: ProjectStartupCoordinator,
         editorRequests: ProjectEditorRequests,
         completion: CompletionController,
         indexer: BackgroundIndexer,
@@ -43,7 +43,7 @@ public struct ContentView: View {
         writingDiagnostics: WritingDiagnosticsRuntime? = nil
     ) {
         self.projectSession = projectSession
-        self.legacyWorkspace = legacyWorkspace
+        self.startup = startup
         self.editorRequests = editorRequests
         self.completion = completion
         self.indexer = indexer
@@ -54,30 +54,15 @@ public struct ContentView: View {
 
     public var body: some View {
         Group {
-            if let store = legacyWorkspace.legacyStore, legacyWorkspace.mode == .legacy {
-                LegacyWorkspaceView(workspace: legacyWorkspace, store: store, completion: completion,
-                    settings: completion.settings, indexer: indexer,
-                    updateBody: { [weak legacyWorkspace, weak store] body in
-                        guard let legacyWorkspace, let store,
-                            legacyWorkspace.legacyStore === store else { return }
-                        legacyWorkspace.updateLegacyBody(body)
-                    })
-                    .disabled(legacyWorkspace.isTransitioning)
-            } else {
             switch ContentViewRoute.resolve(projectSession.phase) {
             case .progress:
                 VStack(spacing: 12) {
-                    if projectSession.phase == .suspended, let message = legacyWorkspace.lastErrorMessage {
-                        Text(message)
-                        Button("프로젝트 다시 열기") { Task { try? await legacyWorkspace.leave() } }
-                    } else {
                     ProgressView()
                     Text(projectSession.phase == .suspended
                         ? "프로젝트 전환을 마무리하는 중…"
                         : "프로젝트 여는 중…")
                         .purloryUIFont(12)
                         .foregroundStyle(.secondary)
-                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             case .firstRun:
@@ -103,8 +88,16 @@ public struct ContentView: View {
                             .multilineTextAlignment(.center)
                     }
                     Button("다시 시도") {
-                        Task { try? await projectSession.bootstrap() }
+                        Task { try? await startup.bootstrap() }
                     }
+                    Button("이전 원고 파일 선택…") {
+                        guard let selection = ProjectImportPanel.selectLegacyArchive() else { return }
+                        Task {
+                            do { try await firstRunFlow.importFolder(selection: selection) }
+                            catch { projectSession.reportError(error) }
+                        }
+                    }
+                    .disabled(projectSession.isTransitioning)
                     Button("이전 저장본 확인…") {
                         Task {
                             if await ProjectRecoveryPanel.present(session: projectSession) { editorRequests.focusEditor() }
@@ -116,7 +109,6 @@ public struct ContentView: View {
                 .padding(32)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            }
         }
             .frame(minWidth: 860, minHeight: 540)
             .preferredColorScheme(preferredScheme)
@@ -125,26 +117,9 @@ public struct ContentView: View {
                 editorRequests.askSupport = completion.makeAskPurlorySupport()
                 editorRequests.judgeSupport = completion.makeContinuityJudgeSupport()
                 completion.preloadEngine()
-                if let store = legacyWorkspace.legacyStore {
-                    LegacyWorkspaceView.connect(store: store, completion: completion, indexer: indexer)
-                } else {
-                    Self.connectProjectConsumers(session: projectSession, completion: completion, indexer: indexer,
-                        writingDiagnostics: writingDiagnostics, editorBridge: projectEditorBridge, livingMargin: livingMargin)
-                }
+                Self.connectProjectConsumers(session: projectSession, completion: completion, indexer: indexer,
+                    writingDiagnostics: writingDiagnostics, editorBridge: projectEditorBridge, livingMargin: livingMargin)
                 indexer.caretProvider = { [weak completion] in completion?.lastCaretLocation }
-                legacyWorkspace.didEnterLegacy = { [weak completion, weak indexer, weak writingDiagnostics] store in
-                    guard let completion, let indexer else { return }
-                    writingDiagnostics?.prepareForProjectTransition()
-                    writingDiagnostics?.configure(currentSnapshot: { nil })
-                    LegacyWorkspaceView.connect(store: store, completion: completion, indexer: indexer)
-                }
-                legacyWorkspace.willFlushLegacy = Self.commitMarkedText
-                legacyWorkspace.willLeaveLegacy = { [weak projectSession, weak completion, weak indexer, weak writingDiagnostics, weak projectEditorBridge, weak livingMargin] in
-                    guard let projectSession, let completion, let indexer else { return }
-                    completion.prepareForProjectTransition()
-                    Self.connectProjectConsumers(session: projectSession, completion: completion, indexer: indexer,
-                        writingDiagnostics: writingDiagnostics, editorBridge: projectEditorBridge, livingMargin: livingMargin)
-                }
                 projectSession.willTransition = { [weak projectEditorBridge, weak completion, weak indexer, weak writingDiagnostics] in
                     if let textView = projectEditorBridge?.editor {
                         if textView.hasMarkedText() {
@@ -169,14 +144,8 @@ public struct ContentView: View {
             }
             .task {
                 guard !projectSession.hasLoadedActiveProject else { return }
-                try? await projectSession.loadActiveProject()
+                try? await startup.bootstrap()
             }
-    }
-
-    private static func commitMarkedText() {
-        if let textView = NSApp.keyWindow?.firstResponder as? BlockTextView, textView.hasMarkedText() {
-            textView.unmarkText()
-        }
     }
 
     static func connectProjectConsumers(
@@ -896,7 +865,8 @@ struct LongParagraphNotice: View {
     let editorRequests = ProjectEditorRequests()
     ContentView(
         projectSession: session,
-        legacyWorkspace: LegacyWorkspaceController(session: session),
+        startup: ProjectStartupCoordinator(session: session, store: store,
+            storageLocation: .init(rootDirectory: FileManager.default.temporaryDirectory.appendingPathComponent("Purlory-Preview"))),
         editorRequests: editorRequests,
         completion: CompletionController(),
         indexer: BackgroundIndexer(engine: CompletionEngine()),

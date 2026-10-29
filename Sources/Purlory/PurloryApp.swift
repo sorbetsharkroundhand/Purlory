@@ -21,7 +21,9 @@ struct PurloryApp: App {
         engine: PurloryApp.sharedEngine,
         sidecarPersistence: PurloryApp.knowledgeSidecars)
     @StateObject private var projectSession: ProjectSession
-    @StateObject private var legacyWorkspace: LegacyWorkspaceController
+    private var startup: ProjectStartupCoordinator {
+        ProjectStartupCoordinator(session: projectSession, store: Self.projectStore)
+    }
     @StateObject private var editorRequests = ProjectEditorRequests()
 
     init() {
@@ -29,14 +31,13 @@ struct PurloryApp: App {
             try await ProjectWriterDataMigration.prepare(project, store: store)
         })
         _projectSession = StateObject(wrappedValue: session)
-        _legacyWorkspace = StateObject(wrappedValue: LegacyWorkspaceController(session: session))
     }
 
     var body: some Scene {
         Window("Purlory", id: "main") {
             ContentView(
                 projectSession: projectSession,
-                legacyWorkspace: legacyWorkspace,
+                startup: startup,
                 editorRequests: editorRequests,
                 completion: completion,
                 indexer: indexer,
@@ -46,7 +47,7 @@ struct PurloryApp: App {
                     store: PurloryApp.projectStore,
                     editorRequests: editorRequests), writingDiagnostics: writingDiagnostics)
                 .onAppear {
-                    appDelegate.configure(session: projectSession, legacyWorkspace: legacyWorkspace,
+                    appDelegate.configure(session: projectSession,
                         completion: completion, indexer: indexer, writingDiagnostics: writingDiagnostics)
                 }
         }
@@ -56,7 +57,7 @@ struct PurloryApp: App {
         .commands {
             PurloryCommands(
                 session: projectSession,
-                legacyWorkspace: legacyWorkspace,
+                startup: startup,
                 projectStore: PurloryApp.projectStore,
                 editorRequests: editorRequests)
         }
@@ -75,21 +76,19 @@ struct PurloryApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     weak var projectSession: ProjectSession?
-    private weak var legacyWorkspace: LegacyWorkspaceController?
     private var termination: ProjectTerminationCoordinator?
     private var memoryPressure: MemoryPressureRuntime?
     private var backgroundFlush: Task<Void, Never>?
 
-    func configure(session: ProjectSession, legacyWorkspace: LegacyWorkspaceController,
+    func configure(session: ProjectSession,
                    completion: CompletionController, indexer: BackgroundIndexer,
                    writingDiagnostics: WritingDiagnosticsRuntime? = nil) {
         guard termination == nil else { return }
         projectSession = session
-        self.legacyWorkspace = legacyWorkspace
         memoryPressure = MemoryPressureRuntime(completion: completion, indexer: indexer,
             engine: PurloryApp.sharedEngine, writingDiagnostics: writingDiagnostics)
         termination = ProjectTerminationCoordinator(
-            session: session, legacyWorkspace: legacyWorkspace,
+            session: session,
             persistPositions: { WritingPositionStore.shared.persistNow() },
             shutdown: { [weak self] in
                 self?.memoryPressure?.stop()
@@ -151,10 +150,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidResignActive(_ notification: Notification) {
-        guard backgroundFlush == nil, let legacyWorkspace, !legacyWorkspace.isTransitioning else { return }
-        backgroundFlush = Task { @MainActor [weak self, weak legacyWorkspace] in
+        guard backgroundFlush == nil, let projectSession, projectSession.phase == .ready, !projectSession.isTransitioning else { return }
+        backgroundFlush = Task { @MainActor [weak self, weak projectSession] in
             defer { self?.backgroundFlush = nil }
-            try? await legacyWorkspace?.flushActiveOwner()
+            try? await projectSession?.saveNow()
         }
     }
 }

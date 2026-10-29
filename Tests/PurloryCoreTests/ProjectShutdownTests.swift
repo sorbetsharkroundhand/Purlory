@@ -4,6 +4,15 @@ import XCTest
 
 @MainActor
 final class ProjectShutdownTests: XCTestCase {
+    func testDirectProjectTerminationRejectsUnresolvedStartup() async throws {
+        let fixture = try await LegacyBoundaryFixture()
+        defer { fixture.cleanUp() }
+        let loading = ProjectSession(store: fixture.store, defaults: fixture.defaults)
+        do { try await loading.flushForTermination(); XCTFail("Unresolved startup allowed shutdown") } catch {}
+        XCTAssertEqual(loading.phase, .loading)
+        XCTAssertFalse(loading.isTransitioning)
+    }
+
     // Catches shutting resources down or replying before the last accepted project edit is durable.
     func testSuccessfulTerminationFlushesProjectBeforePositionsShutdownAndDrain() async throws {
         let fixture = try await LegacyBoundaryFixture()
@@ -11,7 +20,7 @@ final class ProjectShutdownTests: XCTestCase {
         fixture.session.updateSelectedDocumentBody("last accepted sentence")
         var events: [String] = []
         let coordinator = ProjectTerminationCoordinator(
-            session: fixture.session, legacyWorkspace: fixture.controller(),
+            session: fixture.session,
             persistPositions: { events.append("positions") },
             shutdown: { events.append("shutdown") },
             drain: {
@@ -35,7 +44,7 @@ final class ProjectShutdownTests: XCTestCase {
         var shutdown = false
         var drained = false
         let coordinator = ProjectTerminationCoordinator(
-            session: fixture.session, legacyWorkspace: fixture.controller(),
+            session: fixture.session,
             persistPositions: {}, shutdown: { shutdown = true }, drain: { drained = true })
         let result = await coordinator.prepareForTermination()
         XCTAssertEqual(result, .terminateCancel)
@@ -50,40 +59,38 @@ final class ProjectShutdownTests: XCTestCase {
         XCTAssertEqual(durable?.documents[0].body, "original project")
     }
 
-    // Catches accidentally flushing the suspended project or EntryStore.current instead of its owner.
-    func testLegacyTerminationFlushesActiveLegacyBeforeShutdown() async throws {
+    // The production shutdown route writes the imported project, never the source archive.
+    func testImportedLegacyTerminationSavesProjectAndPreservesSource() async throws {
         let fixture = try await LegacyBoundaryFixture()
         defer { fixture.cleanUp() }
-        let legacy = fixture.controller()
-        try await legacy.enter()
-        legacy.legacyStore?.updateActiveBody("legacy last sentence")
-        EntryStore.current = nil
-        let coordinator = ProjectTerminationCoordinator(
-            session: fixture.session, legacyWorkspace: legacy,
+        let source = fixture.legacyRoot.appendingPathComponent("entries.json")
+        let bytes = Data(#"{"entries":[{"id":"00000000-0000-0000-0000-000000000101","title":"Legacy","body":"legacy original","createdAt":"2026-09-01T00:00:00Z"}]}"#.utf8)
+        try bytes.write(to: source)
+        let result = try await ImportProjectCoordinator(store: fixture.store, session: fixture.session)
+            .importLegacy(from: source, mode: .general, title: "Imported")
+        fixture.session.updateSelectedDocumentBody("latest project sentence")
+        let coordinator = ProjectTerminationCoordinator(session: fixture.session,
             persistPositions: {}, shutdown: {}, drain: {})
-        let result = await coordinator.prepareForTermination()
-        XCTAssertEqual(result, .terminateNow)
-        legacy.updateLegacyBody("too late after legacy shutdown")
-        XCTAssertEqual(legacy.legacyStore?.activeEntry?.body, "legacy last sentence")
-        let data = try Data(contentsOf: fixture.legacyRoot.appendingPathComponent("entries.json"))
-        XCTAssertTrue(String(decoding: data, as: UTF8.self).contains("legacy last sentence"))
-        XCTAssertNil(fixture.session.activeProject)
+        let response = await coordinator.prepareForTermination()
+        XCTAssertEqual(response, .terminateNow)
+        fixture.session.updateSelectedDocumentBody("too late")
+        XCTAssertEqual(fixture.session.selectedDocument?.body, "latest project sentence")
+        XCTAssertEqual(try Data(contentsOf: source), bytes)
         let durable = try await fixture.store.activeProject()
-        XCTAssertEqual(durable?.documents[0].body, "original project")
+        XCTAssertEqual(durable?.id, result.projectID)
+        XCTAssertEqual(durable?.documents[0].body, "latest project sentence")
     }
 
-    // Catches losing the only legacy edits on failure and prevents duplicate cancellation replies.
-    func testLegacyFailureRepliesFalseOnceAndAllowsRetry() async throws {
+    // A failed project save replies once, preserves editing and supports retry.
+    func testProjectFailureRepliesFalseOnceAndAllowsRetry() async throws {
         let fixture = try await LegacyBoundaryFixture()
         defer { fixture.cleanUp() }
-        let legacy = fixture.controller()
-        try await legacy.enter()
-        let owner = try XCTUnwrap(legacy.legacyStore)
-        owner.updateActiveBody("retain legacy edits")
-        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: fixture.legacyRoot.path)
+        fixture.session.updateSelectedDocumentBody("retain project edits")
+        let projectFolder = fixture.root.appendingPathComponent("Projects/" + fixture.project.id.rawValue.uuidString)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: projectFolder.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: projectFolder.path) }
         var shutdowns = 0
-        let coordinator = ProjectTerminationCoordinator(
-            session: fixture.session, legacyWorkspace: legacy,
+        let coordinator = ProjectTerminationCoordinator(session: fixture.session,
             persistPositions: {}, shutdown: { shutdowns += 1 }, drain: {})
         let cancelled = expectation(description: "Save failure cancels quit")
         var replies: [Bool] = []
@@ -92,17 +99,17 @@ final class ProjectShutdownTests: XCTestCase {
         await fulfillment(of: [cancelled], timeout: 3)
         XCTAssertEqual(replies, [false])
         XCTAssertEqual(shutdowns, 0)
-        XCTAssertTrue(owner === legacy.legacyStore)
-        XCTAssertEqual(owner.activeEntry?.body, "retain legacy edits")
-        XCTAssertEqual(legacy.mode, .legacy)
-        XCTAssertFalse(legacy.isTransitioning)
+        XCTAssertEqual(fixture.session.selectedDocument?.body, "retain project edits")
+        XCTAssertTrue(fixture.session.isEditorEditable)
         XCTAssertNotNil(fixture.session.lastErrorMessage)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fixture.legacyRoot.path)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: projectFolder.path)
         let retried = expectation(description: "Retry succeeds")
         XCTAssertEqual(coordinator.requestTermination { replies.append($0); retried.fulfill() }, .terminateLater)
         await fulfillment(of: [retried], timeout: 3)
         XCTAssertEqual(replies, [false, true])
         XCTAssertEqual(shutdowns, 1)
+        let durable = try await fixture.store.activeProject()
+        XCTAssertEqual(durable?.documents[0].body, "retain project edits")
     }
 
     // Catches launching a second save/shutdown task while AppKit waits for the engine to drain.
@@ -116,7 +123,7 @@ final class ProjectShutdownTests: XCTestCase {
         var shutdowns = 0
         var replies = 0
         let coordinator = ProjectTerminationCoordinator(
-            session: fixture.session, legacyWorkspace: fixture.controller(),
+            session: fixture.session,
             persistPositions: {}, shutdown: { shutdowns += 1 }, drain: {
                 started.fulfill()
                 for await _ in gate.stream { break }

@@ -101,6 +101,17 @@ final class ProjectCommandRoutingTests: XCTestCase {
         XCTAssertEqual(reopened.documents[0].body, "Saved through command")
     }
 
+    func testSaveCommandCommitsPendingEditorTextBeforeSavingAndReopensEditing() async throws {
+        let fixture = try await LegacyBoundaryFixture()
+        defer { fixture.cleanUp() }
+        fixture.session.willTransition = { fixture.session.updateSelectedDocumentBody("accepted composition 한") }
+        try await ProjectCommandActions(session: fixture.session).save()
+        let reopened = try await fixture.store.activeProject()
+        XCTAssertEqual(reopened?.documents[0].body, "accepted composition 한")
+        XCTAssertFalse(fixture.session.isTransitioning)
+        XCTAssertTrue(fixture.session.isEditorEditable)
+    }
+
     func testRecentProjectPickerRejectsMissingProjectWithoutLeavingCurrent() async throws {
         let url = root()
         defer { try? FileManager.default.removeItem(at: url) }

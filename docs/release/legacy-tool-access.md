@@ -1,5 +1,25 @@
 # Release tool access audit (#186)
 
+## Project-only runtime update (2026-10-29)
+
+Normal startup, explicit legacy opening, commands and termination now use
+ProjectSession exclusively. Without an active project, a valid legacy archive in
+the configured storage root is copied and verified before activation. The original
+archive and images are not edited. Existing active projects take precedence.
+The older `journal.md` format also imports as a project with its original bytes
+retained. A corrupt primary or ambiguous recovery archive requires explicit choice.
+
+File → Open previous library as project opens the verified copy. File → Select
+previous manuscript file selects the containing folder, then an archive/recovery
+file and project mode. Folder access includes adjacent images. The same recovery
+route is available from first-run and the startup error screen. Project writer
+data includes characters, corrections and recorded conversations before activation.
+Legacy codecs and compatibility coverage remain; the production app no longer
+constructs an editable EntryStore or switches between two workspace owners.
+
+The historical audit below describes the earlier release demotion; its legacy
+workspace routes are superseded by the project-copy routes above.
+
 The #108/#112 candidate supplies original-source search and native jump/return.
 The writing toolbar exposes search directly; Command-K opens it and
 Command-Shift-K returns to the earlier writing position. Existing document

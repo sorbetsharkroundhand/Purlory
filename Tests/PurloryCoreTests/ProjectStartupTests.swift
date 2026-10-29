@@ -3,6 +3,72 @@ import XCTest
 
 @MainActor
 final class ProjectStartupTests: XCTestCase {
+    func testLegacyFoldersWithMissingRanksKeepTheirOriginalSiblingOrder() async throws {
+        let fixture = try StartupFixture()
+        defer { fixture.cleanUp() }
+        let bytes = try fixture.writeLegacy()
+        var archive = try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+        archive["folders"] = [
+            ["id": "00000000-0000-0000-0000-000000000201", "name": "First folder", "sortOrder": 7, "createdAt": "2026-09-01T00:00:00Z"],
+            ["id": "00000000-0000-0000-0000-000000000202", "name": "Second folder", "createdAt": "2026-09-01T00:00:00Z"]
+        ]
+        try JSONSerialization.data(withJSONObject: archive).write(to: fixture.source)
+        let session = fixture.session()
+        try await fixture.startup(session).bootstrap()
+        let navigation = try ProjectNavigation.read(XCTUnwrap(session.activeProject))
+        XCTAssertEqual(navigation.folders.map(\.name), ["First folder", "Second folder"])
+    }
+
+    func testEmptyLegacyArchiveStillProvidesAnEditableDocument() async throws {
+        let fixture = try StartupFixture()
+        defer { fixture.cleanUp() }
+        let bytes = Data(#"{"entries":[]}"#.utf8)
+        try bytes.write(to: fixture.source)
+        let session = fixture.session()
+        try await fixture.startup(session).bootstrap()
+        XCTAssertTrue(session.isEditorEditable)
+        XCTAssertEqual(session.selectedDocument?.body, "")
+        XCTAssertEqual(try Data(contentsOf: fixture.source), bytes)
+    }
+
+    func testExplicitRecoveryFolderSelectionPreservesBrokenPrimaryAndImages() async throws {
+        let fixture = try StartupFixture()
+        defer { fixture.cleanUp() }
+        let bytes = try fixture.writeLegacy()
+        let recovered = fixture.root.appendingPathComponent("entries-recovered-selected.json")
+        try bytes.write(to: recovered)
+        let broken = Data("broken primary".utf8)
+        try broken.write(to: fixture.source)
+        let images = fixture.root.appendingPathComponent("images")
+        try FileManager.default.createDirectory(at: images, withIntermediateDirectories: true)
+        try Data([1, 3, 5]).write(to: images.appendingPathComponent("a.png"))
+        let session = fixture.session()
+        _ = try await ImportProjectCoordinator(store: fixture.store, session: session)
+            .importFolder(from: fixture.root, legacyMode: .fiction, legacyFileName: recovered.lastPathComponent)
+        XCTAssertEqual(session.assetCatalog?.data(for: "images/a.png"), Data([1, 3, 5]))
+        XCTAssertEqual(try Data(contentsOf: fixture.source), broken)
+        XCTAssertEqual(try Data(contentsOf: recovered), bytes)
+    }
+
+    func testExplicitRecoverySelectionRejectsTraversalAndSymlink() async throws {
+        let fixture = try StartupFixture()
+        defer { fixture.cleanUp() }
+        try fixture.writeLegacy()
+        let session = fixture.session()
+        try await fixture.startup(session).bootstrap()
+        let original = session.activeProject
+        let linked = fixture.root.appendingPathComponent("entries-linked.json")
+        try FileManager.default.createSymbolicLink(at: linked, withDestinationURL: fixture.source)
+        for name in ["../entries.json", "entries-linked.json"] {
+            do {
+                _ = try await ImportProjectCoordinator(store: fixture.store, session: session)
+                    .importFolder(from: fixture.root, legacyMode: .fiction, legacyFileName: name)
+                XCTFail("Unsafe recovery path accepted")
+            } catch {}
+            XCTAssertEqual(session.activeProject, original)
+        }
+    }
+
     func testStartupMigratesOnlyWhenNoActiveProjectAndPreservesOriginal() async throws {
         let fixture = try StartupFixture()
         defer { fixture.cleanUp() }
@@ -147,6 +213,22 @@ final class ProjectStartupTests: XCTestCase {
         try await opening.value
         XCTAssertEqual(session.phase, .ready)
         XCTAssertFalse(session.isTransitioning)
+    }
+
+    func testOtherProcessActivationDuringStartupMigrationWins() async throws {
+        let fixture = try StartupFixture()
+        defer { fixture.cleanUp() }
+        try fixture.writeLegacy()
+        let other = projectFixture()
+        let session = ProjectSession(store: fixture.store, defaults: fixture.defaults, prepareProject: { project, store in
+            try await store.save(other)
+            try await store.activate(id: other.id)
+            return try await ProjectWriterDataMigration.prepare(project, store: store)
+        })
+        do { try await fixture.startup(session).bootstrap(); XCTFail("Startup overwrote another active project") } catch {}
+        let active = try await fixture.store.activeProject()
+        XCTAssertEqual(active?.id, other.id)
+        XCTAssertNil(session.activeProject)
     }
 
     func testReopeningMigratedLibraryKeepsAddedAssetsAndCurrentSelection() async throws {

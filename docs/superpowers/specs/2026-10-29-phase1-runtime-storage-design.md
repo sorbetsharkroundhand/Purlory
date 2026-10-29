@@ -1,6 +1,6 @@
 # Phase 1: Project-only runtime and incremental CAS saves
 
-Status: proposed for owner review; implementation has not started.
+Status: approved by the owner on 2026-10-29; implementation and verification in progress.
 
 ## Intent and scope
 
@@ -31,8 +31,8 @@ rope, event bus, Observation conversion, database migration or model change.
 3. **Keep the legacy editor while optimizing saves.** Independently useful but
    insufficient for the owner's selected runtime-unification scope.
 
-The owner selected the Phase 1 scope. The detailed approach and defaults below
-are implementation proposals, not recorded owner decisions.
+The owner selected Phase 1 and approved the detailed approach and defaults below
+before implementation.
 
 ## Slice A: incremental CAS saves
 
@@ -73,7 +73,7 @@ storage corruption that leaves metadata unchanged. Strict open/activation and
 recovery verification remain the checksum boundary for that case. If retaining
 full checksum verification on every autosave is required, cross-save content
 read elimination cannot be promised; only duplicate work within a save can be
-removed. This tradeoff is explicitly part of the proposed design.
+removed. This tradeoff is explicitly part of the approved design.
 
 ## Slice B: project-only production runtime
 
@@ -89,7 +89,7 @@ removed. This tradeoff is explicitly part of the proposed design.
   `WritingPositionStore` legacy-ID fallback provides caret restoration without
   rewriting legacy position records.
 - Use Fiction for an archive containing novel entries, otherwise General; retain
-  the complete source archive and all writer records. This is a proposed default
+  the complete source archive and all writer records. This is the approved default
   for the existing project-level mode model, not a new per-document mode system.
 - Repeated import uses verified receipts without overwriting edits already made
   in the migrated project. A failed or cancelled migration never activates its

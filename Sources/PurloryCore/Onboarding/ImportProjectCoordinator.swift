@@ -37,14 +37,15 @@ public final class ImportProjectCoordinator {
     }
 
     @discardableResult
-    public func importFolder(from directory: URL, legacyMode: WritingMode) async throws -> WritingProjectID {
+    public func importFolder(from directory: URL, legacyMode: WritingMode, legacyFileName: String? = nil) async throws -> WritingProjectID {
         let scoped = directory.startAccessingSecurityScopedResource()
         defer { if scoped { directory.stopAccessingSecurityScopedResource() } }
         try ProjectPaths.rejectSymlink(directory)
-        if Self.containsProjectManifest(in: directory) {
+        if legacyFileName == nil, Self.containsProjectManifest(in: directory) {
             return try await importProject(from: directory)
         }
-        guard let source = try LegacyProjectMigrator.source(in: directory) else { throw LegacyStartupError.noLegacyLibrary }
+        let selectedSource = try legacyFileName.map { try ProjectPaths.checked($0, under: directory) }
+        guard let source = try selectedSource ?? LegacyProjectMigrator.source(in: directory) else { throw LegacyStartupError.noLegacyLibrary }
         return try await importLegacy(from: source,
             mode: legacyMode, title: "Imported Project").projectID
     }

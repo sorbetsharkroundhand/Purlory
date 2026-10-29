@@ -27,7 +27,7 @@ public struct FirstRunFlow {
         // NSOpenPanel cancellation ends here, before migration or activation begins.
         guard let selection else { return }
         try await importCoordinator.importFolder(
-            from: selection.directory, legacyMode: selection.legacyMode)
+            from: selection.directory, legacyMode: selection.legacyMode, legacyFileName: selection.legacyFileName)
         editorRequests.focusEditor()
     }
 }
@@ -95,6 +95,13 @@ public struct FirstRunView: View {
                 .controlSize(.large)
                 .disabled(operation != nil)
                 .accessibilityIdentifier("purlory.first-run.import")
+
+                Button("이전 원고 파일 선택…") {
+                    guard let selection = ProjectImportPanel.selectLegacyArchive() else { return }
+                    perform(.folderImport) { try await flow.importFolder(selection: selection) }
+                }
+                .disabled(operation != nil)
+                .accessibilityIdentifier("purlory.first-run.legacy-recovery")
             }
 
             if let errorMessage {

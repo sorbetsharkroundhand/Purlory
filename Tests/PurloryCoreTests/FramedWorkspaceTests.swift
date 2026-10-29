@@ -419,7 +419,7 @@ final class FramedWorkspaceHarness {
         window.testUndo.groupsByEvent = false
         window.appearance = NSAppearance(named: appearance == .dark ? .darkAqua : .aqua)
         host = NSHostingView(rootView: ContentView(projectSession: fixture.session,
-            legacyWorkspace: fixture.controller(), editorRequests: requests, completion: completion,
+            startup: ProjectStartupCoordinator(session: fixture.session, store: fixture.store, storageLocation: .init(rootDirectory: fixture.legacyRoot)), editorRequests: requests, completion: completion,
             indexer: indexer, livingMargin: livingMargin ?? LivingMarginModel(), firstRunFlow: FirstRunFlow(
                 session: fixture.session, store: fixture.store, editorRequests: requests),
             positionStore: WritingPositionStore(defaults: fixture.defaults), writingDiagnostics: writingDiagnostics)

@@ -4,7 +4,6 @@ import AppKit
 @MainActor
 public final class ProjectTerminationCoordinator {
     private let session: ProjectSession
-    private let legacyWorkspace: LegacyWorkspaceController
     private let persistPositions: () -> Void
     private let shutdown: () -> Void
     private let drain: () async -> Void
@@ -13,13 +12,11 @@ public final class ProjectTerminationCoordinator {
 
     public init(
         session: ProjectSession,
-        legacyWorkspace: LegacyWorkspaceController,
         persistPositions: @escaping () -> Void,
         shutdown: @escaping () -> Void,
         drain: @escaping () async -> Void
     ) {
         self.session = session
-        self.legacyWorkspace = legacyWorkspace
         self.persistPositions = persistPositions
         self.shutdown = shutdown
         self.drain = drain
@@ -38,7 +35,7 @@ public final class ProjectTerminationCoordinator {
 
     public func prepareForTermination() async -> NSApplication.TerminateReply {
         do {
-            try await legacyWorkspace.flushForTermination()
+            try await session.flushForTermination()
         } catch {
             session.reportError(error)
             return .terminateCancel
