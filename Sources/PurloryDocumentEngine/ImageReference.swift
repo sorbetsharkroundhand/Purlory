@@ -63,7 +63,7 @@ public enum ImageReferenceParser {
 
     /// 줄 끝의 `{…}` 옵션 블록을 분리한다 — 이미지 구문 바로 뒤(공백 허용)에 붙은 것만.
     /// 반환: (몸통, 옵션 내부 문자열). 옵션이 없으면 options=nil.
-    static func splitOptions(_ line: String) -> (body: Substring, options: String?)? {
+    package static func splitOptions(_ line: String) -> (body: Substring, options: String?)? {
         guard let open = line.lastIndex(of: "{") else { return (line[...], nil) }
         guard line[line.index(before: line.endIndex)] == "}" else { return (line[...], nil) }
         let inner = line[line.index(after: open)..<line.index(before: line.endIndex)]
@@ -95,7 +95,7 @@ public enum ImageReferenceParser {
 
     // MARK: - 인라인 형태 `![alt](dest "title")`
 
-    static func parseInline(_ body: Substring) -> ImageReference? {
+    package static func parseInline(_ body: Substring) -> ImageReference? {
         var index = body.startIndex
         guard match(body, &index, "!["), var altClose = scanAlt(body, from: index)
         else { return nil }
@@ -146,7 +146,7 @@ public enum ImageReferenceParser {
 
     // MARK: - 참조 형태 `[alt][label]` / `[alt][]` / `[alt]`
 
-    static func parseReferenceForm(
+    package static func parseReferenceForm(
         _ body: Substring, definitions: [String: Definition],
         optionsRangeHint: Bool
     ) -> ImageReference? {
@@ -269,7 +269,7 @@ public enum ImageReferenceParser {
 
     // MARK: - 저수준 스캐너
 
-    static func normalizeLabel(_ label: String) -> String {
+    package static func normalizeLabel(_ label: String) -> String {
         label.lowercased().split(whereSeparator: { $0 == " " || $0 == "\t" })
             .joined(separator: " ")
     }
@@ -285,7 +285,7 @@ public enum ImageReferenceParser {
     /// `![` 다음부터 escape를 존중해 닫는 `]` 위치를 찾는다. 중첩 대괄호는
     /// 균형을 맞춰 센다 (CommonMark link text 규칙의 단순화 — 이미지 alt는
     /// 중첩 링크를 못 가지므로 균형 카운트만으로 충분하다).
-    static func scanAlt(_ s: Substring, from start: Substring.Index) -> Substring.Index? {
+    package static func scanAlt(_ s: Substring, from start: Substring.Index) -> Substring.Index? {
         var depth = 1
         var i = start
         while i < s.endIndex {
@@ -315,7 +315,7 @@ public enum ImageReferenceParser {
         return n
     }
 
-    static func scanUntilUnescaped(
+    package static func scanUntilUnescaped(
         _ s: Substring, from start: Substring.Index, stoppingAt stop: Character
     ) -> Substring.Index? {
         var i = start
@@ -333,7 +333,7 @@ public enum ImageReferenceParser {
     }
 
     /// 일반 destination — 공백·여닫는 괄호 앞에서 끝나고, 괄호는 균형을 맞춘다.
-    static func scanPlainDestination(_ s: Substring, from start: Substring.Index) -> Substring.Index? {
+    package static func scanPlainDestination(_ s: Substring, from start: Substring.Index) -> Substring.Index? {
         var depth = 0
         var i = start
         var sawAny = false
@@ -361,7 +361,7 @@ public enum ImageReferenceParser {
     }
 
     /// title — `"…"`, `'…'`, `(…)` 세 형식. 이스케이프 존중, 같은 종류 닫힘까지.
-    static func scanTitle(_ s: Substring, from start: Substring.Index) -> (String, Substring.Index)? {
+    package static func scanTitle(_ s: Substring, from start: Substring.Index) -> (String, Substring.Index)? {
         guard start < s.endIndex else { return nil }
         let open = s[start]
         let close: Character
@@ -392,7 +392,7 @@ public enum ImageReferenceParser {
 
     /// 백슬래시 이스케이프 제거 — `\X`를 `X`로 되돌린다. 홀로 남은 백슬래시는
     /// 그대로 둔다 (CommonMark의 문장부호 한정을 단순화).
-    static func unescape(_ text: String) -> String {
+    package static func unescape(_ text: String) -> String {
         var out = ""
         var escaped = false
         for c in text {

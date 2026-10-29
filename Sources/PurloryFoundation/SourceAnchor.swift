@@ -30,7 +30,7 @@ public enum SourceAnchor {
     public static func exactRange(for anchor: EvidenceAnchor, in body: String, revision: String) -> NSRange? {
         let ns = body as NSString, quote = anchor.quote as NSString
         guard quote.length > 0 else { return nil }
-        if DocumentOutline.stableHash(body) == revision, let hint = anchor.utf16Hint,
+        if String(ProjectDigest.hash(Data(body.utf8)).prefix(16)) == revision, let hint = anchor.utf16Hint,
             hint >= 0, hint <= ns.length, quote.length <= ns.length - hint,
             ns.substring(with: NSRange(location: hint, length: quote.length)) == anchor.quote {
             return NSRange(location: hint, length: quote.length)

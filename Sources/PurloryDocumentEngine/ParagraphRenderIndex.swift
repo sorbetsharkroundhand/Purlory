@@ -3,16 +3,19 @@ import Foundation
 /// Paragraph metadata over UTF-16 lengths. An implicit treap keeps later offsets
 /// derived from subtree totals, so an early edit never shifts every later record.
 /// Text storage remains authoritative; callers rebuild only for load/recovery.
-final class ParagraphRenderIndex {
-    struct Record: Equatable {
-        var length: Int
-        var block: PurloryBlock
-        var open = false
-        var close = false
+package final class ParagraphRenderIndex {
+    package struct Record: Equatable {
+        package init(length: Int, block: PurloryBlock, open: Bool = false, close: Bool = false) {
+            self.length = length; self.block = block; self.open = open; self.close = close
+        }
+        package var length: Int
+        package var block: PurloryBlock
+        package var open = false
+        package var close = false
     }
-    struct Paragraph: Equatable {
-        let range: NSRange
-        let record: Record
+    package struct Paragraph: Equatable {
+        package let range: NSRange
+        package let record: Record
     }
     private final class Node {
         let record: Record
@@ -27,18 +30,18 @@ final class ParagraphRenderIndex {
     }
     private var root: Node?
     private var randomState: UInt64 = 0x6d696e742d72656e
-    private(set) var lastLookupVisits = 0
-    private(set) var lastMutationVisits = 0
-    var utf16Length: Int { root?.length ?? 0 }
-    var paragraphCount: Int { root?.count ?? 0 }
+    package private(set) var lastLookupVisits = 0
+    package private(set) var lastMutationVisits = 0
+    package var utf16Length: Int { root?.length ?? 0 }
+    package var paragraphCount: Int { root?.count ?? 0 }
 
-    init(records: [Record]) {
+    package init(records: [Record]) {
         for record in records where record.length > 0 { root = merge(root, makeNode(record)) }
         lastMutationVisits = 0
     }
 
     /// Zero-length queries select the containing paragraph, or the last at EOF.
-    func paragraphs(in range: NSRange) -> [Paragraph] {
+    package func paragraphs(in range: NSRange) -> [Paragraph] {
         lastLookupVisits = 0
         guard valid(range), utf16Length > 0 else { return [] }
         let start = range.length == 0 ? min(range.location, utf16Length - 1) : range.location
@@ -51,7 +54,7 @@ final class ParagraphRenderIndex {
     /// Replacement must cover complete indexed paragraphs. Reject stale/non-aligned
     /// assumptions instead of silently corrupting all later media locations.
     @discardableResult
-    func replace(_ range: NSRange, with records: [Record]) -> Bool {
+    package func replace(_ range: NSRange, with records: [Record]) -> Bool {
         lastMutationVisits = 0
         guard valid(range), records.allSatisfy({ $0.length > 0 }),
               let first = boundaryRank(range.location), let end = boundaryRank(range.upperBound) else { return false }
@@ -65,7 +68,7 @@ final class ParagraphRenderIndex {
 
     /// A viewport/dirty edge inside math expands through that contiguous run. The
     /// existing delimiter grouping then preserves complete multiline math boundaries.
-    func mathRun(containing offset: Int) -> NSRange? {
+    package func mathRun(containing offset: Int) -> NSRange? {
         guard offset >= 0, offset < utf16Length,
               let paragraph = paragraphs(in: NSRange(location: offset, length: 0)).first,
               paragraph.record.block == .math else { return nil }

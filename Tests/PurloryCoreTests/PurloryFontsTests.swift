@@ -1,3 +1,4 @@
+@testable import PurloryDocumentEngine
 import AppKit
 import CoreText
 import SwiftUI
@@ -12,7 +13,7 @@ final class PurloryFontsTests: XCTestCase {
             XCTAssertEqual(font.familyName, "Pretendard Variable")
             XCTAssertEqual(font.pointSize, size)
             let url = try XCTUnwrap(CTFontCopyAttribute(font, kCTFontURLAttribute) as? URL)
-            XCTAssertTrue(url.path.contains("Purlory_PurloryCore.bundle/"), url.path)
+            XCTAssertTrue(url.path.contains("Purlory_PurloryDocumentEngine.bundle/"), url.path)
             XCTAssertEqual(url.lastPathComponent, "PretendardVariable.ttf")
         }
     }
@@ -46,7 +47,7 @@ final class PurloryFontsTests: XCTestCase {
             XCTAssertEqual(font.familyName, "Noto Serif KR")
             XCTAssertEqual(font.pointSize, size)
             let url = try XCTUnwrap(CTFontCopyAttribute(font, kCTFontURLAttribute) as? URL)
-            XCTAssertTrue(url.path.contains("Purlory_PurloryCore.bundle/"), url.path)
+            XCTAssertTrue(url.path.contains("Purlory_PurloryDocumentEngine.bundle/"), url.path)
             XCTAssertEqual(url.lastPathComponent, "NotoSerifKR[wght].ttf")
         }
     }
@@ -72,7 +73,7 @@ final class PurloryFontsTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let app = root.appendingPathComponent("Fixture.app")
-        let resources = app.appendingPathComponent("Contents/Resources/Purlory_PurloryCore.bundle")
+        let resources = app.appendingPathComponent("Contents/Resources/Purlory_PurloryDocumentEngine.bundle")
         try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
         let info = ["CFBundleIdentifier": "invalid.purlory.font-fixture", "CFBundlePackageType": "APPL"]
         try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)

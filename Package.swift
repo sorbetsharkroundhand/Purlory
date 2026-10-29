@@ -35,6 +35,8 @@ let package = Package(
                 .product(name: "HuggingFace", package: "swift-huggingface"),
                 .product(name: "Tokenizers", package: "swift-transformers"),
         ]),
+        .target(name: "PurloryDocumentEngine", dependencies: ["PurloryFoundation", .product(name: "SwiftMath", package: "SwiftMath")],
+                resources: [.process("Resources/Fonts")]),
         // Prepared from the checksum-pinned manifest before package loading/building.
         .binaryTarget(name: "Kiwi", path: "Packages/PurloryKoreanBackend/Artifacts/KiwiStatic.xcframework"),
         .target(name: "CKiwiBridge", dependencies: ["Kiwi"],
@@ -52,12 +54,12 @@ let package = Package(
         .target(
             name: "PurloryCore",
             dependencies: [
-                "PurloryFoundation", "PurloryStorage", "PurloryInference",
+                "PurloryFoundation", "PurloryStorage", "PurloryInference", "PurloryDocumentEngine",
                 "PurloryKoreanBackend",
                 .product(name: "SwiftMath", package: "SwiftMath"),
             ],
             path: "Sources/PurloryCore",
-            resources: [.process("Resources/Fonts"), .process("Resources/Icons")]
+            resources: [.process("Resources/Icons")]
         ),
         // @main 진입점만 담은 얇은 실행 셸. 실제 화면/로직은 PurloryCore에 있다.
         .executableTarget(
@@ -76,7 +78,7 @@ let package = Package(
         // No Ghost model or Metal execution is required.
         .testTarget(
             name: "PurloryCoreTests",
-            dependencies: ["PurloryCore", "PurloryKoreanBackend", "PurloryFoundation", "PurloryStorage", "PurloryInference"],
+            dependencies: ["PurloryCore", "PurloryKoreanBackend", "PurloryFoundation", "PurloryStorage", "PurloryInference", "PurloryDocumentEngine"],
             path: "Tests/PurloryCoreTests",
             resources: [.copy("Fixtures/KoreanDiagnostics"), .copy("Fixtures/NativeWorkspaceHTML")]
         ),

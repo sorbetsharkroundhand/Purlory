@@ -1,14 +1,14 @@
 import Foundation
 
-struct WritingSerializedBlockStyle: Sendable, Equatable {
-    let block: String
-    let alignment: String?
-    let checked: Bool
-    let marker: String?
-    let mathRole: String?
-    let indent: Int
-    let codeLang: String?
-    init(_ attributes: [NSAttributedString.Key: Any] = [:]) {
+package struct WritingSerializedBlockStyle: Sendable, Equatable {
+    package let block: String
+    package let alignment: String?
+    package let checked: Bool
+    package let marker: String?
+    package let mathRole: String?
+    package let indent: Int
+    package let codeLang: String?
+    package init(_ attributes: [NSAttributedString.Key: Any] = [:]) {
         block = attributes[.purloryBlock] as? String ?? "p"
         alignment = attributes[.purloryAlign] as? String
         checked = attributes[.purloryChecked] as? Bool ?? false
@@ -19,29 +19,38 @@ struct WritingSerializedBlockStyle: Sendable, Equatable {
     }
 }
 
-struct WritingSerializedRow: Sendable {
-    let text: String
-    let textLength: Int
-    let nativeContentLength: Int
-    let hasLineFeed: Bool
-    var isCode = false
-    var eligible = true
-    var prefix = ""
-    var suffix = ""
-    var blockStyle = WritingSerializedBlockStyle()
+package struct WritingSerializedRow: Sendable {
+    package let text: String
+    package let textLength: Int
+    package let nativeContentLength: Int
+    package let hasLineFeed: Bool
+    package var isCode = false
+    package var eligible = true
+    package var prefix = ""
+    package var suffix = ""
+    package var blockStyle = WritingSerializedBlockStyle()
     /// Source ranges address text; native ranges are relative to this row.
-    let spans: [InlineMarkdown.SerializedSpan]
-    var nativeLength: Int { nativeContentLength + (hasLineFeed ? 1 : 0) }
-    var baseSourceLength: Int { textLength + (hasLineFeed ? 1 : 0) }
+    package let spans: [MarkdownSerializedSpan]
+    package var nativeLength: Int { nativeContentLength + (hasLineFeed ? 1 : 0) }
+    package var baseSourceLength: Int { textLength + (hasLineFeed ? 1 : 0) }
+    package init(text: String, textLength: Int, nativeContentLength: Int, hasLineFeed: Bool,
+                 isCode: Bool = false, eligible: Bool = true, prefix: String = "", suffix: String = "",
+                 blockStyle: WritingSerializedBlockStyle = .init(), spans: [MarkdownSerializedSpan]) {
+        self.text = text; self.textLength = textLength; self.nativeContentLength = nativeContentLength
+        self.hasLineFeed = hasLineFeed; self.isCode = isCode; self.eligible = eligible
+        self.prefix = prefix; self.suffix = suffix; self.blockStyle = blockStyle; self.spans = spans
+    }
+
 }
 
 /// Prefix totals include all native text, including opaque media/code, and source-only fences.
-final class WritingNativeRowIndex {
-    struct Located {
-        let row: WritingSerializedRow
-        let nativeRange: NSRange
-        let sourceStart: Int
-        let textStart: Int
+package final class WritingNativeRowIndex {
+    package init() {}
+    package struct Located {
+        package let row: WritingSerializedRow
+        package let nativeRange: NSRange
+        package let sourceStart: Int
+        package let textStart: Int
     }
     private final class Node {
         let row: WritingSerializedRow
@@ -68,17 +77,17 @@ final class WritingNativeRowIndex {
     }
     private var root: Node?
     private var random: UInt64 = 0x6d696e742d6e6174
-    var nativeLength: Int { root?.nativeLength ?? 0 }
-    var sourceLength: Int {
+    package var nativeLength: Int { root?.nativeLength ?? 0 }
+    package var sourceLength: Int {
         guard let root else { return 0 }
         return root.sourceLength(previousCode: false) + (root.lastCode ? 4 : 0)
     }
-    func snapshot() -> WritingNativeRowIndex {
+    package func snapshot() -> WritingNativeRowIndex {
         let copy = WritingNativeRowIndex()
         copy.root = root; copy.random = random
         return copy
     }
-    func sourceOffset(forNative offset: Int) -> Int? {
+    package func sourceOffset(forNative offset: Int) -> Int? {
         guard offset >= 0, offset <= nativeLength else { return nil }
         if nativeLength == 0 { return offset == 0 ? 0 : nil }
         guard let located = row(containingNative: offset) else { return nil }
@@ -94,7 +103,7 @@ final class WritingNativeRowIndex {
         if relative == located.row.nativeLength { return located.textStart + located.row.baseSourceLength }
         return nil
     }
-    func sourceCoverage(of nativeRange: NSRange) -> NSRange? {
+    package func sourceCoverage(of nativeRange: NSRange) -> NSRange? {
         guard nativeRange.length > 0, valid(nativeRange, length: nativeLength),
               let first = row(containingNative: nativeRange.location),
               let last = row(containingNative: nativeRange.upperBound - 1) else { return nil }
@@ -104,12 +113,12 @@ final class WritingNativeRowIndex {
         else { return nil }
         return NSRange(location: first.sourceStart, length: end - first.sourceStart)
     }
-    func reset(rows: [WritingSerializedRow]) {
+    package func reset(rows: [WritingSerializedRow]) {
         root = nil
         for row in rows where row.nativeLength > 0 { root = merge(root, node(row)) }
     }
     @discardableResult
-    func replace(_ nativeRange: NSRange, with rows: [WritingSerializedRow]) -> Bool {
+    package func replace(_ nativeRange: NSRange, with rows: [WritingSerializedRow]) -> Bool {
         guard valid(nativeRange, length: nativeLength), rows.allSatisfy({ $0.nativeLength >= 0 }),
               let first = rank(nativeRange.location), let end = rank(nativeRange.upperBound) else { return false }
         let (before, remaining) = split(root, count: first)
@@ -119,7 +128,7 @@ final class WritingNativeRowIndex {
         root = merge(merge(before, replacement), after)
         return true
     }
-    func row(containingNative offset: Int) -> Located? {
+    package func row(containingNative offset: Int) -> Located? {
         guard nativeLength > 0, offset >= 0, offset <= nativeLength else { return nil }
         let point = min(offset, nativeLength - 1)
         var next = root, source = 0, native = 0, previousCode = false
@@ -141,7 +150,7 @@ final class WritingNativeRowIndex {
         }
         return nil
     }
-    func row(containingSource point: Int) -> Located? {
+    package func row(containingSource point: Int) -> Located? {
         guard point >= 0, point < sourceLength else { return nil }
         var next = root, source = 0, native = 0, previousCode = false
         while let current = next {
@@ -162,7 +171,7 @@ final class WritingNativeRowIndex {
         }
         return nil
     }
-    func sourceIntervals(in range: NSRange) -> (eligible: [NSRange], blocked: [NSRange]) {
+    package func sourceIntervals(in range: NSRange) -> (eligible: [NSRange], blocked: [NSRange]) {
         var cursor = range.location, eligible: [NSRange] = [], blocked: [NSRange] = []
         while cursor < range.upperBound, let located = row(containingSource: cursor) {
             if located.row.eligible && !located.row.isCode {
@@ -189,7 +198,7 @@ final class WritingNativeRowIndex {
         }
         return (eligible, blocked)
     }
-    func nativeRange(forSource range: NSRange) -> NSRange? {
+    package func nativeRange(forSource range: NSRange) -> NSRange? {
         guard range.length > 0, valid(range, length: sourceLength), let located = row(containingSource: range.location),
               located.row.eligible, !located.row.isCode, range.location >= located.textStart,
               range.upperBound <= located.textStart + located.row.textLength else { return nil }

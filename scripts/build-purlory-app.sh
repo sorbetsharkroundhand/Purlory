@@ -31,7 +31,7 @@ cp Distribution/Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 cp Distribution/Resources/PrivacyInfo.xcprivacy "$APP/Contents/Resources/PrivacyInfo.xcprivacy"
 python3 scripts/validate-purlory-privacy.py "$APP"
 # Copy the distributed SwiftPM resources; test and benchmark bundles stay outside the app.
-for BUNDLE in Purlory_PurloryCore Purlory_PurloryKoreanBackend SwiftMath_SwiftMath swift-transformers_Hub swift-crypto_Crypto; do
+for BUNDLE in Purlory_PurloryCore Purlory_PurloryDocumentEngine Purlory_PurloryKoreanBackend SwiftMath_SwiftMath swift-transformers_Hub swift-crypto_Crypto; do
     cp -R "$REL/$BUNDLE.bundle" "$APP/Contents/Resources/"
 done
 python3 scripts/purlory-notices.py --checkouts .build/checkouts \

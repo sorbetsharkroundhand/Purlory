@@ -5,19 +5,19 @@ import SwiftMath
 
 /// Renders and caches LaTeX images on the main actor alongside editor updates and drawing (#45).
 @MainActor
-enum MathRenderer {
+package enum MathRenderer {
     /// Byte-bounded LRU eviction avoids clearing the entire cache during math-heavy typing (#53).
     private static var cache = ImageLRU(budgetBytes: mathCacheBudgetBytes)
     nonisolated private static let mathCacheBudgetBytes = 64 * 1024 * 1024
 
     /// Tests can exercise eviction with a smaller byte budget (#53).
-    static func _testResetCache(budgetBytes: Int? = nil) {
+    package static func _testResetCache(budgetBytes: Int? = nil) {
         cache = ImageLRU(budgetBytes: budgetBytes ?? Self.mathCacheBudgetBytes)
     }
 
     /// Returns nil for invalid LaTeX so the editor can retain its source text.
     /// Display blocks use `.display`; inline atoms use `.text` (#20).
-    static func image(
+    package static func image(
         latex: String, color: NSColor, fontSize: CGFloat,
         labelMode: MTMathUILabelMode = .display
     ) -> NSImage? {
@@ -25,7 +25,7 @@ enum MathRenderer {
     }
 
     /// Returns an image or a parsing error for the editor to display (#22).
-    static func render(
+    package static func render(
         latex: String, color: NSColor, fontSize: CGFloat,
         labelMode: MTMathUILabelMode = .display
     ) -> (image: NSImage?, error: String?) {
@@ -42,7 +42,7 @@ enum MathRenderer {
     }
 
     /// Shared by editor display and background EPUB export without touching the main-actor cache.
-    nonisolated static func uncachedImage(
+    package nonisolated static func uncachedImage(
         latex: String, color: NSColor, fontSize: CGFloat, labelMode: MTMathUILabelMode = .display
     ) -> (NSError?, NSImage?) {
         let renderer = MTMathImage(
@@ -61,7 +61,7 @@ enum MathRenderer {
 
     /// Parses and validates LaTeX into a SwiftMath AST for native EPUB MathML export,
     /// requiring the same non-empty typeset bounds as visual rendering.
-    nonisolated static func parsedMathList(
+    package nonisolated static func parsedMathList(
         latex: String, labelMode: MTMathUILabelMode = .display
     ) -> MTMathList? {
         let adapted = renderingSource(latex)
@@ -96,7 +96,7 @@ enum MathRenderer {
     }
 
     /// Draws the error and original LaTeX with a dashed red outline distinct from valid math (#22).
-    static func failurePlaceholder(
+    package static func failurePlaceholder(
         message: String, latex: String, color: NSColor
     ) -> NSImage {
         let width = max(260, min(560, CGFloat(latex.count) * fontSize0 * 0.42))
@@ -140,7 +140,7 @@ enum MathRenderer {
     }
 
     /// Converts a rendered image to PDF data for the copy action (#22).
-    static func pdfData(from image: NSImage) -> Data? {
+    package static func pdfData(from image: NSImage) -> Data? {
         var box = CGRect(origin: .zero, size: image.size)
         let data = NSMutableData()
         guard let consumer = CGDataConsumer(data: data as CFMutableData),

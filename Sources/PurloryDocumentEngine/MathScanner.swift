@@ -10,7 +10,7 @@ import Foundation
 ///   "5달러와 10달러($5와 $10)"처럼 통화 두 개가 한 쌍으로 뭉치는 것을 막는다.
 /// - 내용은 비어 있으면 안 되고, 안에 `$`(display 시작)를 못 넣는다.
 
-enum MathScanner {
+package enum MathScanner {
 
     private static let dollar: unichar = 36
     private static let backslash: unichar = 92
@@ -22,26 +22,26 @@ enum MathScanner {
     /// 원자를 끼고 `$`가 재결합하면 이중 변환으로 내용이 삼켜진다 (이슈 #20).
     private static let atomChar: unichar = 0xFFFC
     /// 발견된 수식 영역. range는 입력 문자열의 UTF-16 범위.
-    struct Region: Equatable {
-        enum Kind: Equatable {
+    package struct Region: Equatable {
+        package enum Kind: Equatable {
             /// `$…$` — SwiftMath text 모드로 렌더한다.
             case inlineText
             /// `$$…$$` (한 줄) — SwiftMath display 모드.
             case displayLine
         }
 
-        var kind: Kind
+        package var kind: Kind
         /// `$…$` 전체(구분자 포함) UTF-16 범위.
-        var range: NSRange
+        package var range: NSRange
         /// 구분자를 벗긴 LaTeX 소스.
-        var latex: String
+        package var latex: String
     }
 
     /// 한 줄(개행 없음 가정)에서 수식 영역을 앞에서부터 찾는다.
     ///
     /// `skipRanges`에는 코드 스팬(`` `…` ``) 등 수식 후보에서 제외할 범위를 넣는다 —
     /// 코드 안의 `$x$`는 문자 그대로다.
-    static func regions(in line: String, skipping skipRanges: [NSRange] = []) -> [Region] {
+    package static func regions(in line: String, skipping skipRanges: [NSRange] = []) -> [Region] {
         guard line.contains("$") else { return [] }
         let ns = line as NSString
         let length = ns.length
@@ -79,7 +79,7 @@ enum MathScanner {
     /// `$`를 누른 순간 완성되는 쌍만 소비해 편집 중 오변환을 막는다 (bold·code와
     /// 같은 타이밍 규칙 — transformInlineMarkerIfNeeded의 관습).
     @discardableResult
-    static func closingInline(in line: String, atCaret caret: Int) -> Region? {
+    package static func closingInline(in line: String, atCaret caret: Int) -> Region? {
         let ns = line as NSString
         guard caret >= 2, caret <= ns.length, character(ns, caret - 1) == dollar else {
             return nil

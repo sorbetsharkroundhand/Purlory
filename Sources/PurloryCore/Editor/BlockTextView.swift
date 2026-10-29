@@ -775,9 +775,6 @@ final class WritingScrollView: NSScrollView {
 // MARK: - 블록 모델
 
 /// 문단 블록 타입 (디자인의 data-md와 1:1).
-enum PurloryBlock: String {
-    case p, h1, h2, h3, h4, h5, h6, quote, bullet, number, todo, code, math, divider, image
-}
 
 /// 이미지 소스 한 줄(`![](src){width=NN align=X}`)에서 파싱한 표시 속성.
 /// 마크다운 왕복은 소스 문자열 그대로라 별도 저장 없이 `markdown`으로 되돌린다.
@@ -869,23 +866,6 @@ struct ImageRender {
     }
 }
 
-extension NSAttributedString.Key {
-    /// 문단의 블록 타입 (PurloryBlock rawValue).
-    static let purloryBlock = NSAttributedString.Key("purlory.block")
-    /// todo 체크 여부 (Bool).
-    static let purloryChecked = NSAttributedString.Key("purlory.checked")
-    /// number 블록의 마커 문자열 ("1." 등).
-    static let purloryMarker = NSAttributedString.Key("purlory.marker")
-    /// 목록·인용 들여쓰기 단계 (Int, 0...6).
-    static let purloryIndent = NSAttributedString.Key("purlory.indent")
-    /// 코드 블록 펜스 언어 태그 (String, 예: "swift").
-    static let purloryCodeLang = NSAttributedString.Key("purlory.codeLang")
-    /// 다중 행 display 수식 그룹에서의 구분자 역할 — "open"/"mid"/"close" (이슈 #20).
-    /// serialize는 이 값으로 `$$`를 어디에 되돌릴지 정한다. 없으면 단독 완결 수식.
-    static let purloryMathDelim = NSAttributedString.Key("purlory.mathDelim")
-    /// 인라인 수식 원자 문자(attachment) 표시 (Bool) — 직렬화·접근성 판별용.
-    static let purloryMath = NSAttributedString.Key("purlory.math")
-}
 
 // MARK: - 텍스트 뷰
 

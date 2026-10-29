@@ -1,3 +1,4 @@
+@testable import PurloryDocumentEngine
 import AppKit
 import Combine
 import UniformTypeIdentifiers

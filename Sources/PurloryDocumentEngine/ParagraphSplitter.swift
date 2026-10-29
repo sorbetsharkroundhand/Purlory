@@ -24,7 +24,7 @@ public enum ParagraphSplitter {
 
     /// 한국어 문장 경계: 종결부호 + 닫는 따옴표(선택) + 공백. 종결어미가 있어
     /// 이 규칙으로 충분하다 — 형태소 분석 불요(PLAN §16-7과 같은 논지).
-    static let sentenceBoundary = try! NSRegularExpression(
+    package static let sentenceBoundary = try! NSRegularExpression(
         pattern: #"[.!?…]["'”’」』]?\s+"#)
 
     /// 문단 평문이 `trigger`를 넘으면, `"\n\n"`을 넣을 UTF-16 오프셋 목록을

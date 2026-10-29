@@ -14,7 +14,7 @@ def dependencies(name):
                 result.add(dependency[kind][0])
     return result
 
-required = {'PurloryFoundation', 'PurloryStorage', 'PurloryInference'}
+required = {'PurloryFoundation', 'PurloryStorage', 'PurloryInference', 'PurloryDocumentEngine'}
 missing = required - targets.keys()
 assert not missing, f'Missing required boundary targets: {sorted(missing)}'
 assert not dependencies('PurloryFoundation'), 'Foundation must not depend on UI, domains or packages'

@@ -1,34 +1,35 @@
 import Foundation
 
 /// The editor's inline grammar, with original UTF-16 spans and no AppKit attributes.
-enum MarkdownInlineScanner {
-    struct Style: Sendable, Equatable {
-        var bold = false, italic = false, code = false
-        var strikethrough = false, highlight = false
-        var color: String?
-        var fontSize: Double?
+package enum MarkdownInlineScanner {
+    package struct Style: Sendable, Equatable {
+        package init() {}
+        package var bold = false, italic = false, code = false
+        package var strikethrough = false, highlight = false
+        package var color: String?
+        package var fontSize: Double?
     }
-    struct Span: Sendable {
-        let text: String
-        let sourceRange: NSRange
-        let style: Style
+    package struct Span: Sendable {
+        package let text: String
+        package let sourceRange: NSRange
+        package let style: Style
     }
     // U+2028 stays inside a formatted paragraph; only Enter (LF) separates it.
-    static let fontTag = regex(##"<font ((?:color="#[0-9A-Fa-f]{6}"|size="[0-9.]+")(?: (?:color="#[0-9A-Fa-f]{6}"|size="[0-9.]+"))*)>([^\n]*?)</font>"##)
+    package static let fontTag = regex(##"<font ((?:color="#[0-9A-Fa-f]{6}"|size="[0-9.]+")(?: (?:color="#[0-9A-Fa-f]{6}"|size="[0-9.]+"))*)>([^\n]*?)</font>"##)
     private static let fontColor = regex(##"color="#([0-9A-Fa-f]{6})""##)
     private static let fontSize = regex(#"size="([0-9.]+)""#)
-    static let code = regex(#"`([^`\n]+)`"#)
-    static let boldItalic = regex(#"(?<!\*)\*\*\*([^*\n]+)\*\*\*(?!\*)"#)
-    static let bold = regex(#"(?<!\*)\*\*([^*\n]+)\*\*(?!\*)"#)
-    static let italic = regex(#"(?<!\*)\*([^*\n]+)\*(?!\*)"#)
-    static let strikethrough = regex(#"(?<!~)~~([^~\n]+)~~(?!~)"#)
-    static let highlight = regex(#"(?<!=)==([^=\n]+)==(?!=)"#)
+    package static let code = regex(#"`([^`\n]+)`"#)
+    package static let boldItalic = regex(#"(?<!\*)\*\*\*([^*\n]+)\*\*\*(?!\*)"#)
+    package static let bold = regex(#"(?<!\*)\*\*([^*\n]+)\*\*(?!\*)"#)
+    package static let italic = regex(#"(?<!\*)\*([^*\n]+)\*(?!\*)"#)
+    package static let strikethrough = regex(#"(?<!~)~~([^~\n]+)~~(?!~)"#)
+    package static let highlight = regex(#"(?<!=)==([^=\n]+)==(?!=)"#)
     private enum Kind { case font, code, boldItalic, bold, italic, strikethrough, highlight }
     private static func regex(_ pattern: String) -> NSRegularExpression {
         try! NSRegularExpression(pattern: pattern)
     }
 
-    static func scan(_ text: String) -> [Span] { scan(text, inherited: Style(), offset: 0) }
+    package static func scan(_ text: String) -> [Span] { scan(text, inherited: Style(), offset: 0) }
 
     private static func scan(_ text: String, inherited: Style, offset: Int) -> [Span] {
         let ns = text as NSString

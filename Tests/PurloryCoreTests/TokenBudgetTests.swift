@@ -1,3 +1,4 @@
+@testable import PurloryDocumentEngine
 @_spi(Benchmark) @testable import PurloryInference
 import XCTest
 

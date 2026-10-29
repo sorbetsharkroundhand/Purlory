@@ -19,7 +19,7 @@ bundle metadata/signatures and MLX Metal output are separately identified.
 Build-time dependencies are included conservatively.
 
 The owner-selected body font, Noto Serif KR, is bundled unchanged in
-`Purlory_PurloryCore.bundle` from Google Fonts commit
+`Purlory_PurloryDocumentEngine.bundle` from Google Fonts commit
 `8b0a1d0f5983c89bc2b93f1b5fb55f9e252744b5`. Its variable TTF and original OFL 1.1
 text are hash-pinned in the inventory. Attribution retains both the embedded
 Adobe copyright and the copyright in the original Google license file.

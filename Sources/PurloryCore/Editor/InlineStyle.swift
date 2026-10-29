@@ -5,23 +5,6 @@ import AppKit
 /// 폰트·색 같은 실제 표시 속성은 이 키에서 파생돼 `decorateInline`이 조립한다.
 /// 저장은 항상 마크다운 마커(`**` `*` `~~` `==` `` ` `` `<font>` `<p align>`)로 되돌린다 —
 /// 파일 포맷은 순수 텍스트를 유지하고, 속성은 로드 때 다시 파싱된다.
-extension NSAttributedString.Key {
-    static let purloryBold = NSAttributedString.Key("purlory.bold")
-    static let purloryItalic = NSAttributedString.Key("purlory.italic")
-    static let purloryCode = NSAttributedString.Key("purlory.code")
-    static let purloryStrikethrough = NSAttributedString.Key("purlory.strikethrough")
-    static let purloryHighlight = NSAttributedString.Key("purlory.highlight")
-    /// 글자색 hex ("FF453A") — 저장은 `<font color="#…">` 태그.
-    static let purloryColor = NSAttributedString.Key("purlory.color")
-    /// 글자 크기 pt (Double) — 저장은 `<font size="…">` 태그. 블록 기본 크기와
-    /// 같으면 속성을 두지 않는다 (서식 툴바 크기 조절).
-    static let purloryFontSize = NSAttributedString.Key("purlory.fontSize")
-    /// 문단 정렬 "center"/"right" — 저장은 `<p align="…">` 래퍼 (.p 문단만 직렬화).
-    static let purloryAlign = NSAttributedString.Key("purlory.align")
-    /// 문단별 줄 간격 pt (Double) — 선택 줄에 한해 조절 (요구 4). 표시 전용이라
-    /// 마크다운으로는 저장되지 않고, 재로드 시 전역 설정값으로 돌아간다.
-    static let purloryLineSpacing = NSAttributedString.Key("purlory.lineSpacing")
-}
 
 /// 인라인 마크다운 ↔ purlory 인라인 속성 변환기 (파싱·직렬화 왕복 대칭).
 enum InlineMarkdown {
@@ -64,15 +47,7 @@ enum InlineMarkdown {
     /// 범위의 인라인 속성 런을 마커로 감싸 마크다운 한 줄로 되돌린다.
     /// 인라인 수식 원자(attachment)는 `$latex$`로 — 굵게 등 다른 마커로
     /// 감싸지 않는다 (원자는 서식의 대상이 아니라 객체다, 이슈 #20).
-    struct SerializedSpan: Sendable {
-        let source: NSRange
-        let body: NSRange?
-        let native: NSRange
-        let style: MarkdownInlineScanner.Style
-        var prefix = ""
-        var suffix = ""
-        var opaqueID: ObjectIdentifier? = nil
-    }
+    typealias SerializedSpan = MarkdownSerializedSpan
 
     static func serialize(_ storage: NSAttributedString, in range: NSRange,
                           capture: ((SerializedSpan) -> Void)? = nil) -> String {

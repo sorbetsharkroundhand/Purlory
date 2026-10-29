@@ -58,11 +58,11 @@ public struct DocumentOutline: Equatable, Sendable {
     /// `.prefix(1500)`이 절대 자르지 않는다.
     public static let maxSegmentUTF16 = 1_500
     /// 세그먼트 크기 하한 — 이보다 작으면 경계를 찾지 않는다 (토막 씬 방지).
-    static let minSegmentUTF16 = 800
+    package static let minSegmentUTF16 = 800
     /// CDC 경계 확률 = 1/8 (문장당). [800,1500] 여유 ≈ 20문장에서 경계를 못
     /// 찾을 확률 (7/8)^20 ≈ 7% — 강제 절단이 드물어야 내용 정의의 성질(편집
     /// 영향의 국소화)이 산다 (docs/m6-scene-split.md §2.4).
-    static let boundaryDivisor: UInt64 = 8
+    package static let boundaryDivisor: UInt64 = 8
 
     /// 담화 순서의 씬들 — 이 배열 인덱스가 Pos v1이다 (PLAN §5).
     public let scenes: [Scene]
@@ -175,7 +175,7 @@ public struct DocumentOutline: Equatable, Sendable {
     /// 한 글자 편집의 재요약 반경이 국소에 갇힌다 (CLAUDE.md §2-3 증분이 기본).
     /// 명시적 장면 전환 구분자 (요구사항 §32) — 작가가 그은 경계는 CDC보다
     /// 우선한다. 이 줄에서 끊긴 세그먼트는 의미 단위와 정확히 일치한다.
-    static func isSceneBreakLine(_ piece: Substring) -> Bool {
+    package static func isSceneBreakLine(_ piece: Substring) -> Bool {
         let trimmed = piece.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed.count <= 8 else { return false }
         // "***"·"* * *"·"⁂"·"§" 등 — 산문에 나올 수 없는 구분자 문자만으로 된 줄.
@@ -186,15 +186,15 @@ public struct DocumentOutline: Equatable, Sendable {
 
     /// 구분자 경계 성립을 위한 최소 세그먼트 크기 — 토막 방지 (하한보다 작게
     /// 잡는다: 작가의 명시 경계는 CDC 하한을 기다릴 이유가 없다).
-    static let minBreakSegmentUTF16 = 200
+    package static let minBreakSegmentUTF16 = 200
 
     /// 본문에 장면 구분자 줄이 있는가 — closeScene 빠른 경로의 게이트.
     /// 씬 크기는 상한(1,500) 이하라 줄 단위 스캔 비용이 미미하다.
-    static func containsSceneBreakLine(_ text: Substring) -> Bool {
+    package static func containsSceneBreakLine(_ text: Substring) -> Bool {
         text.split(separator: "\n").contains { isSceneBreakLine($0) }
     }
 
-    static func segmentRanges(of text: Substring) -> [Range<String.Index>] {
+    package static func segmentRanges(of text: Substring) -> [Range<String.Index>] {
         let pieces = capOversized(sentencePieces(in: text), in: text)
         var segments: [Range<String.Index>] = []
         var segmentStart = text.startIndex
@@ -237,7 +237,7 @@ public struct DocumentOutline: Equatable, Sendable {
     /// 문장 조각들 — 종결부호(+닫는 따옴표) 뒤 공백, 또는 개행 뭉치에서 끊는다.
     /// 각 조각은 꼬리 공백을 포함해 원문을 빈틈없이 덮는다.
     /// "3.5초"·"1930." 같은 숫자 소수점은 뒤가 공백이 아니라 끊기지 않는다.
-    static func sentencePieces(in text: Substring) -> [Range<String.Index>] {
+    package static func sentencePieces(in text: Substring) -> [Range<String.Index>] {
         let terminals: Set<Character> = [".", "!", "?", "…", "。", "！", "？"]
         let closers: Set<Character> = ["”", "\"", "」", "』", "’", "'"]
         var pieces: [Range<String.Index>] = []
@@ -286,7 +286,7 @@ public struct DocumentOutline: Equatable, Sendable {
     /// 폴백 사슬 — 상한을 넘는 "문장"(종결부호 없는 붙여쓴 텍스트)을 어절로,
     /// 그것도 안 되면 강제로 자른다. 이 사슬이 없으면 종결부호 없는 4,000자가
     /// 세그먼트 하나가 되어 잘림이 되돌아온다 (docs/m6-scene-split.md §2.2).
-    static func capOversized(
+    package static func capOversized(
         _ pieces: [Range<String.Index>], in text: Substring
     ) -> [Range<String.Index>] {
         var result: [Range<String.Index>] = []
@@ -327,7 +327,7 @@ public struct DocumentOutline: Equatable, Sendable {
     /// CDC 경계 판정용 해시 — **프로세스 간 안정**이 필수다. Swift `Hasher`는
     /// 실행마다 시드가 달라 경계가 매 실행 바뀌고, 그러면 콘텐츠 해시 메모가
     /// 전부 빗나가 매 실행 전체 재요약이 된다. FNV-1a는 결정적이고 싸다.
-    static func fnv1a(_ text: Substring) -> UInt64 {
+    package static func fnv1a(_ text: Substring) -> UInt64 {
         var hash: UInt64 = 0xcbf2_9ce4_8422_2325
         for byte in text.utf8 {
             hash = (hash ^ UInt64(byte)) &* 0x0000_0100_0000_01b3
@@ -337,7 +337,7 @@ public struct DocumentOutline: Equatable, Sendable {
 
     /// `#{1,3} 제목` 꼴이면 (레벨, 제목). `####` 이상·공백 없는 `#텍스트`는 본문.
     /// 에디터의 제목 파생(`EntryStore.derivedTitle`)과 같은 판정 기준이다.
-    static func headingLine(_ line: Substring) -> (Int, String)? {
+    package static func headingLine(_ line: Substring) -> (Int, String)? {
         var level = 0
         var index = line.startIndex
         while index < line.endIndex, line[index] == "#", level < 4 {
@@ -352,7 +352,7 @@ public struct DocumentOutline: Equatable, Sendable {
     }
 
     /// Content revisions cannot identify repeated source occurrences. Omit ambiguous keys.
-    var unambiguousSceneIndicesByHash: [String: Int] {
+    package var unambiguousSceneIndicesByHash: [String: Int] {
         var indices: [String: Int] = [:], repeated: Set<String> = []
         for (index, scene) in scenes.enumerated() {
             if indices.updateValue(index, forKey: scene.contentHash) != nil { repeated.insert(scene.contentHash) }
@@ -367,7 +367,7 @@ public struct DocumentOutline: Equatable, Sendable {
 
     /// 프로세스 간 안정 해시 — 씬 해시와 같은 규격 (SHA-256 앞 16자).
     /// 장·작품 노드의 결합 해시(BackgroundIndexer)도 이 규격을 쓴다.
-    static func stableHash(_ text: String) -> String {
+    package static func stableHash(_ text: String) -> String {
         SHA256.hash(data: Data(text.utf8))
             .prefix(8)
             .map { String(format: "%02x", $0) }

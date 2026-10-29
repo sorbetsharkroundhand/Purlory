@@ -1,3 +1,4 @@
+@testable import PurloryDocumentEngine
 import AppKit
 import SwiftUI
 import XCTest
