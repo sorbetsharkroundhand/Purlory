@@ -5,6 +5,7 @@ import Foundation
 public actor ProjectStore {
     let root: URL
     let files: any ProjectFileSystem
+    var saveBaseline: ProjectSaveBaseline?
 
     public init(root: URL, fileSystem: any ProjectFileSystem = LocalProjectFileSystem()) {
         self.root = root.standardizedFileURL.resolvingSymlinksInPath()
@@ -214,11 +215,14 @@ public actor ProjectStore {
     }
 
     func materialize(_ manifest: ProjectManifest) throws -> WritingProject {
+        try materialize(manifest, read: { try verified($0, in: manifest.id) })
+    }
+
+    func materialize(_ manifest: ProjectManifest, read: (ProjectFileRecord) throws -> Data) throws -> WritingProject {
         var documents: [WritingDocument] = []
         for record in manifest.documents {
             try Task.checkCancellation()
-            let data = try verified(ProjectFileRecord(
-                relativePath: record.relativePath, contentHash: record.contentHash), in: manifest.id)
+            let data = try read(ProjectFileRecord(relativePath: record.relativePath, contentHash: record.contentHash))
             guard let body = String(data: data, encoding: .utf8) else {
                 throw ProjectStoreError.damagedFile(record.relativePath)
             }
@@ -226,13 +230,13 @@ public actor ProjectStore {
         }
         for record in manifest.assets {
             try Task.checkCancellation()
-            _ = try verified(record.file, in: manifest.id)
+            _ = try read(record.file)
         }
-        if let source = manifest.legacySource { _ = try verified(source, in: manifest.id) }
+        if let source = manifest.legacySource { _ = try read(source) }
         var userData: [String: Data] = [:]
         for (key, record) in manifest.userData {
             try Task.checkCancellation()
-            userData[key] = try verified(record, in: manifest.id)
+            userData[key] = try read(record)
         }
         return WritingProject(
             id: manifest.id,
@@ -279,6 +283,9 @@ public actor ProjectStore {
     }
 
     func saveUnlocked(_ project: WritingProject, importedAssets: [String: Data] = [:], source: Data? = nil) throws {
+        let baseline = saveBaseline
+        // Any throw leaves no reusable baseline, including a failed manifest commit.
+        saveBaseline = nil
         let documentIDs = Set(project.documents.map(\.id))
         guard documentIDs.count == project.documents.count,
             project.trashedDocumentIDs.isSubset(of: documentIDs)
@@ -288,7 +295,19 @@ public actor ProjectStore {
         let manifestURL = try projectURL(project.id, "project.json")
         let oldData = files.fileExists(at: manifestURL) ? try files.read(manifestURL) : nil
         let old = oldData == nil ? nil : try readManifest(id: project.id)
-        if let old { _ = try materialize(old) }
+        var versions: [String: ProjectFileVersion] = [:]
+        let previous: WritingProject?
+        if let old {
+            if let baseline, baseline.project.id == project.id, baseline.manifestBytes == oldData, baseline.manifest == old {
+                versions = baseline.versions
+                try verifyForSave(old, versions: &versions)
+                previous = baseline.project
+            } else {
+                previous = try materialize(old, read: { try readForSave($0, in: project.id, versions: &versions) })
+            }
+        } else { previous = nil }
+        let previousDocuments = Dictionary(uniqueKeysWithValues: (previous?.documents ?? []).map { ($0.id, $0) })
+        let previousRecords = Dictionary(uniqueKeysWithValues: (old?.documents ?? []).map { ($0.id, $0) })
         for directory in ["Documents", "Notes", "Assets", "Intelligence", "UserData"] {
             try files.createDirectory(at: projectURL(project.id, directory))
         }
@@ -301,12 +320,23 @@ public actor ProjectStore {
         manifest.assets = old?.assets ?? []
         manifest.legacySource = old?.legacySource
         for (key, data) in project.userData.sorted(by: { $0.key < $1.key }) {
+            if previous?.userData[key] == data, let record = old?.userData[key] {
+                manifest.userData[key] = record
+                continue
+            }
             let hash = ProjectDigest.hash(data)
             let path = try userDataPath(key: key, hash: hash)
             try writeImmutable(data, path: path, id: project.id)
             manifest.userData[key] = ProjectFileRecord(relativePath: path, contentHash: hash)
         }
         for document in project.documents {
+            try Task.checkCancellation()
+            if let prior = previousDocuments[document.id], prior.kind == document.kind,
+               prior.body.utf8.elementsEqual(document.body.utf8), var record = previousRecords[document.id] {
+                record.title = document.title
+                manifest.documents.append(record)
+                continue
+            }
             let data = Data(document.body.utf8)
             let hash = ProjectDigest.hash(data)
             let path = documentPath(id: document.id, kind: document.kind, hash: hash)
@@ -328,16 +358,20 @@ public actor ProjectStore {
             manifest.legacySource = record
         }
         // 검증은 최종 커밋 전에 끝낸다. 그 뒤 실패 보고로 성공한 저장을 오인시키지 않는다.
-        _ = try materialize(manifest)
+        try verifyForSave(manifest, versions: &versions)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let data = try encoder.encode(manifest)
-        if data == oldData { return }
-        if let oldData {
-            try files.writeAtomically(oldData, to: projectURL(project.id, "previous-project.json"))
+        if data != oldData {
+            if let oldData {
+                try files.writeAtomically(oldData, to: projectURL(project.id, "previous-project.json"))
+            }
+            try Task.checkCancellation()
+            try files.writeAtomically(data, to: manifestURL)
         }
-        try Task.checkCancellation()
-        try files.writeAtomically(data, to: manifestURL)
+        let livePaths = Set(manifest.durableFiles.map(\.relativePath))
+        saveBaseline = ProjectSaveBaseline(project: project, manifest: manifest, manifestBytes: data,
+            versions: versions.filter { livePaths.contains($0.key) })
     }
 
     func activateUnlocked(id: WritingProjectID, expected: WritingProject? = nil) throws -> WritingProject {
