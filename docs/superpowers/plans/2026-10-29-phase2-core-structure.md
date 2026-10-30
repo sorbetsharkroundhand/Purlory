@@ -47,8 +47,8 @@
 **Files:** existing giant `BlockTextView.swift` and new focused codec, decoration, attachment, overlay and input files.
 **Interfaces:** Preserve existing editor call sites, delegate events and state ownership; coordinator remains in WorkspaceUI.
 
-- [ ] Extract complete responsibility units without changing serialization/input behavior.
-- [ ] Run serialization/fuzz, native editor, IME/undo/media and transition regressions; review and commit.
+- [x] Extract complete responsibility units without changing serialization/input behavior.
+- [x] Run serialization/fuzz, native editor, IME/undo/media and transition regressions; review and commit.
 
 ### Task 4: Incremental immutable document sources
 
