@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 @testable import PurloryStorage
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 저장·내보내기·검색의 백그라운드 전환 (이슈 #33 / #65 Phase 4).
 ///

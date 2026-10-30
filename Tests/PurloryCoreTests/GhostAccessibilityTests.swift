@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 고스트 제안의 접근성 통합과 컨테이너 폭 줄바꿈 (이슈 #24 / #65 Phase 5).
 ///

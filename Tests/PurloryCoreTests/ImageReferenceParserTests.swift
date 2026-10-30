@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 @testable import PurloryDocumentEngine
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 이미지 참조 파서 회귀 (이슈 #12) — CommonMark spec §592–616의 이미지
 /// 사례를 코퍼스로 쓴다. 옛 한 줄 정규식이 놓치던 angle destination·공백·

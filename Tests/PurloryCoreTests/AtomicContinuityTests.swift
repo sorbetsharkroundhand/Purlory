@@ -1,5 +1,7 @@
+@testable import PurloryIntelligence
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 final class AtomicContinuityTests: XCTestCase {
     private let actor = CharacterCard(name: "민준"), other = CharacterCard(name: "서연")

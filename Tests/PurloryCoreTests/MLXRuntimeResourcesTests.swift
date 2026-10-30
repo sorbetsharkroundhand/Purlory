@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 @_spi(Benchmark) @testable import PurloryInference
 import Foundation
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 final class MLXRuntimeResourcesTests: XCTestCase {
     func testUsesPackagedLibraryWithoutWorkingDirectoryLookup() throws {

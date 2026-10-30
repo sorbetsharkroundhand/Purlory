@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 @_spi(Benchmark) @testable import PurloryInference
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// "지금 읽기" 패스의 단계·취소·게이트 차단 사유 (이슈 #35 / #65 Phase 6).
 ///

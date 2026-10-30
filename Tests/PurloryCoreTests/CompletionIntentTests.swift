@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 설정·툴바 단일 의유 API 회귀 (이슈 #11).
 ///

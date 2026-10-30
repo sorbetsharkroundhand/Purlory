@@ -1,8 +1,10 @@
+@testable import PurloryIntelligence
 @_spi(Benchmark) @testable import PurloryInference
 import XCTest
 import MLXLMCommon
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 final class GenerationTaskSynchronizerTests: XCTestCase {
     private actor Probe {

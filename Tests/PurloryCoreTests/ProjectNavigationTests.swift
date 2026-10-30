@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 @testable import PurloryStorage
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 final class ProjectNavigationTests: XCTestCase {
     private func project() -> WritingProject {

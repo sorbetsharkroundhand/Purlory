@@ -1,9 +1,11 @@
+@testable import PurloryIntelligence
 @testable import PurloryStorage
 import AppKit
 import CryptoKit
 import Darwin
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// Synthetic AppKit measurements; native event-to-idle/IME and actual paint are owner checks.
 @MainActor

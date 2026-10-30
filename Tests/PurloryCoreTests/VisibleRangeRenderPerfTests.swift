@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 import AppKit
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 가시 범위 렌더의 실측 (이슈 #18 종결 근거).
 ///

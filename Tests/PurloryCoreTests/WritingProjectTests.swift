@@ -1,3 +1,4 @@
+@testable import PurloryIntelligence
 import XCTest
 import PurloryCore
 

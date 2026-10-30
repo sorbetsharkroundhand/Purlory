@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 @testable import PurloryDocumentEngine
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// Narrative Graph (v5) — 구간·흐름·정본 사건·인과·시간 부분 순서·대화 기록·
 /// 인물 감지 강화의 결정적 로직 검증. 요구사항 §35의 End-to-End Case 1–25를

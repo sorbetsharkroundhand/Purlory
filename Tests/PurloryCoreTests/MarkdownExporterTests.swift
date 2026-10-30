@@ -1,8 +1,10 @@
+@testable import PurloryIntelligence
 @testable import PurloryDocumentEngine
 @testable import PurloryStorage
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// Markdown 내보내기의 asset 복사·경로 재작성 회귀 (이슈 #13).
 ///

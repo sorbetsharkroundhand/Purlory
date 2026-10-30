@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 @testable import PurloryStorage
 import Foundation
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// Models atomic-write interruption before commit through the production filesystem seam.
 /// Staged replacement bytes belong only to the fresh fixture root, never the destination.

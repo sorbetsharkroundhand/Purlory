@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 @testable import PurloryStorage
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 final class ProjectUserDataTests: XCTestCase {
     // Catches an older schema-1 writer silently discarding the new durable references.

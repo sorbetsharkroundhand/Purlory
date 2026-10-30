@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 @testable import PurloryDocumentEngine
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 대화 귀속·존대 매트릭스·대화 모드 회귀 테스트 (M6, PLAN §6.4·§7·§10).
 /// 전부 결정적 로직이라 모델 없이 돈다.

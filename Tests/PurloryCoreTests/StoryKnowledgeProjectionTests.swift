@@ -1,8 +1,10 @@
+@testable import PurloryIntelligence
 @testable import PurloryDocumentEngine
 @_spi(Benchmark) @testable import PurloryInference
 import Combine
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 final class StoryKnowledgeProjectionTests: XCTestCase {
     private let document = WritingDocumentID(), character = UUID(), other = UUID()

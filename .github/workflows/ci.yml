@@ -54,6 +54,9 @@ jobs:
       - name: Build Purlory
         run: swift build --product Purlory
 
+      - name: Verify implementation module boundaries
+        run: python3 scripts/check-module-boundaries.py
+
       - name: Test PurloryCore
         run: swift test
 

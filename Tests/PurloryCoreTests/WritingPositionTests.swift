@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 문서별 집필 위치 영속·재안착 (이슈 #36 / #65 Phase 6).
 ///

@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 @testable import PurloryDocumentEngine
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 일관성 경고 회귀 테스트 (M7) — 전부 결정적, 모델 없음.
 final class ConsistencyCheckerTests: XCTestCase {

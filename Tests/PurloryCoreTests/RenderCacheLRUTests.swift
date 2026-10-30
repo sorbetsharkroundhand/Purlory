@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 @testable import PurloryDocumentEngine
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 이미지·수식 렌더 캐시의 바이트 LRU와 다운샘플 디코딩 (이슈 #53 / #65 Phase 4).
 ///

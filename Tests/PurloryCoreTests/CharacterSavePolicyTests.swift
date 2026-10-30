@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// CharacterBible 글자당 동기 전체 저장 회귀 (이슈 #49 / #65 H1).
 ///

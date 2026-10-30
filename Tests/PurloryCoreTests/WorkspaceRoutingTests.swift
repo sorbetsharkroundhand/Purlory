@@ -1,5 +1,7 @@
+@testable import PurloryIntelligence
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 final class WorkspaceRoutingTests: XCTestCase {
     func testFictionRoutesWriteMapReview() {

@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 폴더 이름 생성 태스크 수명주기 (이슈 #47).
 ///

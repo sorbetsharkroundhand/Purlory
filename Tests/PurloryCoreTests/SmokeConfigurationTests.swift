@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 import CryptoKit
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 final class SmokeConfigurationTests: XCTestCase {
     func testProjectStateVerifierReadsBodyReferencedByActiveManifest() throws {

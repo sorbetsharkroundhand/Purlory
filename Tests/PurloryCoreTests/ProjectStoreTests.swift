@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 @testable import PurloryStorage
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 final class ProjectStoreTests: XCTestCase {
     // Catches dropped manuscript/trash/source records and unverified or mutable asset storage.

@@ -1,3 +1,4 @@
+@testable import PurloryIntelligence
 @_spi(Benchmark) @testable import PurloryInference
 @testable import PurloryStorage
 import Combine
@@ -5,6 +6,7 @@ import AppKit
 import Foundation
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 @MainActor
 final class ProjectSessionTests: XCTestCase {

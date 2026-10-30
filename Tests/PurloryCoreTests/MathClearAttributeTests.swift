@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 리프레시 경로의 O(문서) 임시 속성 제거 제거 — 범위 한정 닦기 (이슈 #18).
 ///

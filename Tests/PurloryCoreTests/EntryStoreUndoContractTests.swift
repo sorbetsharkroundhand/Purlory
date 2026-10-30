@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 final class EntryStoreUndoContractTests: XCTestCase {
     /// 이벤트 루프를 돌리지 않아야 Task로 미룬 복원·역등록을 즉시 검출한다.

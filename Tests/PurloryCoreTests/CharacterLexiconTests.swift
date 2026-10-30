@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 감지 언어 지식(렉시콘) 회귀 테스트 (PLAN §7) — 조사 표의 정렬 불변식과
 /// 제외 집합 병합을 고정한다. Apple 형태소 분석기가 한국어 품사를 못 주는

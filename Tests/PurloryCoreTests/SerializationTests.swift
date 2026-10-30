@@ -1,8 +1,10 @@
+@testable import PurloryIntelligence
 import AppKit
 import SwiftUI
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 원고 무결성 회귀 테스트 — 직렬화는 **저장 경로**다. 여기가 틀리면 원고가
 /// 손상되고 되돌릴 수 없다 (CLAUDE.md §5-5).

@@ -1,8 +1,10 @@
+@testable import PurloryIntelligence
 @testable import PurloryDocumentEngine
 @_spi(Benchmark) @testable import PurloryInference
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 토큰 기반 컨텍스트 예산 (이슈 #43 / #65 Phase 4).
 ///

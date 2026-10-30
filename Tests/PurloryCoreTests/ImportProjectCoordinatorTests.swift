@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 @testable import PurloryStorage
 import Foundation
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 @MainActor
 final class ImportProjectCoordinatorTests: XCTestCase {

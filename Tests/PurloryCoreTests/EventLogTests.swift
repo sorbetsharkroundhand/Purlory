@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 사건 로그 파서 회귀 테스트 (PLAN §6.3, docs/m6-events.md).
 /// 델타 세부는 StateDeltaTests, 근거 검증·중복 제거는 NarrativeIntelligenceTests가

@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 import AppKit
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 증분 직렬화의 전후 지연 측정 (docs/editor-perf.md).
 /// `swift test --filter SerializationPerfTests` — 수치를 로그로 출력한다.

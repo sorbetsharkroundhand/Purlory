@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 의미 텍스트 토큰의 WCAG 대비 검증 (이슈 #29 / #65 Phase 5).
 ///

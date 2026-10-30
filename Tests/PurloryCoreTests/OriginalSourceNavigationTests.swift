@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 import AppKit
 import CryptoKit
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 @MainActor
 final class OriginalSourceNavigationTests: XCTestCase {

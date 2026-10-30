@@ -1,3 +1,4 @@
+@testable import PurloryIntelligence
 import Foundation
 import XCTest
 @testable import PurloryKoreanBackend

@@ -1,8 +1,10 @@
+@testable import PurloryIntelligence
 @testable import PurloryDocumentEngine
 @_spi(Benchmark) @testable import PurloryInference
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// ContextAssembler의 사용자 결정(Pin) 규율과 stableKey 고유성 검증.
 ///

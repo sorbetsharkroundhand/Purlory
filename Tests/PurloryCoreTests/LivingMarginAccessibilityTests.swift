@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 final class LivingMarginAccessibilityTests: XCTestCase {
     func testEveryKindHasAReadableCategoryAndSymbol() {

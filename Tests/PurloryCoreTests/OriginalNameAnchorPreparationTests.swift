@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 import Combine
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 final class OriginalNameAnchorPreparationTests: XCTestCase {
     @MainActor

@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 @testable import PurloryDocumentEngine
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 final class DuplicateSceneSafetyTests: XCTestCase {
     private let source = "# 반복\n같은 원문\n# 반복\n같은 원문\n# 끝\n마지막 원문\n"

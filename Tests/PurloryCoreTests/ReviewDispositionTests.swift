@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 @testable import PurloryDocumentEngine
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 @MainActor
 final class ReviewDispositionTests: XCTestCase {

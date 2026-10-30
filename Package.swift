@@ -37,6 +37,7 @@ let package = Package(
         ]),
         .target(name: "PurloryDocumentEngine", dependencies: ["PurloryFoundation", .product(name: "SwiftMath", package: "SwiftMath")],
                 resources: [.process("Resources/Fonts")]),
+        .target(name: "PurloryIntelligence", dependencies: ["PurloryFoundation", "PurloryStorage", "PurloryDocumentEngine", "PurloryInference", "PurloryKoreanBackend"]),
         // Prepared from the checksum-pinned manifest before package loading/building.
         .binaryTarget(name: "Kiwi", path: "Packages/PurloryKoreanBackend/Artifacts/KiwiStatic.xcframework"),
         .target(name: "CKiwiBridge", dependencies: ["Kiwi"],
@@ -47,20 +48,14 @@ let package = Package(
         .target(name: "PurloryKoreanBackend", dependencies: ["CKiwiBridge"],
             path: "Packages/PurloryKoreanBackend/Sources/PurloryKoreanBackend",
             resources: [.copy("Resources/Kiwi")]),
-        // 앱의 화면·로직은 라이브러리 타깃에 둔다.
-        //  · SwiftUI 프리뷰는 executableTarget에서 ENABLE_DEBUG_DYLIB 제약으로 막히지만,
-        //    라이브러리 타깃의 뷰는 프리뷰가 정상 동작한다.
-        //  · PLAN의 "관심사 분리는 모듈로"(Editor/Inference/Storage) 방향과도 맞다.
+        // Native workspace composition owns views, editor integration and icons.
         .target(
-            name: "PurloryCore",
-            dependencies: [
-                "PurloryFoundation", "PurloryStorage", "PurloryInference", "PurloryDocumentEngine",
-                "PurloryKoreanBackend",
-                .product(name: "SwiftMath", package: "SwiftMath"),
-            ],
-            path: "Sources/PurloryCore",
+            name: "PurloryWorkspaceUI",
+            dependencies: ["PurloryFoundation", "PurloryStorage", "PurloryInference", "PurloryDocumentEngine", "PurloryIntelligence",
+                           "PurloryKoreanBackend", .product(name: "SwiftMath", package: "SwiftMath")],
             resources: [.process("Resources/Icons")]
         ),
+        .target(name: "PurloryCore", dependencies: ["PurloryFoundation", "PurloryStorage", "PurloryInference", "PurloryDocumentEngine", "PurloryIntelligence", "PurloryWorkspaceUI"]),
         // @main 진입점만 담은 얇은 실행 셸. 실제 화면/로직은 PurloryCore에 있다.
         .executableTarget(
             name: "Purlory",
@@ -71,14 +66,14 @@ let package = Package(
         // Mac에서: swift run -c release PurloryBench [--model <hf-id>] …
         .executableTarget(
             name: "PurloryBench",
-            dependencies: ["PurloryCore", "PurloryInference"],
+            dependencies: ["PurloryCore", "PurloryInference", "PurloryIntelligence"],
             path: "Sources/PurloryBench"
         ),
         // Deterministic editor/storage and pinned offline NLP regressions.
         // No Ghost model or Metal execution is required.
         .testTarget(
             name: "PurloryCoreTests",
-            dependencies: ["PurloryCore", "PurloryKoreanBackend", "PurloryFoundation", "PurloryStorage", "PurloryInference", "PurloryDocumentEngine"],
+            dependencies: ["PurloryCore", "PurloryKoreanBackend", "PurloryFoundation", "PurloryStorage", "PurloryInference", "PurloryDocumentEngine", "PurloryIntelligence", "PurloryWorkspaceUI"],
             path: "Tests/PurloryCoreTests",
             resources: [.copy("Fixtures/KoreanDiagnostics"), .copy("Fixtures/NativeWorkspaceHTML")]
         ),

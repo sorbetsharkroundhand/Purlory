@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 import AppKit
 import SwiftUI
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 @MainActor
 final class ReleaseAccentContrastTests: XCTestCase {

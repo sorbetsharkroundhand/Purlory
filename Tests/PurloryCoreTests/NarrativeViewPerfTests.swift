@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 @testable import PurloryDocumentEngine
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// Cold narrative projection cost. NarrativeView caches this result until the snapshot
 /// generation, projection or minor-group expansion changes; ordinary hover/typing reuses it.

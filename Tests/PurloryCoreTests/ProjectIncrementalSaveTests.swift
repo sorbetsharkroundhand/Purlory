@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 @testable import PurloryStorage
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 final class ProjectIncrementalSaveTests: XCTestCase {
     // A warm single-document edit must not read unchanged manuscript bytes.

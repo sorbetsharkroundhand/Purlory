@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 @testable import PurloryDocumentEngine
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 상태 바 통계 회귀 테스트 — 단일 패스 `TextStats.compute`가 기존 상태 바
 /// 공식(`filter`/`split` 각각 문서 전체 순회)과 **결과 동일**함을 고정한다.

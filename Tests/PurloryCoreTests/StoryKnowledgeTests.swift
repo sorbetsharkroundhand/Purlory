@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 import Foundation
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 final class StoryKnowledgeTests: XCTestCase {
     private let documentID = WritingDocumentID()

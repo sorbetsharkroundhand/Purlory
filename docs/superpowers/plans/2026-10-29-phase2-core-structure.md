@@ -29,18 +29,18 @@
 **Files:** `Package.swift`, new `Sources/PurloryFoundation/`, `Sources/PurloryStorage/`, compatibility imports and storage tests.
 **Interfaces:** Existing public project/value/store APIs remain available through PurloryCore; internal cross-target collaboration uses package access.
 
-- [ ] Add and observe module-boundary regression before extraction.
-- [ ] Move generic values/storage, keeping legacy conversion and session/UI glue above Storage.
-- [ ] Run storage/import/recovery/session suites and build; review and commit.
+- [x] Add and observe module-boundary regression before extraction.
+- [x] Move generic values/storage, keeping legacy conversion and session/UI glue above Storage.
+- [x] Run storage/import/recovery/session suites and build; review and commit.
 
 ### Task 2: Complete the dependency DAG
 
 **Files:** new `Sources/PurloryDocumentEngine/`, `Sources/PurloryInference/`, `Sources/PurloryIntelligence/`, `Sources/PurloryWorkspaceUI/`; app resources, package/bundle scripts and tests.
 **Interfaces:** PurloryCore becomes the compatibility export; generation accepts assembled prompts and domain context stays above model execution.
 
-- [ ] Extract domain-neutral prompt/configuration contracts and relocate domain assembly/bridges to avoid cycles.
-- [ ] Move editor primitives, analysis and UI composition to their owners with minimal package interfaces.
-- [ ] Update resource ownership and enforce dependency graph; run full build/test and commit.
+- [x] Extract domain-neutral prompt/configuration contracts and relocate domain assembly/bridges to avoid cycles.
+- [x] Move editor primitives, analysis and UI composition to their owners with minimal package interfaces.
+- [x] Update resource ownership and enforce dependency graph; run full build/test and commit.
 
 ### Task 3: Separate editor responsibilities
 

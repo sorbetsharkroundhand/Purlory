@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 import AppKit
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 @MainActor final class NavigatorDragUXTests: XCTestCase {
     func testDropCannotBeClaimedByARowOutsideTheNavigatorBounds() async throws {

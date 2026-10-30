@@ -1,8 +1,10 @@
+@testable import PurloryIntelligence
 @testable import PurloryDocumentEngine
 import AppKit
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 에디터 storage 편집으로서의 긴 문단 나누기 검증 (docs/editor-paragraph-split.md).
 /// 순수 로직(ParagraphSplitterTests)과 별개로, 실제 storage·undo·직렬화를 몬다.

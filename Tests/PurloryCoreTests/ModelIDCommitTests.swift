@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 @_spi(Benchmark) @testable import PurloryInference
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 모델 ID 커밋 경계 검증 (이슈 #25 / #65 H2).
 ///

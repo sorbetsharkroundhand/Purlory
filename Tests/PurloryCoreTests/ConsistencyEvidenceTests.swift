@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 @testable import PurloryDocumentEngine
 @_spi(Benchmark) @testable import PurloryInference
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 final class ConsistencyEvidenceTests: XCTestCase {
     private let minjun = CharacterCard(name: "민준")

@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 @testable import PurloryStorage
 import AppKit
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 @MainActor final class WorkspaceParagraphTransferTests: XCTestCase {
     func testRichParagraphMovesAtomicallyAndUndoRestoresBothOriginals() async throws {

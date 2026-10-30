@@ -1,8 +1,10 @@
+@testable import PurloryIntelligence
 import AppKit
 import SwiftUI
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 색상 팔레트 — 저장 왕복과 **대비 보장**.
 ///

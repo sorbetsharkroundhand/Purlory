@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 @testable import PurloryDocumentEngine
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 지식 스냅샷 표준 질의 회귀 테스트 (PLAN §8·§11).
 /// 예측 경로가 매 요청마다 부르는 질의들 — 시점 차단·장면 앵커·한국어 말투

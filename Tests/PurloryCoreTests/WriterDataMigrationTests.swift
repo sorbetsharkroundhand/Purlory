@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 @testable import PurloryStorage
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 final class WriterDataMigrationTests: XCTestCase {
     // Catches a newer valid manifest arriving after migration's initial verification.

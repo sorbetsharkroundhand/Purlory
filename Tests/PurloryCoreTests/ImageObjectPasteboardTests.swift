@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 import XCTest
 import UniformTypeIdentifiers
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 이미지 객체 copy/paste의 메타데이터 보존과 asset 수명 장부 (이슈 #17).
 ///

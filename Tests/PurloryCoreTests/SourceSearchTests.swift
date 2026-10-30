@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 @testable import PurloryDocumentEngine
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 final class SourceSearchTests: XCTestCase {
     private func fixture() -> WritingProject {

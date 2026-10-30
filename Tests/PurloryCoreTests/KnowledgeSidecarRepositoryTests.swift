@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 @testable import PurloryStorage
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 final class KnowledgeSidecarRepositoryTests: XCTestCase {
     func testProjectsWithSameDocumentAndContentRemainIsolated() async throws {

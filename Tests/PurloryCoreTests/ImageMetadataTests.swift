@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 이미지 alt·title·확장 속성의 편집·EPUB 왕복 보존 (이슈 #14).
 ///

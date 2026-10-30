@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 @_spi(Benchmark) @testable import PurloryInference
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 프롬프트 KV 재사용의 핵심 계산 — LCP 판정과 trim 양 (PLAN §12).
 ///

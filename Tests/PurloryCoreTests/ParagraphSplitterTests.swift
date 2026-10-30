@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 @testable import PurloryDocumentEngine
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 긴 문단 나누기의 결정적 로직 검증 (docs/editor-paragraph-split.md).
 /// **최우선은 텍스트 보존** — 원고 유실은 되돌릴 수 없다.

@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 깨진 이미지 플레이스홀더와 export 누락 보고 (이슈 #15).
 ///

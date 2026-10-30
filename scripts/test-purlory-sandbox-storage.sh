@@ -87,7 +87,7 @@ do {
     exit(1)
 }
 SWIFT
-xcrun swiftc -target arm64-apple-macos14.0 Sources/PurloryCore/Storage/PurloryStorageLocation.swift \
+xcrun swiftc -package-name Purlory -target arm64-apple-macos14.0 Sources/PurloryFoundation/PurloryStorageLocation.swift \
     "$PROBE_ROOT/main.swift" -o "$PROBE_APP/Contents/MacOS/SandboxStorageProbe"
 RESULT="$PROBE_CONTAINER/Data/Documents/Purlory/probe-result.txt"
 run_probe() {

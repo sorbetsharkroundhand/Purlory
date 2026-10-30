@@ -1,8 +1,10 @@
+@testable import PurloryIntelligence
 @_spi(Benchmark) @testable import PurloryInference
 import AppKit
 import Darwin
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// Opt-in hardware evidence. Normal CI does not download weights or run Metal inference.
 @MainActor final class RealModelGhostIntegrationTests: XCTestCase {

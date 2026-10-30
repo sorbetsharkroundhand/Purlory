@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 @testable import PurloryDocumentEngine
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// Plot Thread (v6, Narrative Graph) — 파서·stable identity·상태 파생·레이아웃의
 /// 결정적 로직 검증 (LLM 호출 없음). 최종 성공 기준(요구사항 §14):

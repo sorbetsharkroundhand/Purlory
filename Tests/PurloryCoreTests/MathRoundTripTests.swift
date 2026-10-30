@@ -1,9 +1,11 @@
+@testable import PurloryIntelligence
 @testable import PurloryDocumentEngine
 @testable import PurloryStorage
 import AppKit
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 수식 왕복 무결성 (이슈 #20) — load→edit→serialize→reload에서 source가
 /// 한 글자도 변하지 않는다는 것을 golden으로 고정한다. 직렬화는 저장 경로다.

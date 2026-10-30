@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 import AppKit
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 @MainActor final class SpatialNativeWorkspaceTests: XCTestCase {
     func testCanvasAndPouchExposeNamedNativeAccessibilityGroups() async throws {

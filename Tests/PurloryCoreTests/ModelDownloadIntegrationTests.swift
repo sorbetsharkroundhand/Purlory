@@ -1,8 +1,10 @@
+@testable import PurloryIntelligence
 @_spi(Benchmark) @testable import PurloryInference
 import Combine
 import Foundation
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 @MainActor
 final class ModelDownloadIntegrationTests: XCTestCase {

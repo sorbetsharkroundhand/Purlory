@@ -1,8 +1,10 @@
+@testable import PurloryIntelligence
 @testable import PurloryStorage
 import AppKit
 import SwiftUI
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 @testable import PurloryKoreanBackend
 
 @MainActor

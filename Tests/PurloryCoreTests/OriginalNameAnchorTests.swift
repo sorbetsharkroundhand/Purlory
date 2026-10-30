@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 @_spi(Benchmark) @testable import PurloryInference
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 final class OriginalNameAnchorTests: XCTestCase {
     func testOversizedLatestOccurrenceCannotFallBackToAnOlderClaim() throws {

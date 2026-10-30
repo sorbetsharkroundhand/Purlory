@@ -1,9 +1,11 @@
+@testable import PurloryIntelligence
 @testable import PurloryDocumentEngine
 import AppKit
 import Combine
 import UniformTypeIdentifiers
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 @MainActor
 final class ClipboardImagePasteTests: XCTestCase {

@@ -1,9 +1,11 @@
+@testable import PurloryIntelligence
 @_spi(Benchmark) @testable import PurloryInference
 import Foundation
 import MLX
 import MLXLMCommon
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 final class PromptCacheOwnershipTests: XCTestCase {
     private let model = NSObject(), otherModel = NSObject()

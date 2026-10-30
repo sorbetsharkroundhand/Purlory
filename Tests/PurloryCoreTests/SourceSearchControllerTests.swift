@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 import Combine
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 @MainActor
 final class SourceSearchControllerTests: XCTestCase {

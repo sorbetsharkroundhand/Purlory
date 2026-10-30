@@ -1,8 +1,10 @@
+@testable import PurloryIntelligence
 @_spi(Benchmark) @testable import PurloryInference
 import AppKit
 import Combine
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 @MainActor
 final class AskPurloryPanelTests: XCTestCase {

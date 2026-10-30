@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 @_spi(Benchmark) @testable import PurloryInference
 import Foundation
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 final class ModelInstallationTests: XCTestCase {
     private let sha = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"

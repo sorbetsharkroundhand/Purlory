@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 @testable import PurloryDocumentEngine
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 이미지 블록의 원자 캐럿·키보드·VoiceOver 모델 (이슈 #16).
 ///

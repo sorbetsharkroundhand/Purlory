@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 @testable import PurloryDocumentEngine
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// StateDelta 파싱·fold 회귀 테스트 (M6-5b, PLAN §6.2·§8).
 ///

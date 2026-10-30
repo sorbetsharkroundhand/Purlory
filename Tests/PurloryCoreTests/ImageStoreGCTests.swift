@@ -1,8 +1,10 @@
+@testable import PurloryIntelligence
 @testable import PurloryStorage
 import AppKit
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 이미지 GC 금지 회귀 (이슈 #7).
 ///

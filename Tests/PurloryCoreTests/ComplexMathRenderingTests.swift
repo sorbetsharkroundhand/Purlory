@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 @testable import PurloryDocumentEngine
 import AppKit
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 enum ComplexMathFixture {
     // Exact pasted source, including the line-end control spaces and repeated row breaks.

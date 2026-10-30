@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 타임라인 점프 스니펫 회귀 테스트 (M7) — 마크다운 오프셋에서 에디터
 /// 스토리지에도 존재할 산문 토막을 뽑는지 고정한다.

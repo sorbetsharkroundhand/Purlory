@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 @_spi(Benchmark) @testable import PurloryInference
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 진행률 틱 coalescing 회귀 테스트 (이슈 #46) — 초당 수십 번의 진행 알림이
 /// UI 재효율 없이 흡수되는지 고정한다. 시계를 주입해 실제 대기 없이

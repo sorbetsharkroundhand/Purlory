@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 @testable import PurloryDocumentEngine
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// Narrative Intelligence (v4) — 근거·앎·관계·브랜치·대화 인덱스·
 /// 사용자 수정 보호의 결정적 로직 검증. LLM 호출 없는 파서·질의만 다룬다.

@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 import Foundation
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 final class StoryKnowledgeQueryTests: XCTestCase {
     private let document = WritingDocumentID(), character = UUID(), other = UUID(), object = UUID(), rule = UUID(), timeline = UUID()

@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 @testable import PurloryDocumentEngine
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 문서 아웃라인 파서 회귀 테스트 (PLAN §5·docs/m6-scene-split.md).
 /// 아웃라인은 타임라인 골격(§8)과 증분 키(§9)의 원천이라 — 헤딩 경로·범위

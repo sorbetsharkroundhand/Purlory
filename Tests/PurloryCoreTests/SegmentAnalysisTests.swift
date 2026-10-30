@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 @testable import PurloryDocumentEngine
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 서사 구간 분석 회귀 테스트 (요구사항 §7–§10, PLAN §6.5).
 /// **과거형 ≠ 회상**의 원칙 위에서, LLM 게이트(표지 감지)와 파서 검증

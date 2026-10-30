@@ -1,9 +1,11 @@
+@testable import PurloryIntelligence
 @testable import PurloryDocumentEngine
 import AppKit
 import CoreText
 import SwiftUI
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 @MainActor
 final class PurloryFontsTests: XCTestCase {

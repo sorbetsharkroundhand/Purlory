@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 import Foundation
 import XCTest
 import PurloryKoreanBackend
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 @MainActor
 final class KoreanRepetitionTests: XCTestCase {

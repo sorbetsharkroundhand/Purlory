@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 @testable import PurloryInference
 import AppKit
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 @MainActor final class GhostAcceptanceUndoTests: XCTestCase {
     func testTabAcceptanceUndoPreservesTheLastTypedHangulCharacter() async throws {

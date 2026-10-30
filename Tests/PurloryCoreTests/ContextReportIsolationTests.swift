@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 @testable import PurloryInference
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 컨텍스트 리포트 소속 격리 회귀 (이슈 #8, Gate 2).
 ///

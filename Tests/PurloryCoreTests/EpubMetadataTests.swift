@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// EPUB OPF 메타데이터 회귀 테스트 — 저자 이름(설정 `purlory.authorName`)이
 /// `<dc:creator>`로 실리는지, 비었을 땐 아예 빠지는지를 고정한다.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the package's generic storage boundary without importing application code."""
+"""Enforce the application's dependency direction without loading its runtime."""
 import json
 import subprocess
 
@@ -14,10 +14,23 @@ def dependencies(name):
                 result.add(dependency[kind][0])
     return result
 
-required = {'PurloryFoundation', 'PurloryStorage', 'PurloryInference', 'PurloryDocumentEngine'}
+required = {'PurloryFoundation', 'PurloryStorage', 'PurloryInference',
+            'PurloryDocumentEngine', 'PurloryIntelligence', 'PurloryWorkspaceUI'}
 missing = required - targets.keys()
 assert not missing, f'Missing required boundary targets: {sorted(missing)}'
 assert not dependencies('PurloryFoundation'), 'Foundation must not depend on UI, domains or packages'
 assert dependencies('PurloryStorage') == {'PurloryFoundation'}, 'Storage must depend only on generic Foundation'
-assert not (dependencies('PurloryInference') & {'PurloryCore', 'PurloryStorage', 'PurloryIntelligence', 'PurloryWorkspaceUI'}), 'Inference must not depend on domain/UI composition'
-print('Generic Foundation/Storage module boundaries verified')
+allowed = {
+    'PurloryFoundation': set(),
+    'PurloryStorage': {'PurloryFoundation'},
+    'PurloryInference': {'PurloryFoundation'},
+    'PurloryDocumentEngine': {'PurloryFoundation'},
+    'PurloryIntelligence': {'PurloryFoundation', 'PurloryStorage', 'PurloryDocumentEngine', 'PurloryInference'},
+    'PurloryWorkspaceUI': required - {'PurloryWorkspaceUI'},
+    'PurloryCore': required,
+}
+for name, permitted in allowed.items():
+    actual = dependencies(name) & (required | {'PurloryCore'})
+    assert actual <= permitted, f'{name} has forbidden dependencies: {sorted(actual - permitted)}'
+assert dependencies('PurloryCore') == required, 'Core must only re-export the six implementation modules'
+print('All six implementation modules and the Core facade have valid dependency boundaries')

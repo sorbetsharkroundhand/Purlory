@@ -1,5 +1,7 @@
+@testable import PurloryIntelligence
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 final class AskAnswerDecoderTests: XCTestCase {
     private func record(_ text: String = "**Answer** [S1]", id: String = "S1", quote: String) throws -> String {

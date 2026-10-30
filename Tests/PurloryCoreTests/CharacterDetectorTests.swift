@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 인물 후보 감지 회귀 테스트 (PLAN §7) — **품질 > 적극성**의 최전선.
 /// 유정 신호(여격·호격·발화 귀속) 게이트와 신뢰도 등급, 별칭 병합이

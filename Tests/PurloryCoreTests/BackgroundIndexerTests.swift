@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 @testable import PurloryDocumentEngine
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 백그라운드 이해 파이프라인의 결정적 유닛 회귀 테스트 (PLAN §9).
 /// LLM 호출부는 벤치(PurloryBench)가 담당하므로, 여기서는 **같은 입력 재처리

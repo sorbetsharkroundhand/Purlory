@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 원문 저장 안전장치 — 손상 보존·일일 백업 로테이션.
 ///

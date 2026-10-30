@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 @_spi(Benchmark) @testable import PurloryInference
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 한국어 조사·어미 보조기 회귀 테스트 — 지식 블록을 자연 문장으로 펼 때
 /// 받침 판정이 틀리면 프롬프트 전체의 어투가 무너진다("서연이" ↔ "서연가").

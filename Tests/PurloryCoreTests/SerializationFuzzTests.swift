@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 import AppKit
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 증분 직렬화 캐시의 핵심 불변조건을 무작위 편집으로 검증한다:
 ///

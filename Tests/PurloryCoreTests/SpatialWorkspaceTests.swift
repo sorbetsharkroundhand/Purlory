@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 import AppKit
 import XCTest
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 final class SpatialWorkspaceTests: XCTestCase {
     private let a = WritingDocumentID(), b = WritingDocumentID(), c = WritingDocumentID()

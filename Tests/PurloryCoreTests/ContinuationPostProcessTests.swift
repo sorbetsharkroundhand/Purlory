@@ -1,7 +1,9 @@
+@testable import PurloryIntelligence
 @_spi(Benchmark) @testable import PurloryInference
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 이어쓰기 후처리의 사고 태그 제거 (PLAN §10·§16-1 벤치 후속).
 ///

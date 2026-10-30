@@ -1,9 +1,11 @@
+@testable import PurloryIntelligence
 @testable import PurloryDocumentEngine
 @_spi(Benchmark) @testable import PurloryInference
 import Combine
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// BackgroundIndexer 작업 소유권 — stale 작업이 최신 상태를 덮지 못하게 (#82 / #65 H3).
 ///

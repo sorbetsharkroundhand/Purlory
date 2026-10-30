@@ -1,6 +1,8 @@
+@testable import PurloryIntelligence
 import XCTest
 
 @testable import PurloryCore
+@testable import PurloryWorkspaceUI
 
 /// 대화 캡처 회귀 테스트 (요구사항 §18–§21).
 /// 실시간 감지기는 **결정적·LLM 금지 경로**라 키 입력 예산 안에서 정확해야 한다:
