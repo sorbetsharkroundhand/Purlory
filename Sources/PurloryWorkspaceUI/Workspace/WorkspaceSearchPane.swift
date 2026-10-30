@@ -59,7 +59,9 @@ struct WorkspaceSearchResult: Identifiable, Sendable {
                     onCancel: { worker.cancel() }
                 try Task.checkCancellation()
                 guard let self, self.ticket == current else { return }
-                guard session.activeProject == project else { self.searching = false; self.task = nil; return }
+                guard session.runtimeIdentity == identity, session.activeProject?.id == project.id else {
+                    self.searching = false; self.task = nil; return
+                }
                 self.results = found; self.searching = false; self.task = nil
             } catch {
                 guard let self, self.ticket == current else { return }
@@ -210,7 +212,7 @@ struct WorkspaceSearchPane: View {
             .onChange(of: spatial.searchRequest) { _, _ in configure() }
             .onChange(of: search.query) { _, _ in update() }
             .onChange(of: search.scope) { _, _ in update() }
-            .onChange(of: session.activeProject) { _, _ in update() }
+            .onChange(of: session.runtimeIdentity) { _, _ in update() }
             .onChange(of: session.isTransitioning) { _, value in if value { search.cancel() } else { update() } }
             .onChange(of: spatial.typewriter) { _, _ in update() }
             .onChange(of: spatial.focusDimming) { _, _ in update() }

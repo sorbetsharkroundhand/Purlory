@@ -73,6 +73,19 @@ public final class ProjectSession: ObservableObject {
         try? applyDocumentEdits([ProjectDocumentEdit(key: key, expectedBody: nil, body: body)])
     }
 
+    /// Accepted native edits own an immutable source immediately, including before autosave.
+    /// Activation is checked before reading source bytes so stale callbacks stay cheap and inert.
+    func updateDocumentSource(_ source: DocumentSource, for key: ProjectDocumentKey, activationEpoch: UInt64) {
+        guard self.activationEpoch == activationEpoch, phase == .ready, !isTransitioning,
+              var project = activeProject, project.id == key.projectID,
+              !project.trashedDocumentIDs.contains(key.documentID),
+              let index = project.documents.firstIndex(where: { $0.id == key.documentID }),
+              !project.documents[index].source.isSameVersion(as: source) else { return }
+        project.documents[index].source = source
+        activeProject = project
+        noteDocumentChange(); markDirty()
+    }
+
     /// Validate every source before publishing any replacement. Selection is not a write address.
     func applyDocumentEdits(_ edits: [ProjectDocumentEdit]) throws {
         guard phase == .ready, !isTransitioning, var project = activeProject,
@@ -108,7 +121,7 @@ public final class ProjectSession: ObservableObject {
         guard let runtimeIdentity, let selectedDocument, let activeProject else { return nil }
         return ProjectDocumentSnapshot(
             identity: runtimeIdentity, title: selectedDocument.title,
-            body: selectedDocument.body, kind: selectedDocument.kind, mode: activeProject.mode,
+            source: selectedDocument.source, kind: selectedDocument.kind, mode: activeProject.mode,
             userData: activeProject.userData)
     }
 

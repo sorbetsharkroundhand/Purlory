@@ -4,7 +4,8 @@ import Foundation
 public struct ProjectDocumentSnapshot: Equatable, Sendable {
     public let identity: ProjectRuntimeIdentity
     public let title: String
-    public let body: String
+    public let source: DocumentSource
+    public var body: String { source.string }
     public let kind: WritingDocument.Kind
     public let mode: WritingMode
     public let userData: [String: Data]
@@ -13,9 +14,16 @@ public struct ProjectDocumentSnapshot: Equatable, Sendable {
         identity: ProjectRuntimeIdentity, title: String, body: String,
         kind: WritingDocument.Kind, mode: WritingMode, userData: [String: Data] = [:]
     ) {
+        self.init(identity: identity, title: title, source: DocumentSource(body), kind: kind, mode: mode, userData: userData)
+    }
+
+    public init(
+        identity: ProjectRuntimeIdentity, title: String, source: DocumentSource,
+        kind: WritingDocument.Kind, mode: WritingMode, userData: [String: Data] = [:]
+    ) {
         self.identity = identity
         self.title = title
-        self.body = body
+        self.source = source
         self.kind = kind
         self.mode = mode
         self.userData = userData

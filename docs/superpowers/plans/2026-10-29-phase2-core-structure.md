@@ -55,14 +55,14 @@
 **Files:** shared `DocumentRopeIndex.swift`, WritingDocument/snapshot/session source boundaries, editor codec/coordinator and typed index adapters; new source/commit regressions.
 **Interfaces:** Immutable source snapshots support exact UTF-16 replacement and lazy cached materialization; typed index views preserve existing coordinate semantics.
 
-- [ ] Observe failing snapshot/boundary/materialization and native ordinary-edit regressions.
-- [ ] Implement shared persistent tree/source representation and local editor commits; retain verified full-rebuild fallbacks.
-- [ ] Route persistence, external replacement and explicit consumers through current source snapshots.
-- [ ] Run fuzz/oracle, long-document, IME/undo/switch/save/failure tests; review and commit.
+- [x] Observe failing snapshot/boundary/materialization and native ordinary-edit regressions.
+- [x] Implement shared persistent tree/source representation and local editor commits; retain verified full-rebuild fallbacks.
+- [x] Route persistence, external replacement and explicit consumers through current source snapshots.
+- [x] Run fuzz/oracle, long-document, IME/undo/switch/save/failure tests; review and commit.
 
 ### Task 5: Integrated evidence
 
-- [ ] Review full branch for module cycles, stale source consumption, data ownership and resource regressions.
-- [ ] Run swift build, swift test, swift build --product PurloryBench and git diff --check.
+- [x] Review full branch for module cycles, stale source consumption, data ownership and resource regressions.
+- [x] Run swift build, swift test, swift build --product PurloryBench and git diff --check.
 - [ ] Build developer bundle and run isolated launch/quit once after implementation.
 - [ ] Record exact structural/performance results and remaining native/Store acceptance limits.

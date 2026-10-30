@@ -45,7 +45,8 @@ final class WritingEditorProjectionCapture {
     var mappedRevision: UInt64?
     var mappedIdentity: ProjectRuntimeIdentity?
     var prepared: (revision: UInt64, patch: WritingProjectionPatch)?
-    private(set) var loadedSource: String?
+    private var loadedDocumentSource: DocumentSource?
+    var loadedSource: String? { loadedDocumentSource?.string }
     private var initializing = false
     private var capturingLine: NSRange?
     private var lineHasFeed = false
@@ -68,7 +69,7 @@ final class WritingEditorProjectionCapture {
         dirty = nil; base = nil; boundRevision = nil; boundIdentity = nil
         nativeLookup = nil; prepared = nil; marked = nil
         mappedRevision = nil; mappedIdentity = nil
-        loadedSource = source
+        loadedDocumentSource = DocumentSource(source)
         oldDirty = nil; changes.removeAll(); knownIdentity = runtimeIdentity?()
     }
     func beginInitialCollection() { initializing = true }
@@ -496,10 +497,13 @@ final class WritingEditorProjectionCapture {
         bindingIsCurrent = bindingIdentity == knownIdentity
     }
     func didBind(source: String, storage: NSAttributedString) {
+        didBind(source: DocumentSource(source), storage: storage)
+    }
+    func didBind(source: DocumentSource, storage: NSAttributedString) {
         defer { isBinding = false }
         guard bindingIsCurrent, let current = runtimeIdentity?(), current.key == bindingIdentity?.key else { return }
         guard updateProjection(storage: storage, ownerChanged: current != bindingIdentity) else { return }
-        loadedSource = source; knownIdentity = current
+        loadedDocumentSource = source; knownIdentity = current
         boundRevision = revision; boundIdentity = current
         if !deferred.isEmpty || projectionTask != nil {
             startDeferredProjection()
@@ -518,7 +522,7 @@ final class WritingEditorProjectionCapture {
             return
         }
         guard oldDirty == nil, dirty == nil, projectionTask == nil, deferred.isEmpty,
-              let loadedSource, loadedSource.utf16.elementsEqual(snapshot.body.utf16) else {
+              let loadedDocumentSource, loadedDocumentSource == snapshot.source else {
             mappedRevision = nil; return
         }
         knownIdentity = snapshot.identity

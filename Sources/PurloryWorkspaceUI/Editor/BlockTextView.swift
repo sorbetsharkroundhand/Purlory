@@ -212,6 +212,7 @@ final class BlockTextView: NSTextView {
 
     /// 문단별 직렬화 줄 캐시 — 네이티브 문자열. `assembleSerialized`가 join한다.
     /// 메모리는 대략 문서 크기의 사본 하나(600k자 ≈ 1.2MB) — 지연을 위한 거래.
+    var markdownCodec = MarkdownDocumentCodec()
     var serialLines: [(text: String, isCode: Bool, codeLang: String?)] = []
     /// false면 다음 `serialize()`가 전체 재구축한다 — 정답이 보장되는 폴백.
     var serialLinesValid = false

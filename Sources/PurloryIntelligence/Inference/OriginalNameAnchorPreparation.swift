@@ -5,7 +5,8 @@ import Foundation
 @MainActor
 package final class OriginalNameAnchorPreparation {
     package struct Request: Sendable {
-        let body: String
+        let source: DocumentSource
+        var body: String { source.string }
         let documentID: UUID
         let scope: StoryMemoryScope
         let runtimeIdentity: ProjectRuntimeIdentity?
@@ -46,12 +47,20 @@ package final class OriginalNameAnchorPreparation {
         body: String, documentID: UUID, scope: StoryMemoryScope,
         runtimeIdentity: ProjectRuntimeIdentity?, characters: [CharacterCard]
     ) {
+        prepare(source: DocumentSource(body), documentID: documentID, scope: scope,
+            runtimeIdentity: runtimeIdentity, characters: characters)
+    }
+
+    package func prepare(
+        source: DocumentSource, documentID: UUID, scope: StoryMemoryScope,
+        runtimeIdentity: ProjectRuntimeIdentity?, characters: [CharacterCard]
+    ) {
         cancel()
         index = nil
         self.scope = nil
         self.runtimeIdentity = nil
         if memoScope != scope { memo = nil }
-        pending = Request(body: body, documentID: documentID, scope: scope,
+        pending = Request(source: source, documentID: documentID, scope: scope,
             runtimeIdentity: runtimeIdentity, characters: characters)
         startIfAllowed()
     }

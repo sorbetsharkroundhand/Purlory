@@ -22,7 +22,7 @@ package struct WritingAnalysisWindows: Sequence, Sendable {
 }
 
 /// Immutable nodes share unchanged subtrees with already-issued window sequences.
-fileprivate final class WritingProjectionNode: Sendable {
+fileprivate final class WritingProjectionNode: DocumentRopeNode, Sendable {
     private final class Record: Sendable {
         let block: WritingProseBlock
         let eligibleProseLength: Int
@@ -184,8 +184,7 @@ package final class WritingProjectionIndex {
     }
     package func sourceRanges(forProse range: WritingDiagnosticRange) -> [WritingDiagnosticRange]? { freeze().sourceRanges(forProse: range) }
     private func node(_ block: WritingProseBlock) -> WritingProjectionNode {
-        random ^= random << 13; random ^= random >> 7; random ^= random << 17
-        return WritingProjectionNode(block, priority: random)
+        WritingProjectionNode(block, priority: DocumentRopeIndex<WritingProjectionNode>.nextPriority(&random))
     }
     private func rank(_ offset: Int) -> Int? {
         if offset == sourceLength { return root?.count ?? 0 }
@@ -201,22 +200,12 @@ package final class WritingProjectionIndex {
         return nil
     }
     private func split(_ node: WritingProjectionNode?, count: Int) -> (WritingProjectionNode?, WritingProjectionNode?) {
-        guard let node else { return (nil, nil) }
-        lastMutationVisits += 1
-        let left = node.left?.count ?? 0
-        if count <= left {
-            let (before, after) = split(node.left, count: count)
-            return (before, node.copy(left: after, right: node.right))
-        }
-        let (before, after) = split(node.right, count: count - left - 1)
-        return (node.copy(left: node.left, right: before), after)
+        DocumentRopeIndex<WritingProjectionNode>.split(node, count: count, visits: &lastMutationVisits)
     }
     private func merge(_ left: WritingProjectionNode?, _ right: WritingProjectionNode?) -> WritingProjectionNode? {
-        guard let left else { return right }; guard let right else { return left }
-        lastMutationVisits += 1
-        if left.priority < right.priority { return left.copy(left: left.left, right: merge(left.right, right)) }
-        return right.copy(left: merge(left, right.left), right: right.right)
+        DocumentRopeIndex<WritingProjectionNode>.merge(left, right, visits: &lastMutationVisits)
     }
+
 }
 
 /// A report can prepare and map exact source without sharing a mutable index across actors.

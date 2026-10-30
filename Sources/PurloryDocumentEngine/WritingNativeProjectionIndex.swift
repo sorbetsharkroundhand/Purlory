@@ -52,7 +52,7 @@ package final class WritingNativeRowIndex {
         package let sourceStart: Int
         package let textStart: Int
     }
-    private final class Node {
+    private final class Node: DocumentRopeNode {
         let row: WritingSerializedRow
         let priority: UInt64
         let left: Node?, right: Node?
@@ -223,8 +223,7 @@ package final class WritingNativeRowIndex {
         range.location >= 0 && range.location <= length && range.length >= 0 && range.length <= length - range.location
     }
     private func node(_ row: WritingSerializedRow) -> Node {
-        random ^= random << 13; random ^= random >> 7; random ^= random << 17
-        return Node(row, priority: random)
+        Node(row, priority: DocumentRopeIndex<Node>.nextPriority(&random))
     }
     private func rank(_ offset: Int) -> Int? {
         if offset == nativeLength { return root?.count ?? 0 }
@@ -239,18 +238,11 @@ package final class WritingNativeRowIndex {
         return nil
     }
     private func split(_ node: Node?, count: Int) -> (Node?, Node?) {
-        guard let node else { return (nil, nil) }
-        let left = node.left?.count ?? 0
-        if count <= left {
-            let (before, after) = split(node.left, count: count)
-            return (before, node.copy(left: after, right: node.right))
-        }
-        let (before, after) = split(node.right, count: count - left - 1)
-        return (node.copy(left: node.left, right: before), after)
+        var visits = 0
+        return DocumentRopeIndex<Node>.split(node, count: count, visits: &visits)
     }
     private func merge(_ left: Node?, _ right: Node?) -> Node? {
-        guard let left else { return right }; guard let right else { return left }
-        if left.priority < right.priority { return left.copy(left: left.left, right: merge(left.right, right)) }
-        return right.copy(left: merge(left, right.left), right: right.right)
+        var visits = 0
+        return DocumentRopeIndex<Node>.merge(left, right, visits: &visits)
     }
 }

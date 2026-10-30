@@ -336,19 +336,13 @@ extension BlockTextView {
         scrollRangeToVisible(selectedRange())
     }
 
-    /// storage를 순수 마크다운으로 되돌린다 (저장 경로).
-    ///
-    /// **문단별 증분 캐시**로 매 키 입력의 O(문서)를 O(편집)으로 줄인다
-    /// (docs/editor-perf.md): 전체 비용의 정체는 NSTextStorage 조각(UTF-16 백업)을
-    /// Swift 문자열로 브리지·이어붙이는 것이라(300k에서 17ms), 바뀐 문단만 다시
-    /// 브리지하고 나머지는 캐시된 네이티브 줄을 재사용해 join한다(0.14ms).
-    ///
-    /// **불변조건**: `serialize(증분 상태) == serialize(전체 문서)`. 캐시가 조금이라도
-    /// 불확실하면(`serialLinesValid == false`) 전체 재구축으로 떨어진다 — 그 경로는
-    /// 예전 코드와 동일한 결과라 정답이 보장된다. 안전 판정은 델리게이트가 한다
-    /// (`updateSerialCacheState`). 등식은 `SerializationFuzzTests`가 검증한다.
-    func serialize() -> String {
-        if isSourceMode { return string }
+    /// Explicit string consumers share the immutable source's cached materialization.
+    /// Ordinary project edits publish serializedSource() without joining the document.
+    /// Uncertain native mappings still use the full load/rebuild oracle.
+    func serialize() -> String { serializedSource().string }
+
+    func serializedSource() -> DocumentSource {
+        if isSourceMode { return DocumentSource(string) }
         writingProjectionCapture.serializationInvocationCount += 1
         writingProjectionCapture.beginSerialization(storage: textStorage)
         if !serialLinesValid {
@@ -356,7 +350,7 @@ extension BlockTextView {
         } else if serialFastDirty {
             applyFastSerialUpdate()
         }
-        return assembleSerialized(serialLines)
+        return markdownCodec.source
     }
 
     /// Explicit inspection maps the native caret to original Markdown coordinates.
@@ -509,35 +503,6 @@ extension BlockTextView {
         }
     }
 
-    /// 캐시된 문단 줄들 → 최종 마크다운. 코드 펜스 상태 기계와 문서 끝 개행
-    /// 규칙은 **문단 간 조립 로직**이라 캐시에 넣지 않고 여기서 매번 계산한다
-    /// (네이티브 문자열 join이라 300k에서도 0.1ms).
-    func assembleSerialized(_ lines: [(text: String, isCode: Bool, codeLang: String?)]) -> String {
-        var out: [String] = []
-        out.reserveCapacity(lines.count + 2)
-        var inCode = false
-        for line in lines {
-            if line.isCode {
-                if !inCode {
-                    out.append("```" + (line.codeLang ?? ""))
-                    inCode = true
-                }
-                out.append(line.text)
-            } else {
-                if inCode { out.append("```"); inCode = false }
-                out.append(line.text)
-            }
-        }
-        let ns = string as NSString
-        // 문서가 개행으로 끝나면 마지막 빈 문단도 한 줄이다.
-        if ns.length > 0, ns.character(at: ns.length - 1) == 0x0A {
-            if inCode { out.append("```"); inCode = false }
-            out.append("")
-        }
-        if inCode { out.append("```") }
-        return out.joined(separator: "\n")
-    }
-
     /// 전체 재구축 — 예전 serialize의 전체 순회. `serialLinesValid`가 false일 때만
     /// 돈다(첫 호출·구조 변화·불확실). 이후 증분 갱신의 기준선이 된다.
     func rebuildSerialCache() {
@@ -561,6 +526,7 @@ extension BlockTextView {
             location = para.upperBound
         } while location < ns.length
         serialLines = lines
+        markdownCodec.reset(lines, trailingLineFeed: ns.length > 0 && ns.character(at: ns.length - 1) == 0x0A)
         serialLinesValid = true
         serialFastDirty = false
         serialFastIndex = fastIdx
@@ -588,7 +554,10 @@ extension BlockTextView {
         }
         var line = serializedLine(of: para)
         line.text.makeContiguousUTF8()
+        let codeBoundaryChanged = serialLines[idx].isCode != line.isCode
         serialLines[idx] = line
+        markdownCodec.update(serialLines, at: idx, codeBoundaryChanged: codeBoundaryChanged,
+            trailingLineFeed: ns.length > 0 && ns.character(at: ns.length - 1) == 0x0A)
     }
 
     // MARK: 긴 문단 나누기 (docs/editor-paragraph-split.md)

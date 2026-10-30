@@ -17,16 +17,17 @@ package final class ParagraphRenderIndex {
         package let range: NSRange
         package let record: Record
     }
-    private final class Node {
+    private final class Node: DocumentRopeNode {
         let record: Record
         let priority: UInt64
-        var left: Node?, right: Node?
-        var count = 1, length: Int
-        init(_ record: Record, priority: UInt64) { self.record = record; self.priority = priority; length = record.length }
-        func refresh() {
+        let left: Node?, right: Node?
+        let count: Int, length: Int
+        init(_ record: Record, priority: UInt64, left: Node? = nil, right: Node? = nil) {
+            self.record = record; self.priority = priority; self.left = left; self.right = right
             count = 1 + (left?.count ?? 0) + (right?.count ?? 0)
             length = record.length + (left?.length ?? 0) + (right?.length ?? 0)
         }
+        func copy(left: Node?, right: Node?) -> Node { Node(record, priority: priority, left: left, right: right) }
     }
     private var root: Node?
     private var randomState: UInt64 = 0x6d696e742d72656e
@@ -87,10 +88,7 @@ package final class ParagraphRenderIndex {
             && range.length <= utf16Length - range.location
     }
     private func makeNode(_ record: Record) -> Node {
-        randomState ^= randomState << 13
-        randomState ^= randomState >> 7
-        randomState ^= randomState << 17
-        return Node(record, priority: randomState)
+        Node(record, priority: DocumentRopeIndex<Node>.nextPriority(&randomState))
     }
     private func boundaryRank(_ offset: Int) -> Int? {
         if offset == utf16Length { return paragraphCount }
@@ -121,27 +119,9 @@ package final class ParagraphRenderIndex {
         collect(node.right, base: location + node.record.length, start: start, end: end, into: &result)
     }
     private func split(_ node: Node?, count: Int) -> (Node?, Node?) {
-        guard let node else { return (nil, nil) }
-        lastMutationVisits += 1
-        let leftCount = node.left?.count ?? 0
-        if count <= leftCount {
-            let (before, after) = split(node.left, count: count)
-            node.left = after; node.refresh()
-            return (before, node)
-        } else {
-            let (before, after) = split(node.right, count: count - leftCount - 1)
-            node.right = before; node.refresh()
-            return (node, after)
-        }
+        DocumentRopeIndex<Node>.split(node, count: count, visits: &lastMutationVisits)
     }
     private func merge(_ left: Node?, _ right: Node?) -> Node? {
-        guard let left else { return right }
-        guard let right else { return left }
-        lastMutationVisits += 1
-        if left.priority < right.priority {
-            left.right = merge(left.right, right); left.refresh(); return left
-        } else {
-            right.left = merge(left, right.left); right.refresh(); return right
-        }
+        DocumentRopeIndex<Node>.merge(left, right, visits: &lastMutationVisits)
     }
 }

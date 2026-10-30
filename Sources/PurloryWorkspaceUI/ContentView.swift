@@ -332,7 +332,7 @@ struct EditorPane: View {
         Group {
             if let identity = editorIdentity {
                 PurloryBlockEditor(
-                    text: bodyBinding,
+                    source: sourceBinding,
                     controller: completion,
                     theme: theme,
                     lineSpacing: CGFloat(settings.lineSpacing),
@@ -404,13 +404,13 @@ struct EditorPane: View {
             }
     }
 
-    private var bodyBinding: Binding<String> {
+    private var sourceBinding: Binding<DocumentSource> {
         let id = displayedDocument?.id
         let projectID = projectSession.activeProject?.id
         let epoch = projectSession.activationEpoch
-        return Binding(get: { id.flatMap { projectSession.document($0)?.body } ?? "" }, set: { body in
+        return Binding(get: { id.flatMap { projectSession.document($0)?.source } ?? DocumentSource("") }, set: { source in
             guard let id, let projectID else { return }
-            projectSession.updateDocumentBody(body, for: .init(projectID: projectID, documentID: id), activationEpoch: epoch)
+            projectSession.updateDocumentSource(source, for: .init(projectID: projectID, documentID: id), activationEpoch: epoch)
         })
     }
 

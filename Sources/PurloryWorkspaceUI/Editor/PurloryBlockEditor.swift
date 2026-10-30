@@ -43,6 +43,7 @@ public enum EditorMetrics {
 /// 고스트 텍스트(M3)는 기존 방식 그대로: storage 밖에서 `draw(_:)`로만 그린다.
 public struct PurloryBlockEditor: NSViewRepresentable {
     @Binding var text: String
+    private let sourceBinding: Binding<DocumentSource>?
 
     private let controller: CompletionController?
     private let theme: PurloryTheme
@@ -68,7 +69,8 @@ public struct PurloryBlockEditor: NSViewRepresentable {
     private let onEditorActivation: ((NSTextView) -> Void)?
 
     public init(
-        text: Binding<String>,
+        text: Binding<String> = .constant(""),
+        source: Binding<DocumentSource>? = nil,
         controller: CompletionController? = nil,
         theme: PurloryTheme = .light,
         lineSpacing: CGFloat = CGFloat(CompletionSettings.defaultLineSpacing),
@@ -87,6 +89,7 @@ public struct PurloryBlockEditor: NSViewRepresentable {
         onEditorActivation: ((NSTextView) -> Void)? = nil
     ) {
         self._text = text
+        self.sourceBinding = source
         self.controller = controller
         self.theme = theme
         self.lineSpacing = lineSpacing
@@ -195,8 +198,11 @@ public struct PurloryBlockEditor: NSViewRepresentable {
         textView.editorWindowDidChange = onEditorWindowChange
         configureActivation(textView, coordinator: context.coordinator)
         configureAssets(textView)
-        textView.load(markdown: text)
-        context.coordinator.lastSyncedText = text
+        let initialSource = sourceBinding?.wrappedValue
+        let initialText = initialSource?.string ?? text
+        textView.load(markdown: initialText)
+        context.coordinator.lastSyncedText = initialText
+        context.coordinator.lastSyncedSource = initialSource
         // 최초 값은 소비된 것으로 간주 — 실제 포커스는 뷰가 창에 붙을 때(launch) 준다.
         context.coordinator.lastFocusRequest = focusRequest
         context.coordinator.markSearchJumpConsumed(searchJump, for: documentIdentity)
@@ -297,14 +303,20 @@ public struct PurloryBlockEditor: NSViewRepresentable {
         // serialize() 재비교가 아니라 "마지막 동기화 텍스트"와 비교한다 —
         // 직렬화 왕복의 미세한 비대칭이 렌더 → reload → publish → 렌더의
         // 무한 루프(비치볼)로 번지는 것을 차단 (r1 버그).
+        let incomingSource = sourceBinding?.wrappedValue
+        let sourceChanged = incomingSource.map { next in
+            context.coordinator.lastSyncedSource.map { !next.isSameVersion(as: $0) } ?? true
+        } ?? !text.utf16.elementsEqual(context.coordinator.lastSyncedText.utf16)
         if documentChanged {
+            let incomingText = incomingSource?.string ?? text
             controller?.noteDocumentSwitch(to: documentIdentity.documentID.rawValue)
             controller?.dismissConversationSuggestion(remember: false)
             _ = textView.prepareForDocumentTransition(
                 from: context.coordinator.loadedDocumentIdentity,
                 to: documentIdentity,
-                markdown: text)
-            context.coordinator.lastSyncedText = text
+                markdown: incomingText)
+            context.coordinator.lastSyncedText = incomingText
+            context.coordinator.lastSyncedSource = incomingSource
             // 다시 찾은 저널이면 마지막으로 있던 위치로 커서·스크롤을 복원한다.
             // (처음 여는 저널은 저장값이 없어 load의 맨 위 규칙을 그대로 둔다.)
             // 세션 메모리에 없으면 **재실행 전 저장값**으로 재안착 복원 (#36) —
@@ -317,11 +329,13 @@ public struct PurloryBlockEditor: NSViewRepresentable {
             {
                 textView.restoreWritingPosition(persisted)
             }
-        } else if !text.utf16.elementsEqual(context.coordinator.lastSyncedText.utf16) {
+        } else if sourceChanged {
+            let incomingText = incomingSource?.string ?? text
             // Same stable identity: synchronize external body state without severing native undo.
             context.coordinator.isDocumentTransitioning = true
-            textView.load(markdown: text)
-            context.coordinator.lastSyncedText = text
+            textView.load(markdown: incomingText)
+            context.coordinator.lastSyncedText = incomingText
+            context.coordinator.lastSyncedSource = incomingSource
             textView.ghostText = nil
             controller?.dismissSuggestion()
             textView.showConversationPrompt(nil)
@@ -396,6 +410,7 @@ public struct PurloryBlockEditor: NSViewRepresentable {
 
         /// 마지막으로 바인딩과 동기화된 마크다운 — updateNSView의 reload 기준.
         var lastSyncedText = ""
+        var lastSyncedSource: DocumentSource?
         /// 마지막으로 처리한 포커스 요청 값 — 값이 바뀔 때만 포커스를 옮긴다.
         var lastFocusRequest = 0
         /// Search counters are session-local, so each stable editor identity keeps its own
@@ -417,6 +432,7 @@ public struct PurloryBlockEditor: NSViewRepresentable {
         func applyWorkspaceSource(_ body: String, to editor: BlockTextView) {
             isDocumentTransitioning = true
             editor.load(markdown: body); lastSyncedText = body
+            lastSyncedSource = parent.sourceBinding?.wrappedValue
             isDocumentTransitioning = false
         }
 
@@ -489,11 +505,17 @@ public struct PurloryBlockEditor: NSViewRepresentable {
             // 랙 보고를 숫자로 만들기 위한 장비 — 측정 없이 튜닝 없음 (CLAUDE.md §2-7).
             let start = CFAbsoluteTimeGetCurrent()
             textView.writingProjectionCapture.willBind()
-            let serialized = textView.serialize()
-            lastSyncedText = serialized
-            parent.text = serialized
+            let source = textView.serializedSource()
+            if let binding = parent.sourceBinding {
+                lastSyncedSource = source
+                binding.wrappedValue = source
+            } else {
+                let serialized = source.string
+                lastSyncedText = serialized
+                parent.text = serialized
+            }
             if let storage = textView.textStorage {
-                textView.writingProjectionCapture.didBind(source: serialized, storage: storage)
+                textView.writingProjectionCapture.didBind(source: source, storage: storage)
             }
             // 집필 위치 영속 기록 (#36) — 메모리 갱신 + 디바운스 디스크. 조합 중은
             // record가 무시한다. 전환 없이 ⌘Q해도 마지막 자리가 남는 이유다.

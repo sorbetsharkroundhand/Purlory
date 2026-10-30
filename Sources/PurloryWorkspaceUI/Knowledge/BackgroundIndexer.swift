@@ -171,7 +171,7 @@ public final class BackgroundIndexer: ObservableObject {
             originalNamePreparation.shutdown()
             return
         }
-        originalNamePreparation.prepare(body: document.body, documentID: document.id,
+        originalNamePreparation.prepare(source: document.source, documentID: document.id,
             scope: document.scope, runtimeIdentity: document.runtimeIdentity, characters: document.characters)
     }
 
@@ -180,7 +180,8 @@ public final class BackgroundIndexer: ObservableObject {
         let id: UUID
         let scope: StoryMemoryScope
         let runtimeIdentity: ProjectRuntimeIdentity?
-        let body: String
+        let source: DocumentSource
+        var body: String { source.string }
         let isFiction: Bool
         let characters: [CharacterCard]
         let overrides: [NarrativeOverride]
@@ -196,7 +197,7 @@ public final class BackgroundIndexer: ObservableObject {
             return DocumentInput(
                 id: key.documentID.rawValue,
                 scope: .project(projectID: key.projectID, documentID: key.documentID),
-                runtimeIdentity: document.identity, body: document.body,
+                runtimeIdentity: document.identity, source: document.source,
                 isFiction: document.mode == .fiction,
                 characters: writer.characters, overrides: writer.narrativeOverrides,
                 recorded: writer.recordedConversations, rejectedNames: writer.rejectedCharacterNames)
@@ -205,7 +206,7 @@ public final class BackgroundIndexer: ObservableObject {
             let scope = legacyScopeProvider?(entry.id)
         else { return nil }
         return DocumentInput(
-            id: entry.id, scope: scope, runtimeIdentity: nil, body: entry.body,
+            id: entry.id, scope: scope, runtimeIdentity: nil, source: DocumentSource(entry.body),
             isFiction: entry.resolvedKind == .novel,
             characters: entry.characters ?? [], overrides: entry.narrativeOverrides ?? [],
             recorded: entry.recordedConversations ?? [],
@@ -518,7 +519,9 @@ public final class BackgroundIndexer: ObservableObject {
             || snapshotRuntimeIdentity != runtimeIdentity
         else { return }
         guard entry.isFiction else { return }
-        let body = entry.body
+        let source = entry.source
+        let waitForIdle = !force && runtimeIdentity != nil
+            && (snapshot?.storyMemory?.scope == scope || hydrateTask != nil)
         let characters = entry.characters
         let overrides = entry.overrides
         let recorded = entry.recorded
@@ -531,6 +534,13 @@ public final class BackgroundIndexer: ObservableObject {
         // 파싱·디스크 읽기를 메인에서 떼어낸다 (30만 자 파싱이 메인을 막지 않게).
         let persistence = sidecarPersistence
         hydrateTask = Task.detached(priority: .utility) { [weak self] in
+            // Repeated typing cancels preparation before any whole-source read. Load/recovery
+            // still hydrates immediately; foreground completion retains its existing priority.
+            if waitForIdle {
+                do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
+            }
+            guard !Task.isCancelled else { return }
+            let body = source.string
             guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
             let outline = DocumentOutline.parse(body)
             guard !outline.scenes.isEmpty, !Task.isCancelled else { return }
