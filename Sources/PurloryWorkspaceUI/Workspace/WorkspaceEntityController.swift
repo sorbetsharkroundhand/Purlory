@@ -32,7 +32,7 @@ import SwiftUI
     private var subscriptions: Set<AnyCancellable> = []
     init(session: ProjectSession, requests: ProjectEditorRequests) {
         self.session = session; self.requests = requests
-        session.$activeProject.sink { [weak self] project in
+        session.activeProjectChanges.sink { [weak self] project in
             guard let self else { return }
             self.hide()
             guard let project else { self.records = []; return }
@@ -70,13 +70,13 @@ import SwiftUI
             }
             self.updateTerms()
         }.store(in: &subscriptions)
-        requests.spatialWorkspace?.$entityEvents.sink { [weak self] values in
+        requests.spatialWorkspace?.entityEventsChanges.sink { [weak self] values in
             guard let self else { return }
             self.events = values.map { .init(name: $0.name, aliases: "", note: $0.note, badge: "사건", role: "서사 흐름", tags: "", reference: $0.reference) }
             self.updateTerms()
         }.store(in: &subscriptions)
-        requests.spatialWorkspace?.$whisperTyping.sink { [weak self] value in if value { self?.hide() } }.store(in: &subscriptions)
-        requests.spatialWorkspace?.$isDragging.sink { [weak self] value in if value { self?.hide() } }.store(in: &subscriptions)
+        requests.spatialWorkspace?.whisperTypingChanges.sink { [weak self] value in if value { self?.hide() } }.store(in: &subscriptions)
+        requests.spatialWorkspace?.isDraggingChanges.sink { [weak self] value in if value { self?.hide() } }.store(in: &subscriptions)
     }
     private func updateTerms() {
         requests?.spatialWorkspace?.entityTerms = (records + events).flatMap {

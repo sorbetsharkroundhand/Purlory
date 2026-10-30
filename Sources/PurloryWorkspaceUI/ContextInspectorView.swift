@@ -8,7 +8,7 @@ import SwiftUI
 /// 같다 (별도 프리뷰 데이터 금지). 항목에 원문 앵커(인용·위치)가 있으면
 /// 클릭으로 본문을 확인할 수 있다 — "AI가 왜 이렇게 썼지?"의 답.
 struct ContextInspectorView: View {
-    @ObservedObject var completion: CompletionController
+    @Bindable var completion: CompletionController
     @ObservedObject var store: EntryStore
     let theme: PurloryTheme
 

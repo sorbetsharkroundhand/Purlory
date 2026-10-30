@@ -107,7 +107,7 @@ final class ContinuityPreparationTests: XCTestCase {
         reader.attach(documentProvider: { document }); defer { reader.shutdown() }
         for paused in [false, true] {
             let published = expectation(description: "Current original-backed candidate")
-            let subscription = reader.$continuityCandidates.dropFirst().filter { !$0.isEmpty }.prefix(1).sink { _ in published.fulfill() }
+            let subscription = reader.continuityCandidatesChanges.dropFirst().filter { !$0.isEmpty }.prefix(1).sink { _ in published.fulfill() }
             reader.setMemoryPressurePaused(false)
             reader.noteDocumentChange(document)
             await fulfillment(of: [published], timeout: 2)
@@ -143,7 +143,7 @@ final class ContinuityPreparationTests: XCTestCase {
         await fulfillment(of: [started], timeout: 2)
         reader.prepareForProjectTransition(); document = nil
         let forbidden = expectation(description: "Retired source cannot publish review actions"); forbidden.isInverted = true
-        let subscription = reader.$continuityCandidates.dropFirst().filter { !$0.isEmpty }.sink { _ in forbidden.fulfill() }
+        let subscription = reader.continuityCandidatesChanges.dropFirst().filter { !$0.isEmpty }.sink { _ in forbidden.fulfill() }
         await persistence.release()
         await fulfillment(of: [forbidden], timeout: 0.2)
         XCTAssertTrue(reader.continuityCandidates.isEmpty)

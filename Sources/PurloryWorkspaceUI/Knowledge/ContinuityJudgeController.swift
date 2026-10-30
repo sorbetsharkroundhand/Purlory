@@ -26,11 +26,11 @@ final class ContinuityJudgeController: ObservableObject {
     init(session: ProjectSession, origin: ProjectRuntimeIdentity, modelAvailable: Bool,
          build: @escaping Builder = { try JudgeEvidencePacket.prepare(candidate: $0, document: $1) }, generate: @escaping Generator) {
         self.session = session; self.origin = origin; self.modelAvailable = modelAvailable; self.build = build; self.generate = generate
-        session.$runtimeIdentity.dropFirst().sink { [weak self] value in
+        session.runtimeIdentityChanges.dropFirst().sink { [weak self] value in
             if let self, value != self.origin { self.invalidate() }
         }.store(in: &subscriptions)
-        session.$activeProject.dropFirst().sink { [weak self] _ in self?.invalidate() }.store(in: &subscriptions)
-        session.$isTransitioning.dropFirst().sink { [weak self] value in if value { self?.invalidate() } }.store(in: &subscriptions)
+        session.activeProjectChanges.dropFirst().sink { [weak self] _ in self?.invalidate() }.store(in: &subscriptions)
+        session.isTransitioningChanges.dropFirst().sink { [weak self] value in if value { self?.invalidate() } }.store(in: &subscriptions)
     }
     func judge(candidate: ContinuityCandidate) {
         guard !invalidated, session.runtimeIdentity == origin, session.isEditorEditable,

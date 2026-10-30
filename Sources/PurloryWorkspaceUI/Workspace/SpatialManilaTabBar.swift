@@ -2,15 +2,15 @@ import AppKit
 import SwiftUI
 
 struct SpatialManilaTabBar: NSViewRepresentable {
-    @ObservedObject var session: ProjectSession
-    @ObservedObject var model: SpatialWorkspaceController
+    @Bindable var session: ProjectSession
+    @Bindable var model: SpatialWorkspaceController
     let documentID: WritingDocumentID
     let theme: PurloryTheme
 
     func makeNSView(context: Context) -> SpatialManilaTabBarView { SpatialManilaTabBarView() }
     func updateNSView(_ view: SpatialManilaTabBarView, context: Context) {
         let slot = model.layout.slot(containing: .document(documentID))
-        view.configure(documents: (slot?.tabs ?? [documentID]).compactMap { session.document($0) },
+        view.configure(documents: (slot?.tabs ?? [documentID]).compactMap { session.documentPresentation($0) },
             active: slot?.tile.documentID ?? documentID, theme: theme, quiet: model.whisperTyping,
             typewriter: model.typewriter, focus: model.focusDimming, canCreate: session.isEditorEditable,
             activate: { model.whisperTyping = false; model.open($0) }, close: { _ = model.close(.document($0)) },

@@ -18,7 +18,7 @@ final class MemoryPressureRuntimeTests: XCTestCase {
         let reader = BackgroundIndexer(engine: engine, settings: settings)
         let runtime = MemoryPressureRuntime(completion: completion, indexer: reader, engine: engine, source: source)
         let paused = expectation(description: "Actual completion admission closes")
-        let state = completion.$isMemoryPressurePaused.filter { $0 }.prefix(1).sink { _ in paused.fulfill() }
+        let state = completion.isMemoryPressurePausedChanges.filter { $0 }.prefix(1).sink { _ in paused.fulfill() }
         source.handler?(.critical)
         await fulfillment(of: [paused], timeout: 1)
         runtime.stop()
@@ -44,7 +44,7 @@ final class MemoryPressureRuntimeTests: XCTestCase {
         let runtime = MemoryPressureRuntime(completion: completion, indexer: reader, engine: engine, source: source)
         defer { runtime.stop(); completion.shutdown(); reader.shutdown() }
         let paused = expectation(description: "Background is paused first")
-        let state = reader.$manualPhase.dropFirst().prefix(1).sink { _ in paused.fulfill() }
+        let state = reader.manualPhaseChanges.dropFirst().prefix(1).sink { _ in paused.fulfill() }
         source.handler?(.warning)
         await fulfillment(of: [paused], timeout: 1)
         reader.requestPass()
@@ -69,7 +69,7 @@ final class MemoryPressureRuntimeTests: XCTestCase {
         let runtime = MemoryPressureRuntime(completion: completion, indexer: reader, engine: engine, source: source)
         defer { runtime.stop(); completion.shutdown(); reader.shutdown() }
         let paused = expectation(description: "Critical received in no-model mode")
-        let state = completion.$isMemoryPressurePaused.filter { $0 }.prefix(1).sink { _ in paused.fulfill() }
+        let state = completion.isMemoryPressurePausedChanges.filter { $0 }.prefix(1).sink { _ in paused.fulfill() }
         source.handler?(.critical)
         await fulfillment(of: [paused], timeout: 1)
         let documentID = try XCTUnwrap(session.selectedDocument?.id)

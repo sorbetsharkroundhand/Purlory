@@ -19,10 +19,10 @@ enum ContentViewRoute: Equatable {
 
 /// Project writing workspace with one authoritative session and editor bridge.
 public struct ContentView: View {
-    @ObservedObject private var projectSession: ProjectSession
+    @Bindable private var projectSession: ProjectSession
     private let startup: ProjectStartupCoordinator
     @ObservedObject private var editorRequests: ProjectEditorRequests
-    @ObservedObject private var completion: CompletionController
+    @Bindable private var completion: CompletionController
     private let indexer: BackgroundIndexer
     @ObservedObject private var livingMargin: LivingMarginModel
     private let firstRunFlow: FirstRunFlow
@@ -294,9 +294,9 @@ final class ProjectEditorBridge {
 }
 
 struct EditorPane: View {
-    @ObservedObject var projectSession: ProjectSession
+    @Bindable var projectSession: ProjectSession
     @ObservedObject var editorRequests: ProjectEditorRequests
-    @ObservedObject var completion: CompletionController
+    @Bindable var completion: CompletionController
     @ObservedObject var settings: CompletionSettings
     let theme: PurloryTheme
     var editorBridge: ProjectEditorBridge? = nil
@@ -337,7 +337,7 @@ struct EditorPane: View {
                     theme: theme,
                     lineSpacing: CGFloat(settings.lineSpacing),
                     baseFontSize: CGFloat(settings.editorFontSize),
-                    proseLayout: projectSession.activeProject?.mode == .fiction
+                    proseLayout: projectSession.projectPresentation?.mode == .fiction
                         && displayedDocument?.kind == .manuscript ? .continuous : .spaced,
                     documentIdentity: identity,
                     positionStore: positionStore,
@@ -406,7 +406,7 @@ struct EditorPane: View {
 
     private var sourceBinding: Binding<DocumentSource> {
         let id = displayedDocument?.id
-        let projectID = projectSession.activeProject?.id
+        let projectID = projectSession.projectPresentation?.id
         let epoch = projectSession.activationEpoch
         return Binding(get: { id.flatMap { projectSession.document($0)?.source } ?? DocumentSource("") }, set: { source in
             guard let id, let projectID else { return }
@@ -419,7 +419,7 @@ struct EditorPane: View {
     }
 
     private var editorIdentity: EditorDocumentIdentity? {
-        guard let projectID = projectSession.activeProject?.id,
+        guard let projectID = projectSession.projectPresentation?.id,
             let documentID = displayedDocument?.id
         else { return nil }
         return .project(ProjectDocumentKey(projectID: projectID, documentID: documentID))
@@ -430,9 +430,9 @@ struct EditorPane: View {
 
 /// Document-local title, modes, model status and writing notices stay beside the editor.
 struct EditorToolbar: View {
-    @ObservedObject var projectSession: ProjectSession
+    @Bindable var projectSession: ProjectSession
     @ObservedObject var editorRequests: ProjectEditorRequests
-    @ObservedObject var completion: CompletionController
+    @Bindable var completion: CompletionController
     @ObservedObject var settings: CompletionSettings
     let theme: PurloryTheme
     @State private var longParagraphOpen = false
@@ -448,13 +448,13 @@ struct EditorToolbar: View {
         HStack(spacing: density == .compact ? 6 : 10) {
             Circle().fill(theme.novelC).frame(width: 5, height: 5)
                 .accessibilityHidden(true)
-            Text(projectSession.selectedDocument?.title ?? "문서")
+            Text(projectSession.selectedDocumentPresentation?.title ?? "문서")
                 .purloryUIFont(11.5, .medium)
                 .foregroundStyle(theme.ink2C)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .frame(maxWidth: density == .compact ? 150 : 260, alignment: .leading)
-            if let projectMode = projectSession.activeProject?.mode {
+            if let projectMode = projectSession.projectPresentation?.mode {
                 let options = WorkspaceModePresentation.options(for: projectMode)
                 if options.count > 1 {
                     Picker("작업 공간", selection: workspaceModeBinding) {
@@ -510,7 +510,7 @@ struct EditorToolbar: View {
     private var workspaceModeBinding: Binding<WorkspaceMode> {
         Binding(
             get: {
-                let options = WorkspaceModePresentation.options(for: projectSession.activeProject?.mode ?? .general)
+                let options = WorkspaceModePresentation.options(for: projectSession.projectPresentation?.mode ?? .general)
                 return options.contains(where: { $0.mode == projectSession.workspaceMode }) ? projectSession.workspaceMode : .write
             },
             set: { mode in
@@ -679,8 +679,8 @@ struct MarkdownCheatSheet: View {
 /// (릴리즈 실측 — 대형 문서 타이핑 랙의 주범이었다, docs/editor-perf.md).
 /// 값이 최대 ~0.3s 낡을 수 있지만 단어 수는 그래도 된다. 랙은 안 된다.
 struct EditorStatusBar: View {
-    @ObservedObject var projectSession: ProjectSession
-    @ObservedObject var completion: CompletionController
+    @Bindable var projectSession: ProjectSession
+    @Bindable var completion: CompletionController
     @ObservedObject var settings: CompletionSettings
     let theme: PurloryTheme
     @State private var stats = TextStats.empty
@@ -767,7 +767,7 @@ struct EditorStatusBar: View {
 /// 바뀌는지(글자 불변, 개행만), 되돌릴 수 있는지를 알려 사용자가 동의하게 한다.
 /// 숫자는 감지 결과의 실제 수치라 막연한 안내가 아니다.
 struct LongParagraphNotice: View {
-    @ObservedObject var completion: CompletionController
+    @Bindable var completion: CompletionController
     let theme: PurloryTheme
     let onDismiss: () -> Void
     @State private var detailShown = false

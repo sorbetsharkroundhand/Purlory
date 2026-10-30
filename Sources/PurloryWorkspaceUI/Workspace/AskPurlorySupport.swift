@@ -18,8 +18,8 @@ final class AskPurlorySupport: ObservableObject {
 
     func observe(_ completion: CompletionController) {
         self.completion = completion
-        Publishers.CombineLatest4(completion.$engineState, completion.$isMemoryPressurePaused,
-            completion.$isManagingModel, completion.settings.$authorization)
+        Publishers.CombineLatest4(completion.engineStateChanges, completion.isMemoryPressurePausedChanges,
+            completion.isManagingModelChanges, completion.settings.$authorization)
             .combineLatest(Publishers.CombineLatest(completion.settings.$modelID, completion.settings.$autocompleteEnabled))
             .sink { [weak self] values, choice in
                 guard let self else { return }

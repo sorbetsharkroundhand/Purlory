@@ -56,7 +56,7 @@ final class ProjectWriterReaderTests: XCTestCase {
                 document = try snapshot(projectID, id, 2, writer, body: body)
             }
             let ready = expectation(description: "Prepared writer generation \(generation)")
-            let subscription = indexer.$snapshotGeneration.dropFirst().prefix(1).sink { _ in ready.fulfill() }
+            let subscription = indexer.snapshotGenerationChanges.dropFirst().prefix(1).sink { _ in ready.fulfill() }
             indexer.noteDocumentChange(document)
             await fulfillment(of: [ready], timeout: 2)
             subscription.cancel()

@@ -49,9 +49,9 @@ final class StoryMapController: ObservableObject {
         self.session = session; self.requiresMapMode = requiresMapMode; self.sleep = sleep
         let worker = StoryMapProjector()
         self.project = project ?? { try await worker.project($0) }
-        session.$runtimeIdentity.dropFirst().sink { [weak self] _ in self?.stop() }.store(in: &subscriptions)
-        session.$workspaceMode.dropFirst().sink { [weak self] mode in if mode != .map && self?.requiresMapMode == true { self?.stop() } }.store(in: &subscriptions)
-        session.$isTransitioning.dropFirst().sink { [weak self] value in if value { self?.stop() } }.store(in: &subscriptions)
+        session.runtimeIdentityChanges.dropFirst().sink { [weak self] _ in self?.stop() }.store(in: &subscriptions)
+        session.workspaceModeChanges.dropFirst().sink { [weak self] mode in if mode != .map && self?.requiresMapMode == true { self?.stop() } }.store(in: &subscriptions)
+        session.isTransitioningChanges.dropFirst().sink { [weak self] value in if value { self?.stop() } }.store(in: &subscriptions)
         if observeEnergy {
             for name in [Notification.Name.NSProcessInfoPowerStateDidChange, ProcessInfo.thermalStateDidChangeNotification] {
                 NotificationCenter.default.publisher(for: name).receive(on: RunLoop.main).sink { [weak self] _ in

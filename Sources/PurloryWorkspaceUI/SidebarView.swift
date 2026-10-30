@@ -21,7 +21,7 @@ enum SidebarSection: String {
 /// "일관성 경고 N개"라는 읽을 수 있는 값으로 전달한다. 점 자체를 장식(hidden)으로
 /// 빼 AX 트리 오염을 막는다.
 private struct WarningDot: View {
-    @ObservedObject var indexer: BackgroundIndexer
+    @Bindable var indexer: BackgroundIndexer
     @ObservedObject var store: EntryStore
     let theme: PurloryTheme
 
@@ -81,7 +81,7 @@ struct SidebarView: View {
     var presentation: SidebarPresentation = .legacy
     @ObservedObject var store: EntryStore
     /// AI 폴더 명명(requestFolderName)과 진행 표시(namingFolderIDs)에 쓴다.
-    @ObservedObject var completion: CompletionController
+    @Bindable var completion: CompletionController
     let theme: PurloryTheme
     /// 바이블·타임라인 섹션의 데이터 소스 — nil이면 문서 섹션만 (프리뷰 등).
     var indexer: BackgroundIndexer?

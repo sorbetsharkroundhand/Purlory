@@ -20,7 +20,7 @@ import SwiftUI
 /// 사건 중요도, 플롯 제목·상태·멤버십, 충돌 판정, 복선, 시간 관계를 모두
 /// 여기서 보고 고칠 수 있다.
 struct NarrativeView: View {
-    @ObservedObject var indexer: BackgroundIndexer
+    @Bindable var indexer: BackgroundIndexer
     @ObservedObject var store: EntryStore
     let theme: PurloryTheme
     /// 사이드바 섹션에 임베드됐는가 — 고정 폭·높이 상한을 풀고 공간을 채운다.
@@ -793,7 +793,7 @@ struct NarrativeView: View {
 /// 는 이유와 재시도를, 완료/무변경/취소는 일시 표시 후 조용히 돌아간다.
 /// 상태 의미는 색이 아니라 문장으로 전달한다 (#38 계열).
 struct ManualIndexButton: View {
-    @ObservedObject var indexer: BackgroundIndexer
+    @Bindable var indexer: BackgroundIndexer
     let theme: PurloryTheme
 
     var body: some View {

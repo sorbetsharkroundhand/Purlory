@@ -3,7 +3,7 @@ import SwiftUI
 struct DocumentOutlineView: View {
     @ObservedObject var controller: DocumentOutlineController
     @ObservedObject var requests: ProjectEditorRequests
-    @ObservedObject var session: ProjectSession
+    @Bindable var session: ProjectSession
     let theme: PurloryTheme
 
     var body: some View {

@@ -51,8 +51,8 @@ import Combine
         }
     }
     func observe(_ completion: CompletionController) {
-        Publishers.CombineLatest4(completion.$engineState, completion.$isMemoryPressurePaused,
-            completion.$isManagingModel, completion.settings.$authorization)
+        Publishers.CombineLatest4(completion.engineStateChanges, completion.isMemoryPressurePausedChanges,
+            completion.isManagingModelChanges, completion.settings.$authorization)
             .combineLatest(Publishers.CombineLatest(completion.settings.$modelID, completion.settings.$autocompleteEnabled))
             .dropFirst().sink { [weak self] _, _ in self?.cancel() }.store(in: &subscriptions)
         for name in [Notification.Name.NSProcessInfoPowerStateDidChange, ProcessInfo.thermalStateDidChangeNotification] {
@@ -61,11 +61,11 @@ import Combine
     }
     init(session: ProjectSession, requests: ProjectEditorRequests, margin: LivingMarginModel, generate: @escaping Generator) {
         self.session = session; self.requests = requests; self.margin = margin; generator = generate
-        session.$runtimeIdentity.dropFirst().sink { [weak self] identity in
+        session.runtimeIdentityChanges.dropFirst().sink { [weak self] identity in
             guard let self, let capture = self.capture else { return }
             if identity != capture.identity { self.invalidateCapture() }
         }.store(in: &subscriptions)
-        session.$isTransitioning.dropFirst().sink { [weak self] value in if value { self?.invalidateCapture() } }.store(in: &subscriptions)
+        session.isTransitioningChanges.dropFirst().sink { [weak self] value in if value { self?.invalidateCapture() } }.store(in: &subscriptions)
     }
     func capture(_ mode: Mode, editor: BlockTextView) throws {
         rememberCoauthor()

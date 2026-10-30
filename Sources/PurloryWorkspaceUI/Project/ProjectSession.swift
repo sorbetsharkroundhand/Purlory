@@ -1,3 +1,4 @@
+import Observation
 import Combine
 import Foundation
 
@@ -5,33 +6,66 @@ import Foundation
 ///
 /// ProjectStore owns durable serialization and verification. Consumers edit only through this
 /// session and receive generation-bearing identities for stale-safe asynchronous work.
+@Observable
 @MainActor
-public final class ProjectSession: ObservableObject {
-    @Published public private(set) var activeProject: WritingProject?
-    @Published public private(set) var selectedDocumentID: WritingDocumentID?
-    @Published public private(set) var workspaceMode: WorkspaceMode = .write
-    @Published public private(set) var phase: ProjectSessionPhase = .loading
-    @Published public private(set) var savePhase: ProjectSavePhase = .saved
-    @Published public private(set) var runtimeIdentity: ProjectRuntimeIdentity?
-    @Published public private(set) var assetCatalog: ProjectAssetCatalog?
-    @Published public private(set) var recentProjects: [RecentProjectSummary] = []
-    @Published public private(set) var lastErrorMessage: String?
-    /// `false` means persistence scope is still unknown; callers must not assume legacy.
-    @Published public private(set) var hasLoadedActiveProject = false
-    /// Generic mutation gate exposed so native editor bridges can mirror ownership transitions.
-    @Published public private(set) var isTransitioning = false
+public final class ProjectSession {
+    // Native consumers need synchronous value events before ownership changes.
+    private let _activeProjectEvents = CurrentValueSubject<WritingProject?, Never>(nil)
+    var activeProjectChanges: AnyPublisher<WritingProject?, Never> { _activeProjectEvents.eraseToAnyPublisher() }
+    private let _runtimeIdentityEvents = CurrentValueSubject<ProjectRuntimeIdentity?, Never>(nil)
+    var runtimeIdentityChanges: AnyPublisher<ProjectRuntimeIdentity?, Never> { _runtimeIdentityEvents.eraseToAnyPublisher() }
+    private let _isTransitioningEvents = CurrentValueSubject<Bool, Never>(false)
+    var isTransitioningChanges: AnyPublisher<Bool, Never> { _isTransitioningEvents.eraseToAnyPublisher() }
+    private let _phaseEvents = CurrentValueSubject<ProjectSessionPhase, Never>(.loading)
+    var phaseChanges: AnyPublisher<ProjectSessionPhase, Never> { _phaseEvents.eraseToAnyPublisher() }
+    private let _workspaceModeEvents = CurrentValueSubject<WorkspaceMode, Never>(.write)
+    var workspaceModeChanges: AnyPublisher<WorkspaceMode, Never> { _workspaceModeEvents.eraseToAnyPublisher() }
 
-    public var willTransition: (() -> Void)?
-    public var documentDidChange: ((ProjectDocumentSnapshot) -> Void)?
+    @ObservationIgnored private var projectValue: WritingProject?
+    public private(set) var activeProject: WritingProject? {
+        get { access(keyPath: \.activeProject); return projectValue }
+        set { publishProject(newValue, metadataChanged: true) }
+    }
+
+    /// Metadata-only observation for titles, navigation and chrome. The returned value
+    /// is current, but body consumers must read activeProject/document instead.
+    var projectPresentation: WritingProject? {
+        access(keyPath: \.projectPresentation)
+        return projectValue
+    }
+
+    private func publishProject(_ project: WritingProject?, metadataChanged: Bool) {
+        _activeProjectEvents.send(project)
+        withMutation(keyPath: \.activeProject) {
+            if metadataChanged {
+                withMutation(keyPath: \.projectPresentation) { projectValue = project }
+            } else { projectValue = project }
+        }
+    }
+    public private(set) var selectedDocumentID: WritingDocumentID?
+    public private(set) var workspaceMode: WorkspaceMode = .write { willSet { _workspaceModeEvents.send(newValue) } }
+    public private(set) var phase: ProjectSessionPhase = .loading { willSet { _phaseEvents.send(newValue) } }
+    public private(set) var savePhase: ProjectSavePhase = .saved
+    public private(set) var runtimeIdentity: ProjectRuntimeIdentity? { willSet { _runtimeIdentityEvents.send(newValue) } }
+    public private(set) var assetCatalog: ProjectAssetCatalog?
+    public private(set) var recentProjects: [RecentProjectSummary] = []
+    public private(set) var lastErrorMessage: String?
+    /// `false` means persistence scope is still unknown; callers must not assume legacy.
+    public private(set) var hasLoadedActiveProject = false
+    /// Generic mutation gate exposed so native editor bridges can mirror ownership transitions.
+    public private(set) var isTransitioning = false { willSet { _isTransitioningEvents.send(newValue) } }
+
+    @ObservationIgnored public var willTransition: (() -> Void)?
+    @ObservationIgnored public var documentDidChange: ((ProjectDocumentSnapshot) -> Void)?
 
     private let store: ProjectStore
     private let defaults: UserDefaults
     private let autosaveDelay: Duration
     private let prepareProject: (@Sendable (WritingProject, ProjectStore) async throws -> WritingProject)?
-    private var generation: UInt64 = 0
-    private var dirtyGeneration: UInt64?
-    private var saveTask: Task<Void, Never>?
-    private var suspensionReleaseCheck: (() -> Bool)?
+    @ObservationIgnored private var generation: UInt64 = 0
+    @ObservationIgnored private var dirtyGeneration: UInt64?
+    @ObservationIgnored private var saveTask: Task<Void, Never>?
+    @ObservationIgnored private var suspensionReleaseCheck: (() -> Bool)?
 
     public init(
         store: ProjectStore,
@@ -46,7 +80,7 @@ public final class ProjectSession: ObservableObject {
     }
 
     public var availableWorkspaceModes: [WorkspaceMode] {
-        guard let activeProject else { return [.write] }
+        guard let activeProject = projectPresentation else { return [.write] }
         return WorkspaceRouting.availableModes(for: activeProject.mode)
     }
 
@@ -56,7 +90,7 @@ public final class ProjectSession: ObservableObject {
     }
 
     public var isEditorEditable: Bool {
-        phase == .ready && selectedDocument != nil && !isTransitioning
+        phase == .ready && selectedDocumentPresentation != nil && !isTransitioning
     }
 
     /// Project-scoped presentation preferences do not belong in manuscript storage.
@@ -65,6 +99,15 @@ public final class ProjectSession: ObservableObject {
 
     func document(_ id: WritingDocumentID) -> WritingDocument? {
         guard let project = activeProject, !project.trashedDocumentIDs.contains(id) else { return nil }
+        return project.documents.first { $0.id == id }
+    }
+
+    var selectedDocumentPresentation: WritingDocument? {
+        selectedDocumentID.flatMap(documentPresentation)
+    }
+
+    func documentPresentation(_ id: WritingDocumentID) -> WritingDocument? {
+        guard let project = projectPresentation, !project.trashedDocumentIDs.contains(id) else { return nil }
         return project.documents.first { $0.id == id }
     }
 
@@ -82,7 +125,7 @@ public final class ProjectSession: ObservableObject {
               let index = project.documents.firstIndex(where: { $0.id == key.documentID }),
               !project.documents[index].source.isSameVersion(as: source) else { return }
         project.documents[index].source = source
-        activeProject = project
+        publishProject(project, metadataChanged: false)
         noteDocumentChange(); markDirty()
     }
 
@@ -103,7 +146,7 @@ public final class ProjectSession: ObservableObject {
         }
         guard !replacements.isEmpty else { return }
         for (index, body) in replacements { project.documents[index].body = body }
-        activeProject = project
+        publishProject(project, metadataChanged: false)
         noteDocumentChange(); markDirty()
     }
 
@@ -398,7 +441,7 @@ public final class ProjectSession: ObservableObject {
         else { return }
 
         project.documents[index].body = body
-        activeProject = project
+        publishProject(project, metadataChanged: false)
         noteDocumentChange()
         markDirty()
     }
@@ -688,7 +731,7 @@ public final class ProjectSession: ObservableObject {
 
     private func markDirty() {
         dirtyGeneration = generation
-        savePhase = .dirty
+        if savePhase != .dirty { savePhase = .dirty }
         scheduleAutosave()
     }
 

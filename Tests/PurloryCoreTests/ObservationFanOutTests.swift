@@ -1,3 +1,4 @@
+import Observation
 @testable import PurloryIntelligence
 @testable import PurloryDocumentEngine
 @_spi(Benchmark) @testable import PurloryInference
@@ -68,8 +69,8 @@ final class ObservationFanOutTests: XCTestCase {
         let entryID = store.newEntry(kind: .novel)
         let snapshot = makeSnapshot(entryID: entryID)
 
-        var willChangeCount = 0
-        let token = indexer.objectWillChange.sink { willChangeCount += 1 }
+        let firstChange = ObservationFlag()
+        withObservationTracking { _ = indexer.warnings } onChange: { firstChange.mark() }
 
         let warningCharacter = UUID()
         indexer._testApplyPassOutputs(
@@ -78,8 +79,9 @@ final class ObservationFanOutTests: XCTestCase {
                 kind: .deadSpeaker, characterID: warningCharacter, utf16Position: 10,
                 message: "죽은 인물 등장")],
             metrics: nil)
-        let afterFirst = willChangeCount
-        XCTAssertGreaterThan(afterFirst, 0, "첫 발행은 objectWillChange를 울려야 한다")
+        XCTAssertTrue(firstChange.changed)
+        let repeatedChange = ObservationFlag()
+        withObservationTracking { _ = indexer.warnings } onChange: { repeatedChange.mark() }
 
         // 같은 값 재적용 — 패스가 같은 결론을 내려도 UI를 흔들지 않는다.
         for _ in 0..<3 {
@@ -90,8 +92,7 @@ final class ObservationFanOutTests: XCTestCase {
                     message: "죽은 인물 등장")],
                 metrics: nil)
         }
-        XCTAssertEqual(willChangeCount, afterFirst, "동일 값 경고 재발행이 fan-out을 만들었다")
-        token.cancel()
+        XCTAssertFalse(repeatedChange.changed, "Identical warnings invalidated their reader")
     }
 
     func test스냅샷세대는실제발행에서만증가한다() throws {

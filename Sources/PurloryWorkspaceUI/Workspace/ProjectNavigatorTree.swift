@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 struct ProjectNavigatorView: View {
-    @ObservedObject var session: ProjectSession
+    @Bindable var session: ProjectSession
     @ObservedObject var editorRequests: ProjectEditorRequests
     let theme: PurloryTheme
     let onClose: () -> Void
@@ -27,7 +27,7 @@ struct ProjectNavigatorView: View {
     @FocusState private var renameFocused: Bool
     private var isSearching: Bool { !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     private var organization: ProjectNavigation { navigator.organization }
-    private var trashCount: Int { (session.activeProject?.trashedDocumentIDs.count ?? 0) + organization.trashBundles.count }
+    private var trashCount: Int { (session.projectPresentation?.trashedDocumentIDs.count ?? 0) + organization.trashBundles.count }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -40,7 +40,7 @@ struct ProjectNavigatorView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
                     if isSearching { searchRows }
-                    else if let project = session.activeProject {
+                    else if let project = session.projectPresentation {
                         let rows = organization.rows(in: project, collapsed: navigator.collapsed, sortMode: sortMode)
                         ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                             let nextDepth = index + 1 < rows.count ? rows[index + 1].depth : 0
@@ -49,7 +49,7 @@ struct ProjectNavigatorView: View {
                                 case .folder(let id):
                                     if let folder = organization.folders.first(where: { $0.id == id }) { folderRow(folder, depth: row.depth) }
                                 case .document(let id):
-                                    if let document = session.document(id) { documentRow(document, depth: row.depth) }
+                                    if let document = session.documentPresentation(id) { documentRow(document, depth: row.depth) }
                                 }
                                 if row.depth > 0 && nextDepth < row.depth {
                                     let parents = organization.ancestors(of: row.node)
@@ -68,10 +68,10 @@ struct ProjectNavigatorView: View {
         .background(theme.cardSurfaceC)
         .accessibilityElement(children: .contain).accessibilityIdentifier("purlory.navigator").accessibilityLabel("문서 탐색기")
         .onAppear(perform: configure)
-        .onChange(of: session.activeProject?.userData[ProjectNavigation.key]) { _, _ in configure() }
-        .onChange(of: session.activeProject?.id) { _, _ in cancelRename(); searchText = ""; configure() }
+        .onChange(of: session.projectPresentation?.userData[ProjectNavigation.key]) { _, _ in configure() }
+        .onChange(of: session.projectPresentation?.id) { _, _ in cancelRename(); searchText = ""; configure() }
         .onDisappear { navigator.cancelDrag() }
-        .task(id: "\(session.runtimeIdentity?.generation ?? 0):\(searchText)") {
+        .task(id: "\(isSearching ? session.runtimeIdentity?.generation ?? 0 : 0):\(searchText)") {
             guard isSearching, let project = session.activeProject else { searchResults = []; return }
             try? await Task.sleep(for: .milliseconds(200))
             guard !Task.isCancelled else { return }
@@ -84,7 +84,7 @@ struct ProjectNavigatorView: View {
             showSearch()
         }
         .onChange(of: editorRequests.renameRequest) { _, _ in
-            if let document = session.selectedDocument { startRename(.document(document.id), title: document.title) }
+            if let document = session.selectedDocumentPresentation { startRename(.document(document.id), title: document.title) }
         }
         .onChange(of: renameFocused) { _, focused in if !focused { commitRename() } }
         .sheet(isPresented: $showingTrash) { ProjectNavigatorTrashView(session: session, navigator: navigator, theme: theme) }
@@ -111,7 +111,7 @@ struct ProjectNavigatorView: View {
                     }
                 }
             } label: {
-                Text(session.activeProject?.title ?? "프로젝트").lineLimit(1).truncationMode(.middle).purloryUIFont(10.5)
+                Text(session.projectPresentation?.title ?? "프로젝트").lineLimit(1).truncationMode(.middle).purloryUIFont(10.5)
             }.menuStyle(.borderlessButton).accessibilityLabel("최근 프로젝트")
             Spacer(minLength: 2)
             Button { showingTrash = true } label: {
@@ -312,13 +312,13 @@ struct ProjectNavigatorView: View {
             .accessibilityIdentifier("purlory.navigator.rename").onSubmit(commitRename).onExitCommand(perform: cancelRename)
     }
     private func startRename(_ node: ProjectNavigationNode, title: String) {
-        editing = node; editingProject = session.activeProject?.id; editingEpoch = session.activationEpoch; draftTitle = title
+        editing = node; editingProject = session.projectPresentation?.id; editingEpoch = session.activationEpoch; draftTitle = title
         DispatchQueue.main.async { renameFocused = true }
     }
     private func commitRename() {
         guard let node = editing, let project = editingProject else { return }
         editing = nil
-        guard session.activeProject?.id == project, session.activationEpoch == editingEpoch else { return }
+        guard session.projectPresentation?.id == project, session.activationEpoch == editingEpoch else { return }
         let name = draftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return }
         switch node {

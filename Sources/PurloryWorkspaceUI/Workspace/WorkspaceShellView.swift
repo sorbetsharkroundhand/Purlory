@@ -160,9 +160,9 @@ struct WorkspaceToolSurface: View {
 
 /// Connects the workspace directly to the sole mutable project owner.
 struct WorkspaceSurface: View {
-    @ObservedObject var projectSession: ProjectSession
+    @Bindable var projectSession: ProjectSession
     @ObservedObject var editorRequests: ProjectEditorRequests
-    @ObservedObject var completion: CompletionController
+    @Bindable var completion: CompletionController
     @ObservedObject var livingMargin: LivingMarginModel
     let indexer: BackgroundIndexer
     var editorBridge: ProjectEditorBridge? = nil
@@ -172,7 +172,7 @@ struct WorkspaceSurface: View {
     @Environment(\.openSettings) private var openSettings
     @StateObject private var palette = PaletteSettings.shared
     @StateObject private var outline = DocumentOutlineController()
-    @StateObject private var spatial = SpatialWorkspaceController()
+    @State private var spatial = SpatialWorkspaceController()
     @State private var seededSpatialProject: WritingProjectID?
     @State private var assistance: WorkspaceAssistance?
     @State private var entities: WorkspaceEntityController?
@@ -210,9 +210,7 @@ struct WorkspaceSurface: View {
         .tint(theme.blueC)
         .ignoresSafeArea(.container, edges: .top)
         .background(pouchBridge(theme: theme).frame(width: 0, height: 0))
-        .task(id: projectSession.runtimeIdentity) {
-            outline.update(activeWritingMode == .general ? projectSession.selectedDocumentSnapshot : nil)
-        }
+        .background(WorkspaceOutlineObservation(session: projectSession, outline: outline).frame(width: 0, height: 0))
         .onAppear {
             configureSpatial()
             completion.observeForegroundCompletion(owner: outline) { [weak outline] busy in
@@ -242,8 +240,8 @@ struct WorkspaceSurface: View {
             }
         }
         .onChange(of: projectSession.selectedDocumentID) { _, _ in configureSpatial() }
-        .onChange(of: projectSession.activeProject?.id) { _, _ in configureSpatial() }
-        .onChange(of: projectSession.activeProject?.trashedDocumentIDs) { _, _ in configureSpatial() }
+        .onChange(of: projectSession.projectPresentation?.id) { _, _ in configureSpatial() }
+        .onChange(of: projectSession.projectPresentation?.trashedDocumentIDs) { _, _ in configureSpatial() }
         .onChange(of: section) { _, value in
             let tile: WorkspaceTileID?
             switch value {
@@ -279,7 +277,7 @@ struct WorkspaceSurface: View {
     }
 
     private func configureSpatial() {
-        guard let project = projectSession.activeProject else { return }
+        guard let project = projectSession.projectPresentation else { return }
         spatial.configure(project: project, selected: projectSession.selectedDocumentID,
             defaults: projectSession.presentationPreferences)
         editorRequests.spatialWorkspace = spatial
@@ -505,7 +503,7 @@ struct WorkspaceSurface: View {
             if let error = editorRequests.sourceNavigationError {
                 Text(error).purloryUIFont(11).foregroundStyle(theme.workspaceMutedC).padding(12)
             }
-            if editorRequests.sourceReturnPoint?.key.projectID == projectSession.activeProject?.id {
+            if editorRequests.sourceReturnPoint?.key.projectID == projectSession.projectPresentation?.id {
                 Button("집필 위치로 돌아가기") { editorRequests.returnToWriting(in: projectSession) }
                     .purloryUIFont(11).padding(12)
                     .accessibilityIdentifier("purlory.living-margin.return")
@@ -523,7 +521,7 @@ struct WorkspaceSurface: View {
             }
             _ = writingDiagnostics.navigateMarginEvidence(insightID: insight.id, evidence: anchor, requests: editorRequests)
         } else {
-            guard let project = projectSession.activeProject, let reference = OriginalSourceReference.exact(anchor, in: project) else { return }
+            guard let project = projectSession.projectPresentation, let reference = OriginalSourceReference.exact(anchor, in: project) else { return }
             let inspection = ProjectSourceInspection(session: projectSession)
             if let token = inspection.capture() { editorRequests.jump(to: reference, inspection: inspection, token: token, in: projectSession) }
         }
@@ -539,7 +537,7 @@ struct WorkspaceSurface: View {
     }
 
     private var activeWritingMode: WritingMode {
-        projectSession.activeProject?.mode ?? .general
+        projectSession.projectPresentation?.mode ?? .general
     }
 }
 
@@ -623,7 +621,7 @@ enum LivingMarginWorkspaceBridge {
         in session: ProjectSession,
         sequence: Int
     ) -> EditorSearchJump? {
-        guard let project = session.activeProject,
+        guard let project = session.projectPresentation,
             !project.trashedDocumentIDs.contains(anchor.documentID),
             let document = project.documents.first(where: { $0.id == anchor.documentID }),
             let query = anchor.resolvedQuery(in: document.body)
@@ -634,5 +632,16 @@ enum LivingMarginWorkspaceBridge {
             documentID: document.id,
             query: query,
             sequence: sequence)
+    }
+}
+
+/// Keep source revision observation out of the workspace container and its chrome.
+private struct WorkspaceOutlineObservation: View {
+    let session: ProjectSession
+    let outline: DocumentOutlineController
+    var body: some View {
+        Color.clear.task(id: session.runtimeIdentity) {
+            outline.update(session.projectPresentation?.mode == .general ? session.selectedDocumentSnapshot : nil)
+        }
     }
 }

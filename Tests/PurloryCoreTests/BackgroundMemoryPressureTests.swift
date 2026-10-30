@@ -20,7 +20,7 @@ final class BackgroundMemoryPressureTests: XCTestCase {
         XCTAssertGreaterThan(reader.hydrateGeneration, retiredGeneration)
         let late = expectation(description: "Cancelled hydration must not publish")
         late.isInverted = true
-        let subscription = reader.$snapshotGeneration.dropFirst().sink { _ in late.fulfill() }
+        let subscription = reader.snapshotGenerationChanges.dropFirst().sink { _ in late.fulfill() }
         await persistence.release()
         await fulfillment(of: [late], timeout: 0.1)
         XCTAssertNil(reader.snapshot)
@@ -58,7 +58,7 @@ final class BackgroundMemoryPressureTests: XCTestCase {
         let reader = makeReader(document, persistence)
         defer { reader.shutdown() }
         let hydrated = expectation(description: "Initial knowledge published")
-        let initial = reader.$snapshotGeneration.dropFirst().prefix(1).sink { _ in hydrated.fulfill() }
+        let initial = reader.snapshotGenerationChanges.dropFirst().prefix(1).sink { _ in hydrated.fulfill() }
         reader.noteDocumentChange(document)
         await fulfillment(of: [hydrated], timeout: 1)
         initial.cancel()
@@ -69,7 +69,7 @@ final class BackgroundMemoryPressureTests: XCTestCase {
         XCTAssertEqual(reader.snapshot?.storyMemory?.scope, scope)
         reader.setMemoryPressurePaused(false)
         let refreshed = expectation(description: "Explicit edit can refresh knowledge")
-        let later = reader.$snapshotGeneration.dropFirst().prefix(1).sink { _ in refreshed.fulfill() }
+        let later = reader.snapshotGenerationChanges.dropFirst().prefix(1).sink { _ in refreshed.fulfill() }
         reader.rehydrate(entryID: document.identity.key.documentID.rawValue)
         await fulfillment(of: [refreshed], timeout: 1)
         XCTAssertEqual(reader.snapshotGeneration, generation + 1)

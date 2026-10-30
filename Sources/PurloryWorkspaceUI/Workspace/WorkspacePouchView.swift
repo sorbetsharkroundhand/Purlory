@@ -250,7 +250,7 @@ final class WorkspacePouchButton: WorkspaceHTMLButton {
 
 /// The only normal-mode pouch entry point; dragging it never moves or folds a window.
 struct WorkspacePouchTrigger: NSViewRepresentable {
-    @ObservedObject var model: SpatialWorkspaceController
+    @Bindable var model: SpatialWorkspaceController
     let theme: PurloryTheme
     func makeCoordinator() -> Coordinator { Coordinator(model) }
     func makeNSView(context: Context) -> Trigger {
@@ -290,7 +290,7 @@ struct WorkspacePouchTrigger: NSViewRepresentable {
 }
 
 struct WorkspacePouchBridge: NSViewRepresentable {
-    @ObservedObject var model: SpatialWorkspaceController
+    @Bindable var model: SpatialWorkspaceController
     let requests: ProjectEditorRequests
     let defaults: UserDefaults
     let theme: PurloryTheme

@@ -36,10 +36,10 @@ final class SourceSearchController: ObservableObject {
          }) {
         self.session = session; self.origin = origin; self.cursor = cursor
         self.delay = delay; self.build = build
-        session.$runtimeIdentity.dropFirst().sink { [weak self] identity in
+        session.runtimeIdentityChanges.dropFirst().sink { [weak self] identity in
             if identity != origin { self?.invalidate() }
         }.store(in: &subscriptions)
-        session.$isTransitioning.dropFirst().sink { [weak self] transitioning in
+        session.isTransitioningChanges.dropFirst().sink { [weak self] transitioning in
             if transitioning { self?.invalidate() }
         }.store(in: &subscriptions)
     }

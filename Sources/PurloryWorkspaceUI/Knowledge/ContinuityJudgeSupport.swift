@@ -21,8 +21,8 @@ final class ContinuityJudgeSupport: ObservableObject {
     func observe(_ completion: CompletionController) {
         guard !closed else { return }
         self.completion = completion
-        Publishers.CombineLatest4(completion.$engineState, completion.$isMemoryPressurePaused,
-            completion.$isManagingModel, completion.settings.$authorization)
+        Publishers.CombineLatest4(completion.engineStateChanges, completion.isMemoryPressurePausedChanges,
+            completion.isManagingModelChanges, completion.settings.$authorization)
             .combineLatest(Publishers.CombineLatest(completion.settings.$modelID, completion.settings.$autocompleteEnabled))
             .sink { [weak self] values, choice in
                 guard let self, !self.closed else { return }

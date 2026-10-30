@@ -57,7 +57,7 @@ final class CompletionMemoryPressureTests: XCTestCase {
         forbidden.isInverted = true
         controller.setMemoryPressurePaused(false)
         XCTAssertEqual(controller.engineState, .idle)
-        let state = controller.$engineState.dropFirst().sink { _ in forbidden.fulfill() }
+        let state = controller.engineStateChanges.dropFirst().sink { _ in forbidden.fulfill() }
         await fulfillment(of: [forbidden], timeout: 0.1)
         controller.shutdown()
         withExtendedLifetime(state) {}
@@ -72,7 +72,7 @@ final class CompletionMemoryPressureTests: XCTestCase {
         controller.setMemoryPressurePaused(true)
         let forbidden = expectation(description: "Cancelled request cannot begin inference")
         forbidden.isInverted = true
-        let state = controller.$isPredicting.filter { $0 }.sink { _ in forbidden.fulfill() }
+        let state = controller.isPredictingChanges.filter { $0 }.sink { _ in forbidden.fulfill() }
         await fulfillment(of: [forbidden], timeout: 0.1)
         XCTAssertFalse(controller.isPredicting)
         controller.shutdown()
@@ -112,7 +112,7 @@ final class CompletionMemoryPressureTests: XCTestCase {
         settings.setCompletionEnabled(true); settings.modelID = pin.id
         let controller = CompletionController(settings: settings, engine: CompletionEngine(memoryPolicy: policy))
         let refused = expectation(description: "Budget refusal reaches UI before model setup")
-        let state = controller.$engineState.first { if case .failed = $0 { return true }; return false }
+        let state = controller.engineStateChanges.first { if case .failed = $0 { return true }; return false }
             .sink { _ in refused.fulfill() }
         controller.preloadEngine()
         await fulfillment(of: [refused], timeout: 1)

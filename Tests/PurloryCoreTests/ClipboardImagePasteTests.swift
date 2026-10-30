@@ -73,7 +73,7 @@ final class ClipboardImagePasteTests: XCTestCase {
         defer { pb.releaseGlobally() }
         pb.setData(try bitmap(.png), forType: .png)
         let pasted = expectation(description: "Pasteboard read uses managed image insertion")
-        let sub = h.fixture.session.$activeProject.compactMap { $0?.documents.first?.body }
+        let sub = h.fixture.session.activeProjectChanges.compactMap { $0?.documents.first?.body }
             .filter { $0.contains("![](") }.prefix(1).sink { _ in pasted.fulfill() }
         XCTAssertTrue(view.readSelection(from: pb))
         await fulfillment(of: [pasted], timeout: 3)
@@ -91,7 +91,7 @@ final class ClipboardImagePasteTests: XCTestCase {
         view.setSelectedRange(NSRange(location: 6, length: 0))
         try await withClipboard(populate) {
             let pasted = expectation(description: "Standard Paste inserts a managed bitmap")
-            let sub = h.fixture.session.$activeProject
+            let sub = h.fixture.session.activeProjectChanges
                 .compactMap { $0?.documents.first?.body }
                 .filter { $0.contains("](") }.prefix(1).sink { _ in pasted.fulfill() }
             view.paste(nil)

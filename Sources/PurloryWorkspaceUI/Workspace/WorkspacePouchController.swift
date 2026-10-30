@@ -90,7 +90,7 @@ struct WorkspacePouchAction {
     init(model: SpatialWorkspaceController, defaults: UserDefaults = .standard) {
         self.model = model; self.defaults = defaults
         super.init()
-        subscription = model.objectWillChange.sink { [weak self] _ in
+        subscription = model.presentationWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { [weak self] in
                 self?.model.canvas?.layoutTiles()
                 self?.refresh(); self?.syncAttachment()

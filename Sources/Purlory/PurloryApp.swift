@@ -9,18 +9,18 @@ struct PurloryApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     // Completion, background preparation and pressure release own this same engine.
     static let sharedEngine = CompletionEngine()
-    // Swift 6.1 crashes when lowering these defaults inside StateObject's autoclosure.
-    @StateObject private var completion = CompletionController(
+    // Observable runtime owners share the same local inference engine.
+    @State private var completion = CompletionController(
         settings: .shared, engine: PurloryApp.sharedEngine, metricsStorageLocation: .standard)
     @StateObject private var livingMargin = LivingMarginModel()
     @StateObject private var writingDiagnostics = WritingDiagnosticsRuntime()
     private static let projectStore = ProjectStore(root: PurloryStorageLocation.standard.projectsDirectory)
     private static let knowledgeSidecars = KnowledgeSidecarRepository(
         projectStore: PurloryApp.projectStore)
-    @StateObject private var indexer = BackgroundIndexer(
+    @State private var indexer = BackgroundIndexer(
         engine: PurloryApp.sharedEngine,
         sidecarPersistence: PurloryApp.knowledgeSidecars)
-    @StateObject private var projectSession: ProjectSession
+    @State private var projectSession: ProjectSession
     private var startup: ProjectStartupCoordinator {
         ProjectStartupCoordinator(session: projectSession, store: Self.projectStore)
     }
@@ -30,7 +30,7 @@ struct PurloryApp: App {
         let session = ProjectSession(store: Self.projectStore, prepareProject: { project, store in
             try await ProjectWriterDataMigration.prepare(project, store: store)
         })
-        _projectSession = StateObject(wrappedValue: session)
+        _projectSession = State(initialValue: session)
     }
 
     var body: some Scene {

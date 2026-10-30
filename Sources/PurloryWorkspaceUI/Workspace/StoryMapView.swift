@@ -2,9 +2,9 @@ import SwiftUI
 
 /// Attaches the prepared read-only map to the actual project and background reader.
 struct StoryMapWorkspacePanel: View {
-    @ObservedObject var session: ProjectSession
-    @ObservedObject var indexer: BackgroundIndexer
-    @ObservedObject var completion: CompletionController
+    @Bindable var session: ProjectSession
+    @Bindable var indexer: BackgroundIndexer
+    @Bindable var completion: CompletionController
     @ObservedObject var requests: ProjectEditorRequests
     let theme: PurloryTheme
     @StateObject private var controller: StoryMapController
@@ -23,7 +23,7 @@ struct StoryMapWorkspacePanel: View {
             .onAppear {
                 completion.observeForegroundCompletion(owner: controller) { [weak controller] busy in controller?.setForegroundBusy(busy) }
             }
-            .onReceive(completion.$isMemoryPressurePaused) { controller.setPolicyPaused($0) }
+            .onReceive(completion.isMemoryPressurePausedChanges) { controller.setPolicyPaused($0) }
             .onChange(of: controller.prepared) { _, _ in notePosition() }
             .onReceive(NotificationCenter.default.publisher(for: NSTextView.didChangeSelectionNotification)) { value in
                 guard let editor = value.object as? BlockTextView, editor === requests.nativeEditor else { return }
@@ -40,7 +40,7 @@ struct StoryMapWorkspacePanel: View {
 
 struct StoryMapView: View {
     @ObservedObject var controller: StoryMapController
-    @ObservedObject var session: ProjectSession
+    @Bindable var session: ProjectSession
     @ObservedObject var requests: ProjectEditorRequests
     let theme: PurloryTheme
     var body: some View {

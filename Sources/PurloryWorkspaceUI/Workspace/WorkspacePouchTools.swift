@@ -28,10 +28,10 @@ enum WorkspacePouchSection: String, CaseIterable {
 
 /// A fixed writer's toolbox. Detailed model and author tools open separately.
 struct WorkspacePouchTools: View {
-    @ObservedObject var session: ProjectSession
+    @Bindable var session: ProjectSession
     @ObservedObject var requests: ProjectEditorRequests
-    @ObservedObject var model: SpatialWorkspaceController
-    @ObservedObject var completion: CompletionController
+    @Bindable var model: SpatialWorkspaceController
+    @Bindable var completion: CompletionController
     @ObservedObject var settings: CompletionSettings
     let theme: PurloryTheme
     let openCoauthor: () -> Void

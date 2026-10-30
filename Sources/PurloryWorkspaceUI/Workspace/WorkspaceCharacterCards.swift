@@ -1,10 +1,10 @@
 import SwiftUI
 
 struct WorkspaceCharacterCards: View {
-    @ObservedObject var session: ProjectSession
+    @Bindable var session: ProjectSession
     @ObservedObject var requests: ProjectEditorRequests
-    @ObservedObject var completion: CompletionController
-    @ObservedObject var model: SpatialWorkspaceController
+    @Bindable var completion: CompletionController
+    @Bindable var model: SpatialWorkspaceController
     var indexer: BackgroundIndexer? = nil
     let theme: PurloryTheme
     private struct Record: Identifiable {
@@ -161,8 +161,8 @@ struct WorkspaceCharacterCards: View {
 }
 
 struct ProjectCandidateReviewList: View {
-    @ObservedObject var indexer: BackgroundIndexer
-    @ObservedObject var session: ProjectSession
+    @Bindable var indexer: BackgroundIndexer
+    @Bindable var session: ProjectSession
     let snapshot: ProjectDocumentSnapshot
     let theme: PurloryTheme
 

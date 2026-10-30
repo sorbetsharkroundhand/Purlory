@@ -1,5 +1,6 @@
-import AppKit
+import Observation
 import Combine
+import AppKit
 
 struct SpatialNavigatorDrop: Equatable {
     let source: WritingDocumentID
@@ -13,33 +14,43 @@ struct WorkspaceEntityEvent: Equatable {
     let reference: OriginalSourceReference
 }
 
-@MainActor final class SpatialWorkspaceController: ObservableObject {
-    @Published private(set) var layout = SpatialWorkspaceLayout(documents: [], selected: nil)
-    @Published private(set) var previewTarget: SpatialDropTarget?
+@Observable
+@MainActor final class SpatialWorkspaceController {
+    // Native consumers need synchronous value events before ownership changes.
+    private let _entityEventsEvents = CurrentValueSubject<[WorkspaceEntityEvent], Never>([])
+    var entityEventsChanges: AnyPublisher<[WorkspaceEntityEvent], Never> { _entityEventsEvents.eraseToAnyPublisher() }
+    private let _whisperTypingEvents = CurrentValueSubject<Bool, Never>(false)
+    var whisperTypingChanges: AnyPublisher<Bool, Never> { _whisperTypingEvents.eraseToAnyPublisher() }
+    private let _isDraggingEvents = CurrentValueSubject<Bool, Never>(false)
+    var isDraggingChanges: AnyPublisher<Bool, Never> { _isDraggingEvents.eraseToAnyPublisher() }
+    let presentationWillChange = PassthroughSubject<Void, Never>()
+
+    private(set) var layout = SpatialWorkspaceLayout(documents: [], selected: nil) { willSet { presentationWillChange.send() } }
+    private(set) var previewTarget: SpatialDropTarget? { willSet { presentationWillChange.send() } }
     private(set) var pointer = CGPoint.zero
-    @Published private(set) var isDragging = false
-    @Published var typewriter = false { didSet { persist() } }
-    @Published var focusDimming = false { didSet { persist() } }
-    @Published var whisperTyping = false
-    @Published var expandedItem: String?
-    @Published private(set) var selectedTile: WorkspaceTileID?
-    @Published var pouchSection: WorkspacePouchSection?
-    @Published var searchRequest = WorkspaceSearchRequest()
-    @Published private(set) var revealSequence = 0
+    private(set) var isDragging = false { willSet { presentationWillChange.send(); _isDraggingEvents.send(newValue) } }
+    var typewriter = false { willSet { presentationWillChange.send() } didSet { persist() } }
+    var focusDimming = false { willSet { presentationWillChange.send() } didSet { persist() } }
+    var whisperTyping = false { willSet { presentationWillChange.send(); _whisperTypingEvents.send(newValue) } }
+    var expandedItem: String? { willSet { presentationWillChange.send() } }
+    private(set) var selectedTile: WorkspaceTileID? { willSet { presentationWillChange.send() } }
+    var pouchSection: WorkspacePouchSection? { willSet { presentationWillChange.send() } }
+    var searchRequest = WorkspaceSearchRequest() { willSet { presentationWillChange.send() } }
+    private(set) var revealSequence = 0 { willSet { presentationWillChange.send() } }
     private(set) var tileToReveal: WorkspaceTileID?
-    weak var canvas: SpatialWorkspaceCanvasView?
-    weak var pouchController: WorkspacePouchController?
-    weak var pouchAnchor: NSView?
+    @ObservationIgnored weak var canvas: SpatialWorkspaceCanvasView?
+    @ObservationIgnored weak var pouchController: WorkspacePouchController?
+    @ObservationIgnored weak var pouchAnchor: NSView?
     private(set) var pouchContentHeight: CGFloat = 0
     func setPouchContentHeight(_ height: CGFloat, for tile: WorkspaceTileID?) {
         guard height.isFinite, height > 0, abs(pouchContentHeight - ceil(height)) > 0.5 else { return }
         pouchContentHeight = ceil(height)
         pouchGeometryDidChange?()
     }
-    var pouchGeometryDidChange: (() -> Void)?
-    var dismissObject: ((WorkspaceTileID) -> Void)?
-    var onClose: ((WorkspaceTileID) -> Void)?
-    var advanceSearch: ((Int) -> Void)?
+    @ObservationIgnored var pouchGeometryDidChange: (() -> Void)?
+    @ObservationIgnored var dismissObject: ((WorkspaceTileID) -> Void)?
+    @ObservationIgnored var onClose: ((WorkspaceTileID) -> Void)?
+    @ObservationIgnored var advanceSearch: ((Int) -> Void)?
     private func reveal(_ tile: WorkspaceTileID) { tileToReveal = tile; revealSequence += 1 }
 
     func selectTile(_ tile: WorkspaceTileID?) {
@@ -57,13 +68,13 @@ struct WorkspaceEntityEvent: Equatable {
         whisperTyping = false
         pouchSection = .overview
     }
-    @Published var navigatorDrop: SpatialNavigatorDrop?
-    @Published var resonatingTerm: String?
-    @Published var activeParagraph = ""
+    var navigatorDrop: SpatialNavigatorDrop? { willSet { presentationWillChange.send() } }
+    var resonatingTerm: String? { willSet { presentationWillChange.send() } }
+    var activeParagraph = "" { willSet { presentationWillChange.send() } }
     var entityTerms: [String] = []
-    @Published var entityEvents: [WorkspaceEntityEvent] = []
-    @Published private(set) var toast: String?
-    private var toastTask: Task<Void, Never>?
+    var entityEvents: [WorkspaceEntityEvent] = [] { willSet { presentationWillChange.send(); _entityEventsEvents.send(newValue) } }
+    private(set) var toast: String? { willSet { presentationWillChange.send() } }
+    @ObservationIgnored private var toastTask: Task<Void, Never>?
     func showToast(_ message: String) {
         toastTask?.cancel(); toast = message
         toastTask = Task { [weak self] in
@@ -74,7 +85,7 @@ struct WorkspaceEntityEvent: Equatable {
     }
     private(set) var activeDocumentID: WritingDocumentID?
     private(set) var restoredPreference = false
-    private var whisperOrigin = CGPoint.zero
+    @ObservationIgnored private var whisperOrigin = CGPoint.zero
     func noteTyping(at point: CGPoint) {
         whisperOrigin = point
         if !whisperTyping { whisperTyping = true }
@@ -83,15 +94,15 @@ struct WorkspaceEntityEvent: Equatable {
     func notePointer(at point: CGPoint) {
         if whisperTyping && hypot(point.x - whisperOrigin.x, point.y - whisperOrigin.y) > 48 { whisperTyping = false }
     }
-    var onCommit: ((SpatialWorkspaceLayout) -> Void)?
-    var onTileReorder: ((SpatialWorkspaceLayout) -> Void)?
-    var onActivate: ((WritingDocumentID) -> Void)?
-    var onNavigationOrder: (([WritingDocumentID]) -> Void)?
+    @ObservationIgnored var onCommit: ((SpatialWorkspaceLayout) -> Void)?
+    @ObservationIgnored var onTileReorder: ((SpatialWorkspaceLayout) -> Void)?
+    @ObservationIgnored var onActivate: ((WritingDocumentID) -> Void)?
+    @ObservationIgnored var onNavigationOrder: (([WritingDocumentID]) -> Void)?
     private(set) var projectID: WritingProjectID?
-    private var defaults: UserDefaults
-    private var validDocuments: [WritingDocumentID] = []
-    private var drag: DragSession?
-    private var loading = false
+    @ObservationIgnored private var defaults: UserDefaults
+    @ObservationIgnored private var validDocuments: [WritingDocumentID] = []
+    @ObservationIgnored private var drag: DragSession?
+    @ObservationIgnored private var loading = false
 
     private struct DragSession {
         let draggedTileID: WorkspaceTileID

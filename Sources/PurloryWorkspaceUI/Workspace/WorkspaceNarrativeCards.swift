@@ -2,11 +2,11 @@ import SwiftUI
 
 /// Compact projections reuse the map's scoped, source-verified preparation and cancellation.
 struct WorkspaceNarrativeCards: View {
-    @ObservedObject var session: ProjectSession
+    @Bindable var session: ProjectSession
     @ObservedObject var requests: ProjectEditorRequests
-    @ObservedObject var indexer: BackgroundIndexer
-    @ObservedObject var completion: CompletionController
-    @ObservedObject var model: SpatialWorkspaceController
+    @Bindable var indexer: BackgroundIndexer
+    @Bindable var completion: CompletionController
+    @Bindable var model: SpatialWorkspaceController
     let theme: PurloryTheme
     @StateObject private var controller: StoryMapController
     @State private var editingThreadID: String?
@@ -98,7 +98,7 @@ struct WorkspaceNarrativeCards: View {
             } ?? []
         }
         .onAppear { completion.observeForegroundCompletion(owner: controller) { [weak controller] busy in controller?.setForegroundBusy(busy) } }
-        .onReceive(completion.$isMemoryPressurePaused) { controller.setPolicyPaused($0) }
+        .onReceive(completion.isMemoryPressurePausedChanges) { controller.setPolicyPaused($0) }
         .onDisappear { controller.stop() }
     }
 
@@ -394,9 +394,9 @@ struct WorkspaceNarrativeCards: View {
 
 /// Continuity, character, timeline, dialogue, open-thread, and structure review tile.
 struct WorkspaceReviewPane: View {
-    @ObservedObject var session: ProjectSession
+    @Bindable var session: ProjectSession
     @ObservedObject var requests: ProjectEditorRequests
-    @ObservedObject var indexer: BackgroundIndexer
+    @Bindable var indexer: BackgroundIndexer
     let theme: PurloryTheme
     @State private var projection: FictionReviewProjection?
     @State private var selectedCategory: ReviewIssue.Category?

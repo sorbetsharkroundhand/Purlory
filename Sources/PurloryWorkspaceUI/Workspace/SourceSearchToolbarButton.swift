@@ -3,7 +3,7 @@ import SwiftUI
 
 /// A native search action does not move the manuscript caret before capturing it.
 struct SourceSearchToolbarButton: NSViewRepresentable {
-    @ObservedObject var session: ProjectSession
+    @Bindable var session: ProjectSession
     let requests: ProjectEditorRequests
     let compact: Bool
     var theme: PurloryTheme? = nil

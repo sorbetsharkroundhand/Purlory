@@ -221,7 +221,7 @@ final class ProjectSessionTests: XCTestCase {
             completion.noteDocumentChange(snapshot)
         }
         let restored = expectation(description: "Surviving project reader restored")
-        let subscription = reader.$snapshotGeneration.dropFirst().prefix(1).sink { _ in restored.fulfill() }
+        let subscription = reader.snapshotGenerationChanges.dropFirst().prefix(1).sink { _ in restored.fulfill() }
 
         do {
             if savingCandidate { try await session.saveAndActivate(other) }

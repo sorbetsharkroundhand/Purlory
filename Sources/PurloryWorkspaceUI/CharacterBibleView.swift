@@ -235,7 +235,7 @@ struct CharacterBibleView: View {
 /// "등록"은 카드 생성 + 백그라운드 프로파일링, "무시"는 거부 목록행(재질문 금지).
 /// 답하기 전엔 아무것도 바꾸지 않는다 — 자동 등록 절대 금지 (CLAUDE.md §3).
 private struct CandidateReviewList: View {
-    @ObservedObject var indexer: BackgroundIndexer
+    @Bindable var indexer: BackgroundIndexer
     @ObservedObject var store: EntryStore
     let theme: PurloryTheme
 

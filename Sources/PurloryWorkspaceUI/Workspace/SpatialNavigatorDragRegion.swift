@@ -2,9 +2,9 @@ import AppKit
 import SwiftUI
 
 struct SpatialNavigatorPane: View {
-    @ObservedObject var session: ProjectSession
+    @Bindable var session: ProjectSession
     @ObservedObject var requests: ProjectEditorRequests
-    @ObservedObject var model: SpatialWorkspaceController
+    @Bindable var model: SpatialWorkspaceController
     var completion: CompletionController? = nil
     let theme: PurloryTheme
     let onClose: () -> Void

@@ -48,7 +48,7 @@ public struct ProjectCommandActions {
 }
 
 public struct PurloryCommands: Commands {
-    @ObservedObject private var session: ProjectSession
+    @Bindable private var session: ProjectSession
     private let startup: ProjectStartupCoordinator
     @ObservedObject private var editorRequests: ProjectEditorRequests
     private let projectStore: ProjectStore
@@ -65,7 +65,7 @@ public struct PurloryCommands: Commands {
         projectStore: ProjectStore,
         editorRequests: ProjectEditorRequests
     ) {
-        self._session = ObservedObject(wrappedValue: session)
+        self._session = Bindable(wrappedValue: session)
         self.startup = startup
         self.projectStore = projectStore
         self._editorRequests = ObservedObject(wrappedValue: editorRequests)

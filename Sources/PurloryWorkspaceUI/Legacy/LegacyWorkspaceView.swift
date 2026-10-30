@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 struct LegacyWorkspaceView: View {
     @ObservedObject var workspace: LegacyWorkspaceController
     @ObservedObject var store: EntryStore
-    @ObservedObject var completion: CompletionController
+    @Bindable var completion: CompletionController
     @ObservedObject var settings: CompletionSettings
     let indexer: BackgroundIndexer
     let updateBody: (String) -> Void

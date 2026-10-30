@@ -241,7 +241,7 @@ enum ProjectNavigatorActions {
 }
 
 struct ProjectNavigatorTrashView: View {
-    @ObservedObject var session: ProjectSession
+    @Bindable var session: ProjectSession
     @ObservedObject var navigator: ProjectNavigatorController
     let theme: PurloryTheme
     @Environment(\.dismiss) private var dismiss

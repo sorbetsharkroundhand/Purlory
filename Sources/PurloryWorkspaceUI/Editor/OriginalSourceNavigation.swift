@@ -50,9 +50,9 @@ final class ProjectSourceInspection {
     private var subscriptions: Set<AnyCancellable> = []
     init(session: ProjectSession) {
         self.session = session
-        session.$activeProject.dropFirst().sink { [weak self] _ in self?.retire() }.store(in: &subscriptions)
-        session.$isTransitioning.dropFirst().sink { [weak self] value in if value { self?.retire() } }.store(in: &subscriptions)
-        session.$phase.dropFirst().sink { [weak self] value in if value != .ready { self?.retire() } }.store(in: &subscriptions)
+        session.activeProjectChanges.dropFirst().sink { [weak self] _ in self?.retire() }.store(in: &subscriptions)
+        session.isTransitioningChanges.dropFirst().sink { [weak self] value in if value { self?.retire() } }.store(in: &subscriptions)
+        session.phaseChanges.dropFirst().sink { [weak self] value in if value != .ready { self?.retire() } }.store(in: &subscriptions)
     }
     func capture() -> Token? {
         guard let session, session.isEditorEditable, let project = session.activeProject else { return nil }

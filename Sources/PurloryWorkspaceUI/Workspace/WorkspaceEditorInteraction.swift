@@ -61,7 +61,7 @@ import Combine
             }
             return event
         }
-        subscription = model.objectWillChange.sink { [weak self] _ in
+        subscription = model.presentationWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { [weak self] in self?.presentationDidChange() }
         }
         layoutDidChange()

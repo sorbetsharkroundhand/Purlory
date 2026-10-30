@@ -2,8 +2,8 @@ import SwiftUI
 
 /// Existing author-data tools use the project owner directly, without a legacy store.
 struct ProjectWriterToolsView: View {
-    @ObservedObject var session: ProjectSession
-    @ObservedObject var completion: CompletionController
+    @Bindable var session: ProjectSession
+    @Bindable var completion: CompletionController
     @ObservedObject var editorRequests: ProjectEditorRequests
     let section: SidebarSection
     let theme: PurloryTheme

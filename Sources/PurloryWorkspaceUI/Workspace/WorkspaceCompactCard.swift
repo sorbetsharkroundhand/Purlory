@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 struct WorkspaceCompactCard<Content: View>: View {
-    @ObservedObject var model: SpatialWorkspaceController
+    @Bindable var model: SpatialWorkspaceController
     let id: String
     let title: String
     let detail: String

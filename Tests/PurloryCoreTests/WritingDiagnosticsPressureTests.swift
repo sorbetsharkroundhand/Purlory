@@ -73,14 +73,14 @@ final class WritingDiagnosticsPressureTests: XCTestCase {
         let source = WritingTestPressureSource()
         let monitor = MemoryPressureRuntime(completion: completion, indexer: indexer, engine: engine, source: source, writingDiagnostics: writing)
         let paused = expectation(description: "Shared release closes completion")
-        let observation = completion.$isMemoryPressurePaused.filter { $0 }.prefix(1).sink { _ in paused.fulfill() }
+        let observation = completion.isMemoryPressurePausedChanges.filter { $0 }.prefix(1).sink { _ in paused.fulfill() }
         source.handler?(.critical); await fulfillment(of: [paused], timeout: 1)
         await writing.setMemoryPressure(.critical)
         writing.noteMemoryPressure(.normal)
         XCTAssertTrue(completion.isMemoryPressurePaused)
         XCTAssertEqual(writing.controller.state.status, .paused, "Native drain alone does not reopen optional work while the shared release is blocked")
         let resumed = expectation(description: "Shared release finally reopens completion")
-        let resumedObservation = completion.$isMemoryPressurePaused.dropFirst().filter { !$0 }.prefix(1).sink { _ in resumed.fulfill() }
+        let resumedObservation = completion.isMemoryPressurePausedChanges.dropFirst().filter { !$0 }.prefix(1).sink { _ in resumed.fulfill() }
         source.handler?(.normal)
         await lifetime.releaseOperation()
         await fulfillment(of: [resumed], timeout: 2)
@@ -104,7 +104,7 @@ final class WritingDiagnosticsPressureTests: XCTestCase {
         let runtime = MemoryPressureRuntime(completion: completion, indexer: indexer, engine: engine,
             source: source, writingDiagnostics: writing)
         let paused = expectation(description: "Existing foreground pressure consumer")
-        let observation = completion.$isMemoryPressurePaused.filter { $0 }.prefix(1).sink { _ in paused.fulfill() }
+        let observation = completion.isMemoryPressurePausedChanges.filter { $0 }.prefix(1).sink { _ in paused.fulfill() }
         source.handler?(.critical)
         await fulfillment(of: [paused], timeout: 1)
         XCTAssertEqual(writing.controller.state.status, .paused)

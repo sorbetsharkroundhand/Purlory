@@ -134,7 +134,7 @@ final class StoryKnowledgeProjectionTests: XCTestCase {
         let reader = BackgroundIndexer(engine: CompletionEngine(), settings: settings, sidecarPersistence: persistence)
         reader.attach(documentProvider: { input }); defer { reader.shutdown() }
         let published = expectation(description: "Prepared Story Knowledge published")
-        let subscription = reader.$snapshotGeneration.dropFirst().prefix(1).sink { _ in published.fulfill() }
+        let subscription = reader.snapshotGenerationChanges.dropFirst().prefix(1).sink { _ in published.fulfill() }
         reader.noteDocumentChange(input)
         await fulfillment(of: [published], timeout: 5)
         let view = try XCTUnwrap(reader.snapshot?.storyKnowledge)
@@ -144,7 +144,7 @@ final class StoryKnowledgeProjectionTests: XCTestCase {
         input = ProjectDocumentSnapshot(identity: .init(key: identity.key, generation: 2), title: "Synthetic", body: body + "Edited source.",
             kind: .manuscript, mode: .fiction, userData: input.userData)
         let refreshed = expectation(description: "Changed original retires old observations")
-        let refresh = reader.$snapshotGeneration.dropFirst().prefix(1).sink { _ in refreshed.fulfill() }
+        let refresh = reader.snapshotGenerationChanges.dropFirst().prefix(1).sink { _ in refreshed.fulfill() }
         reader.noteDocumentChange(input)
         await fulfillment(of: [refreshed], timeout: 5)
         XCTAssertEqual(reader.snapshotRuntimeIdentity, input.identity)

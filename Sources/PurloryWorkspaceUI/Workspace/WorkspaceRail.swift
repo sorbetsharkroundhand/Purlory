@@ -3,7 +3,7 @@ import SwiftUI
 struct WorkspaceRail: View {
     @Binding var navigatorVisible: Bool
     @Binding var section: String
-    @ObservedObject var session: ProjectSession
+    @Bindable var session: ProjectSession
     let requests: ProjectEditorRequests
     let theme: PurloryTheme
     let openSettings: () -> Void

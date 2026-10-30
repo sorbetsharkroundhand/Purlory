@@ -31,11 +31,11 @@ final class AskPurloryController: ObservableObject {
          build: @escaping Builder = { try AskEvidencePacket.prepare($0) }, generate: @escaping Generator) {
         self.session = session; origin = input.origin; query = input.query; cursor = input.cursor; scope = input.scope
         self.modelAvailable = modelAvailable; self.build = build; self.generate = generate
-        session.$runtimeIdentity.dropFirst().sink { [weak self] value in
+        session.runtimeIdentityChanges.dropFirst().sink { [weak self] value in
             if let self, value != self.origin { self.invalidate() }
         }.store(in: &subscriptions)
-        session.$activeProject.dropFirst().sink { [weak self] _ in self?.invalidate() }.store(in: &subscriptions)
-        session.$isTransitioning.dropFirst().sink { [weak self] value in if value { self?.invalidate() } }.store(in: &subscriptions)
+        session.activeProjectChanges.dropFirst().sink { [weak self] _ in self?.invalidate() }.store(in: &subscriptions)
+        session.isTransitioningChanges.dropFirst().sink { [weak self] value in if value { self?.invalidate() } }.store(in: &subscriptions)
     }
 
     func ask(question raw: String) {

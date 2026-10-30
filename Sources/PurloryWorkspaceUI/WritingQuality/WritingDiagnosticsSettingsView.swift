@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Project decisions use the prepared record, never an analysis task or global preferences.
 struct WritingDiagnosticsSettingsView: View {
-    @ObservedObject var session: ProjectSession
+    @Bindable var session: ProjectSession
     @ObservedObject var runtime: WritingDiagnosticsRuntime
     @State private var word = ""
     @State private var errorMessage: String?

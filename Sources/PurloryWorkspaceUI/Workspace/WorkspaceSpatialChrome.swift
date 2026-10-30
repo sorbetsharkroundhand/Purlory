@@ -1,15 +1,15 @@
 import SwiftUI
 
 struct WorkspaceSpatialChrome: View {
-    @ObservedObject var session: ProjectSession
-    @ObservedObject var model: SpatialWorkspaceController
+    @Bindable var session: ProjectSession
+    @Bindable var model: SpatialWorkspaceController
     let theme: PurloryTheme
     var body: some View {
-        WorkspaceWindowChrome(projectTitle: session.activeProject?.title ?? "프로젝트", theme: theme,
+        WorkspaceWindowChrome(projectTitle: session.projectPresentation?.title ?? "프로젝트", theme: theme,
             trailingInset: 60, documentTitle: session.selectedDocument?.title,
             openCount: model.layout.openDocuments.count, glass: true)
             .contextMenu {
-                if let mode = session.activeProject?.mode {
+                if let mode = session.projectPresentation?.mode {
                     ForEach(WorkspaceModePresentation.options(for: mode)) { option in
                         Button(option.label) { session.selectWorkspaceMode(option.mode) }
                     }

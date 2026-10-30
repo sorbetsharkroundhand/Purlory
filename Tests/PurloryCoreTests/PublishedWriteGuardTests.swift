@@ -1,3 +1,4 @@
+import Observation
 @testable import PurloryIntelligence
 @_spi(Benchmark) @testable import PurloryInference
 import XCTest
@@ -25,17 +26,19 @@ final class PublishedWriteGuardTests: XCTestCase {
         let indexer = BackgroundIndexer(engine: CompletionEngine(), settings: settings)
         indexer.attachLegacy(store: store)
 
-        var willChangeCount = 0
-        let token = indexer.objectWillChange.sink { willChangeCount += 1 }
+        let change = ObservationFlag()
+        withObservationTracking {
+            _ = indexer.isIndexing; _ = indexer.warnings; _ = indexer.snapshotGeneration
+            _ = indexer.manualPhase; _ = indexer.continuityCandidates
+        } onChange: { change.mark() }
 
         // 패스가 도는 중이 아닐 때의 연속 선점 — 상태 변화가 없어야 한다.
         let id = store.newEntry(kind: .novel)
         indexer.noteChange(entryID: id)
         indexer.noteChange(entryID: id)
 
-        XCTAssertEqual(willChangeCount, 0, "동일 값 쓰기가 \(willChangeCount)번 발행됐다")
+        XCTAssertFalse(change.changed, "Idle preemption invalidated a presentation reader")
         XCTAssertFalse(indexer.isIndexing)
-        token.cancel()
     }
 }
 

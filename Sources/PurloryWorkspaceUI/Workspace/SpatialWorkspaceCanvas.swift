@@ -3,7 +3,7 @@ import SwiftUI
 import QuartzCore
 
 struct SpatialWorkspaceCanvas: NSViewRepresentable {
-    @ObservedObject var model: SpatialWorkspaceController
+    @Bindable var model: SpatialWorkspaceController
     let theme: PurloryTheme
     let content: (WorkspaceTileID) -> AnyView
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
@@ -760,10 +760,10 @@ final class SpatialDragIndicatorOverlayView: NSView {
 }
 
 struct SpatialDocumentTile: View {
-    @ObservedObject var session: ProjectSession
+    @Bindable var session: ProjectSession
     @ObservedObject var requests: ProjectEditorRequests
-    @ObservedObject var completion: CompletionController
-    @ObservedObject var model: SpatialWorkspaceController
+    @Bindable var completion: CompletionController
+    @Bindable var model: SpatialWorkspaceController
     let documentID: WritingDocumentID
     let theme: PurloryTheme
     var editorBridge: ProjectEditorBridge?

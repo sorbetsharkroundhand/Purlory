@@ -1,3 +1,5 @@
+import Observation
+import Combine
 import Foundation
 import SwiftUI
 
@@ -11,8 +13,19 @@ import SwiftUI
 /// - `hasMarkedText`(한글 조합 중)면 절대 트리거하지 않는다 (PLAN §2).
 /// - 커서 뒤~문단 끝에 내용이 있으면 트리거하지 않는다 — 고스트를 본문과
 ///   겹쳐 그리지 않기 위한 MVP 단순화 (docs/m3-ghost-text.md 결정 사항).
+@Observable
 @MainActor
-public final class CompletionController: ObservableObject {
+public final class CompletionController {
+    // Native consumers need synchronous value events before ownership changes.
+    private let _engineStateEvents = CurrentValueSubject<EngineState, Never>(.idle)
+    var engineStateChanges: AnyPublisher<EngineState, Never> { _engineStateEvents.eraseToAnyPublisher() }
+    private let _isPredictingEvents = CurrentValueSubject<Bool, Never>(false)
+    var isPredictingChanges: AnyPublisher<Bool, Never> { _isPredictingEvents.eraseToAnyPublisher() }
+    private let _isManagingModelEvents = CurrentValueSubject<Bool, Never>(false)
+    var isManagingModelChanges: AnyPublisher<Bool, Never> { _isManagingModelEvents.eraseToAnyPublisher() }
+    private let _isMemoryPressurePausedEvents = CurrentValueSubject<Bool, Never>(false)
+    var isMemoryPressurePausedChanges: AnyPublisher<Bool, Never> { _isMemoryPressurePausedEvents.eraseToAnyPublisher() }
+
 
     /// 모델 준비 상태 — ContentView 상태 바 표시용 (M4).
     public enum EngineState: Equatable {
@@ -26,15 +39,15 @@ public final class CompletionController: ObservableObject {
     }
 
     /// 현재 고스트로 띄울 제안. nil이면 없음.
-    @Published public private(set) var suggestion: String?
-    @Published public private(set) var engineState: EngineState = .idle
+    public private(set) var suggestion: String?
+    public private(set) var engineState: EngineState = .idle { willSet { _engineStateEvents.send(newValue) } }
     /// 최근 제안의 생성 지연(디바운스 제외) — 상태 바 표시용.
-    @Published public private(set) var lastLatency: TimeInterval?
+    public private(set) var lastLatency: TimeInterval?
     /// 최근 예측이 실제로 참고한 컨텍스트 (요구사항 §17 인스펙터) — 조립기가
     /// 프롬프트를 만들며 남긴 기록이라 프롬프트와 항상 일치한다. 별도 프리뷰
     /// 데이터가 아니다. 소속 문서(entryID)가 활성 문서와 다르면 인스펙터가
     /// 숨긴다 (이슈 #8). 쓰기는 모듈 내부(테스트 포함)로 제한.
-    @Published public internal(set) var lastContextReport: ContextReport?
+    public internal(set) var lastContextReport: ContextReport?
 
     /// 문서 전환 알림 — 이전 문서의 예측·리포트를 즉시 무효화한다 (이슈 #8).
     /// A 작품 예측 도중 B로 전환하면 세대가 올라 늦은 결과가 폐기되고, 고스트와
@@ -46,7 +59,7 @@ public final class CompletionController: ObservableObject {
         invalidate()
     }
 
-    private var runtimeIdentity: ProjectRuntimeIdentity?
+    @ObservationIgnored private var runtimeIdentity: ProjectRuntimeIdentity?
 
     /// The transition barrier runs before the session publishes the next identity.
     public func prepareForProjectTransition() {
@@ -78,17 +91,17 @@ public final class CompletionController: ObservableObject {
         noteDocumentSwitch(to: snapshot.identity)
     }
     /// 제안 요청이 예약·진행 중인가 — 툴바 칩의 "예측 중" 표시용 (에디터 v3).
-    @Published public private(set) var isPredicting = false
+    public private(set) var isPredicting = false { willSet { _isPredictingEvents.send(newValue) } }
 
     /// 고스트 렌더 뷰로의 직통 알림 — `PurloryTextView.Coordinator`가 연결한다.
-    public var suggestionDidChange: ((String?) -> Void)?
+    @ObservationIgnored public var suggestionDidChange: ((String?) -> Void)?
 
     // MARK: 긴 문단 나누기 (docs/editor-paragraph-split.md)
 
     /// 현재 문서의 긴 산문 문단 감지 결과 — 툴바의 조용한 표시가 관찰한다.
     /// `count > 0`일 때만 표시가 나타난다(대상 없으면 아무 UI도 없음).
     /// 문서 로드 때 1회 계산 → 키 입력 경로에 O(문서)를 넣지 않는다.
-    @Published public private(set) var longParagraph: LongParagraphInfo = .none
+    public private(set) var longParagraph: LongParagraphInfo = .none
 
     public struct LongParagraphInfo: Equatable, Sendable {
         public var count: Int
@@ -100,9 +113,9 @@ public final class CompletionController: ObservableObject {
     }
 
     /// 에디터가 배선하는 감지·실행 다리 (`knowledgeProvider`와 같은 패턴).
-    public var detectLongParagraphs: (() -> LongParagraphInfo)?
+    @ObservationIgnored public var detectLongParagraphs: (() -> LongParagraphInfo)?
     /// 실행 → 나눈 문단 수. 성공 후 감지를 갱신한다.
-    public var splitLongParagraphs: (() -> Int)?
+    @ObservationIgnored public var splitLongParagraphs: (() -> Int)?
 
     /// 감지를 다시 계산해 발행한다 — 문서 로드·분할 직후 에디터가 호출.
     public func refreshLongParagraphDetection() {
@@ -119,12 +132,12 @@ public final class CompletionController: ObservableObject {
 
     /// 현재 떠 있는 「이 대화를 기록할까요?」 제안 — 범위는 에디터 스토리지
     /// 좌표다 (감지가 에디터 프리픽스에서 돌기 때문). nil이면 없음.
-    @Published public private(set) var conversationSuggestion: ConversationDetector.Block?
+    public private(set) var conversationSuggestion: ConversationDetector.Block?
     /// 에디터(BlockTextView)로의 직통 알림 — 은은한 하이라이트·인라인 pill 렌더.
-    public var conversationSuggestionDidChange: ((ConversationDetector.Block?) -> Void)?
+    @ObservationIgnored public var conversationSuggestionDidChange: ((ConversationDetector.Block?) -> Void)?
     /// 기록 실행 다리 — ContentView가 스토어(재앵커 포함)로 배선한다. 핸들러가
     /// 없으면 승인해도 durable decision을 만들 수 없으므로 affordance 자체를 끈다.
-    public var onRecordConversation: ((RecordedConversation) -> Void)? {
+    @ObservationIgnored public var onRecordConversation: ((RecordedConversation) -> Void)? {
         didSet {
             guard onRecordConversation == nil else { return }
             conversationTask?.cancel()
@@ -133,17 +146,17 @@ public final class CompletionController: ObservableObject {
         }
     }
     /// 이미 기록된 블록 해시 제공자 — 같은 대화를 다시 제안하지 않는다.
-    public var recordedConversationHashesProvider: (() -> Set<String>)?
+    @ObservationIgnored public var recordedConversationHashesProvider: (() -> Set<String>)?
 
     /// 감지 유휴 대기 — 고스트 디바운스보다 길다: 제안은 "대화를 다 쓰고 잠시
     /// 멈췄을 때"만 떠야 한다 (요구사항 §18·§20, 조용한 UI).
     nonisolated static let conversationIdle: Duration = .milliseconds(1_500)
 
-    private var conversationTask: Task<Void, Never>?
-    private var conversationSuggestionIdentity: ProjectRuntimeIdentity?
+    @ObservationIgnored private var conversationTask: Task<Void, Never>?
+    @ObservationIgnored private var conversationSuggestionIdentity: ProjectRuntimeIdentity?
     /// 닫힌(Esc·계속 입력) 블록 해시 — 같은 내용을 다시 묻지 않는다. 대화가
     /// 이어져 내용이 바뀌면 해시가 바뀌어 다시 제안된다.
-    private var dismissedConversationHashes: Set<String> = []
+    @ObservationIgnored private var dismissedConversationHashes: Set<String> = []
 
     /// 편집 후 유휴에 대화 블록을 감지한다 — 소설에서만, 결정적·LLM 없음
     /// (요구사항 §19 실시간 경로). 감지 자체도 유휴 태스크 안에서 돌므로
@@ -234,7 +247,7 @@ public final class CompletionController: ObservableObject {
         return model
     }
 
-    private weak var currentJudgeSupport: ContinuityJudgeSupport?
+    @ObservationIgnored private weak var currentJudgeSupport: ContinuityJudgeSupport?
     func makeContinuityJudgeSupport() -> ContinuityJudgeSupport {
         currentJudgeSupport?.shutdown()
         let support = ContinuityJudgeSupport(available: false) { [weak self] packet in
@@ -267,9 +280,9 @@ public final class CompletionController: ObservableObject {
     /// 활성 문서 스냅샷 공급자 — ContentView가 1회 배선한다. 예측 직전에 pull해
     /// 제목·장르·인물 카드를 조립기에 넘긴다 (PLAN §10). 푸시(onChange) 대신
     /// pull인 이유: 본문이 큰 저널에서 매 키 입력마다 Equatable 비교를 하지 않는다.
-    public var documentContextProvider: (() -> DocumentContext?)?
-    public var projectDocumentProvider: (() -> ProjectDocumentSnapshot?)?
-    private var writerReader = WriterDocumentReader()
+    @ObservationIgnored public var documentContextProvider: (() -> DocumentContext?)?
+    @ObservationIgnored public var projectDocumentProvider: (() -> ProjectDocumentSnapshot?)?
+    @ObservationIgnored private var writerReader = WriterDocumentReader()
 
     func currentDocumentContext() -> DocumentContext? {
         if let projectDocumentProvider {
@@ -285,17 +298,17 @@ public final class CompletionController: ObservableObject {
 
     /// 지식 스냅샷 공급자 (M6, PLAN §11) — 인덱서가 발행한 인메모리 값만 pull.
     /// 활성 문서와의 일치 확인은 배선부(ContentView)의 몫이다.
-    public var knowledgeProvider: (() -> KnowledgeSnapshot?)?
-    public var originalNameAnchorsProvider: (() -> OriginalNameAnchorIndex?)?
-    public var contextConfigurationDidChange: (() -> Void)?
-    public var foregroundCompletionDidChange: ((Bool) -> Void)?
+    @ObservationIgnored public var knowledgeProvider: (() -> KnowledgeSnapshot?)?
+    @ObservationIgnored public var originalNameAnchorsProvider: (() -> OriginalNameAnchorIndex?)?
+    @ObservationIgnored public var contextConfigurationDidChange: (() -> Void)?
+    @ObservationIgnored public var foregroundCompletionDidChange: ((Bool) -> Void)?
     private final class ForegroundObserver {
         weak var owner: AnyObject?
         let handler: (Bool) -> Void
         init(owner: AnyObject, handler: @escaping (Bool) -> Void) { self.owner = owner; self.handler = handler }
     }
-    private var foregroundObservers: [ObjectIdentifier: ForegroundObserver] = [:]
-    private var foregroundIsBusy = false
+    @ObservationIgnored private var foregroundObservers: [ObjectIdentifier: ForegroundObserver] = [:]
+    @ObservationIgnored private var foregroundIsBusy = false
     func observeForegroundCompletion(owner: AnyObject, handler: @escaping (Bool) -> Void) {
         foregroundObservers = foregroundObservers.filter { $0.value.owner != nil }
         foregroundObservers[ObjectIdentifier(owner)] = ForegroundObserver(owner: owner, handler: handler)
@@ -322,30 +335,30 @@ public final class CompletionController: ObservableObject {
             cachedCounterModelID == settings.modelID else { return current }
         return min(12_000, max(current, 8_000))
     }
-    private var pendingTask: Task<Void, Never>?
+    @ObservationIgnored private var pendingTask: Task<Void, Never>?
     /// 편집/커서 이벤트마다 증가 — 뒤늦게 도착한 stale 응답을 버리는 기준.
-    private var generation = 0
+    @ObservationIgnored private var generation = 0
     /// 제안이 발행된 시점의 커서(UTF-16). 커서가 여기서 벗어나면 폐기.
-    private var suggestionAnchor: Int?
+    @ObservationIgnored private var suggestionAnchor: Int?
     /// 대기 중 요청이 예약된 시점의 커서 — 생성 완료 전에 커서가 움직이면 취소.
-    private var pendingCaret: Int?
+    @ObservationIgnored private var pendingCaret: Int?
     /// 로드에 실패한 모델 id — 같은 모델로의 재시도 폭주만 막고,
     /// 사용자가 Settings에서 모델을 바꾸면 다시 트리거를 허용한다.
-    private var failedModelID: String?
+    @ObservationIgnored private var failedModelID: String?
     /// `→` 한 단어 수락 직후의 편집 이벤트에서 남은 고스트를 지우지 않기 위한 플래그.
-    private var retainSuggestionOnNextEdit = false
+    @ObservationIgnored private var retainSuggestionOnNextEdit = false
     /// 마지막으로 본 커서 위치 (UTF-16) — 인덱서의 **커서 거리순 순회**용
     /// (docs/m6-scene-split.md §5: 씬이 수십 개면 쓰고 있는 장부터 이해해야
     /// 한다). Int 하나 저장 — 키 입력 경로 비용 없음.
     public private(set) var lastCaretLocation: Int?
     /// 현재 고스트가 만들어진 모드 (fast/smart/story[-dialogue]) — 수락률
     /// 로그의 축 (M7, PLAN §13). 제안과 함께 세팅·소멸한다.
-    private var currentSuggestionMode: String?
-    private var currentOpportunity: AcceptanceMetrics.Opportunity?
+    @ObservationIgnored private var currentSuggestionMode: String?
+    @ObservationIgnored private var currentOpportunity: AcceptanceMetrics.Opportunity?
     private let metricsStorageLocation: PurloryStorageLocation
     /// 수락이 곧 invalidate를 부르므로, 그 invalidate가 "거절"로 기록되지
     /// 않게 하는 1회용 플래그.
-    private var suppressDismissLog = false
+    @ObservationIgnored private var suppressDismissLog = false
 
     // MARK: - 입력 지연 계측 (로컬 전용 진단 — PLAN §13 온라인 지표)
 
@@ -362,9 +375,9 @@ public final class CompletionController: ObservableObject {
         public var samples: Int = 0
     }
 
-    @Published public private(set) var keystrokeStats = KeystrokeStats()
-    private var handlerSamples: [Double] = []
-    private var totalSamples: [Double] = []
+    public private(set) var keystrokeStats = KeystrokeStats()
+    @ObservationIgnored private var handlerSamples: [Double] = []
+    @ObservationIgnored private var totalSamples: [Double] = []
 
     /// 에디터가 키 입력 하나를 처리할 때마다 호출 (BlockTextView Coordinator).
     /// 발행은 20표본마다 — 계측이 제 관찰 비용을 만들지 않게 한다.
@@ -398,12 +411,12 @@ public final class CompletionController: ObservableObject {
         Self.current = self
     }
 
-    @Published public private(set) var isManagingModel = false
-    @Published public private(set) var modelOperationError: String?
-    private var preloadToken: UUID?
-    @Published public private(set) var isMemoryPressurePaused = false
+    public private(set) var isManagingModel = false { willSet { _isManagingModelEvents.send(newValue) } }
+    public private(set) var modelOperationError: String?
+    @ObservationIgnored private var preloadToken: UUID?
+    public private(set) var isMemoryPressurePaused = false { willSet { _isMemoryPressurePausedEvents.send(newValue) } }
     public static let memoryPressureMessage = "메모리가 부족해 자동완성을 쉬고 있어요. 원고 편집은 계속할 수 있습니다. 여유가 생기면 다시 시도해 주세요."
-    private var pressurePriorFailure: (state: EngineState, modelID: String)?
+    @ObservationIgnored private var pressurePriorFailure: (state: EngineState, modelID: String)?
 
     /// Temporary admission only: do not change durable AI consent or model selection.
     /// The pressure coordinator keeps this closed until the engine unload drains.
@@ -608,8 +621,8 @@ public final class CompletionController: ObservableObject {
     }
 
     /// Reuse the selected loaded tokenizer; retry a missing snapshot after load.
-    private var cachedCounter: TokenCounter?
-    private var cachedCounterModelID: String?
+    @ObservationIgnored private var cachedCounter: TokenCounter?
+    @ObservationIgnored private var cachedCounterModelID: String?
 
     private func tokenCounter(for modelID: String) async -> TokenCounter? {
         if cachedCounterModelID == modelID, let cachedCounter { return cachedCounter }
@@ -764,17 +777,17 @@ public final class CompletionController: ObservableObject {
     // MARK: - 폴더 이름 생성 (사이드바 DnD)
 
     /// AI 이름 생성이 진행 중인 폴더들 — 사이드바 행의 로딩 점 표시용.
-    @Published public private(set) var namingFolderIDs: Set<UUID> = []
+    public private(set) var namingFolderIDs: Set<UUID> = []
 
     /// 모델 로드(다운로드 포함) 태스크 — 마스터 스위치 OFF 때 접는 손잡이.
     /// 보관하지 않으면 수 GB 네트워크 전송이 끝까지 혼자 돈다 (이슈 #46).
-    private var preloadTask: Task<Void, Never>?
+    @ObservationIgnored private var preloadTask: Task<Void, Never>?
 
     /// 폴더별 이름 생성 태스크 (이슈 #47). 미추적이면 콜드 모델 로드 수 분 동안
     /// 스피너가 도는 걸 끊을 방법이 없었다. 취소는 소유자(아래 cancel 계열)만
     /// 딕셔너리를 정리하고, 태스크는 깨어나 `Task.isCancelled`로 스스로 물러난다 —
     /// 늦게 풀린 옛 태스크가 새 요청의 표시·딕셔너리를 침범하지 않게.
-    private var folderNamingTasks: [UUID: Task<Void, Never>] = [:]
+    @ObservationIgnored private var folderNamingTasks: [UUID: Task<Void, Never>] = [:]
 
     /// 자동 생성 폴더("새 폴더")의 이름을 멤버 문서 내용에서 지어 붙인다.
     ///

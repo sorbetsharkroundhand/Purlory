@@ -155,9 +155,9 @@ struct WorkspaceSearchResult: Identifiable, Sendable {
 }
 
 struct WorkspaceSearchPane: View {
-    @ObservedObject var session: ProjectSession
+    @Bindable var session: ProjectSession
     @ObservedObject var requests: ProjectEditorRequests
-    @ObservedObject var spatial: SpatialWorkspaceController
+    @Bindable var spatial: SpatialWorkspaceController
     let theme: PurloryTheme
     let toggleTheme: () -> Void
     @StateObject private var search = WorkspaceSearchModel()

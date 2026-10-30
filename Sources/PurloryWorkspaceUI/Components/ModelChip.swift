@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Shared local completion controls for the editor toolbar and spatial document headers.
 struct ModelChip: View {
-    @ObservedObject var completion: CompletionController
+    @Bindable var completion: CompletionController
     @ObservedObject var settings: CompletionSettings
     let theme: PurloryTheme
     var compact = false

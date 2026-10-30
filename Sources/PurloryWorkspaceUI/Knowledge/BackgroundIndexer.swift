@@ -1,16 +1,29 @@
+import Observation
+import Combine
 import AppKit
 import Foundation
 
 /// Prepares derived story memory outside prediction. Work is scoped, cancellable,
 /// incremental and subordinate to foreground editing, power and memory pressure.
+@Observable
 @MainActor
-public final class BackgroundIndexer: ObservableObject {
+public final class BackgroundIndexer {
+    // Native consumers need synchronous value events before ownership changes.
+    private let _snapshotEvents = CurrentValueSubject<KnowledgeSnapshot?, Never>(nil)
+    var snapshotChanges: AnyPublisher<KnowledgeSnapshot?, Never> { _snapshotEvents.eraseToAnyPublisher() }
+    private let _snapshotGenerationEvents = CurrentValueSubject<Int, Never>(0)
+    var snapshotGenerationChanges: AnyPublisher<Int, Never> { _snapshotGenerationEvents.eraseToAnyPublisher() }
+    private let _manualPhaseEvents = CurrentValueSubject<PassPhase, Never>(.idle)
+    var manualPhaseChanges: AnyPublisher<PassPhase, Never> { _manualPhaseEvents.eraseToAnyPublisher() }
+    private let _continuityCandidatesEvents = CurrentValueSubject<[ContinuityCandidate], Never>([])
+    var continuityCandidatesChanges: AnyPublisher<[ContinuityCandidate], Never> { _continuityCandidatesEvents.eraseToAnyPublisher() }
+
 
     /// 최신 지식 스냅샷 — `CompletionController.knowledgeProvider`가 pull한다.
-    @Published public private(set) var snapshot: KnowledgeSnapshot?
+    public private(set) var snapshot: KnowledgeSnapshot? { willSet { _snapshotEvents.send(newValue) } }
     /// 진행 중 패스 표시 (툴바 칩 등 UI 관찰용 — 조용한 UI 원칙상 필수는 아니다).
-    @Published public private(set) var isIndexing = false
-    /// 동일 값 재발행 방지 — noteChange(키 입력당)의 무의미한 objectWillChange 차단 (#51).
+    public private(set) var isIndexing = false
+    /// Repeated idle preemption must not invalidate presentation readers.
     private func setIsIndexing(_ newValue: Bool) {
         if isIndexing != newValue { isIndexing = newValue }
     }
@@ -43,31 +56,30 @@ public final class BackgroundIndexer: ObservableObject {
         }
     }
 
-    @Published public private(set) var manualPhase: PassPhase = .idle
+    public private(set) var manualPhase: PassPhase = .idle { willSet { _manualPhaseEvents.send(newValue) } }
     /// 사용자 요청 패스의 소유권 토큰 — finish/cancel 가드 (#82와 같은 규약).
-    private var manualPassToken: Int?
+    @ObservationIgnored private var manualPassToken: Int?
     /// 시작 시점 스냅샷 세대 — "새로 읽은 것이 있나" 판정 기준.
-    private var snapshotGenerationAtManualStart = 0
-    private var manualProcessedAny = false
-    private var manualDirtyTotal = 0
-    private var transientClearTask: Task<Void, Never>?
+    @ObservationIgnored private var snapshotGenerationAtManualStart = 0
+    @ObservationIgnored private var manualProcessedAny = false
+    @ObservationIgnored private var manualDirtyTotal = 0
+    @ObservationIgnored private var transientClearTask: Task<Void, Never>?
 
     /// 스냅샷 세대 — 실제 발행마다 증가하는 싸구려 신분증 (#48). 지식 뷰들이
     /// 캐시 키로 쓴다: 스냅샷 전체 동등 비교(사건 수천 개 배열)를 매 패스
     /// 반복하는 대신 정수 비교로 "바뀌었나"를 판정한다.
-    @Published public private(set) var snapshotGeneration = 0
+    public private(set) var snapshotGeneration = 0 { willSet { _snapshotGenerationEvents.send(newValue) } }
     /// 인물 감지 후보 (M6, PLAN §7) — 감지는 자동, **등록은 사용자 확인**
     /// (CLAUDE.md §3). 바이블 팝오버가 전부 나열해 검토받는다 (M6-8).
-    @Published public private(set) var characterCandidates: [CharacterDetector.Candidate] = []
+    public private(set) var characterCandidates: [CharacterDetector.Candidate] = []
     /// 후보가 어느 문서 것인지 — 문서 전환 시 낡은 후보를 보여주지 않기 위한 짝.
-    @Published public private(set) var candidatesEntryID: UUID?
+    public private(set) var candidatesEntryID: UUID?
     /// 일관성 경고 (M7) — 스냅샷과 같은 주기로 갱신. **비침습**: 사이드바
     /// 배지·목록만, 본문엔 아무것도 긋지 않는다 (ConsistencyChecker 참조).
-    @Published public private(set) var warnings: [ConsistencyWarning] = []
-    @Published public private(set) var continuityCandidates: [ContinuityCandidate] = []
+    public private(set) var warnings: [ConsistencyWarning] = []
+    public private(set) var continuityCandidates: [ContinuityCandidate] = [] { willSet { _continuityCandidatesEvents.send(newValue) } }
 
-    /// 동일 값 발행 가드 — 같은 경고 배열을 다시 대입해도 objectWillChange가
-    /// 울리지 않는다 (#48: 관찰 fan-out의 3번째 축, @Published 쓰기 최소화).
+    /// Identical findings do not invalidate warning readers.
     private func setWarnings(_ newValue: [ConsistencyWarning]) {
         if warnings != newValue { warnings = newValue }
     }
@@ -91,7 +103,7 @@ public final class BackgroundIndexer: ObservableObject {
         public var deriveMs: Double = 0
     }
 
-    @Published public private(set) var metrics: KnowledgeMetrics?
+    public private(set) var metrics: KnowledgeMetrics?
 
     /// 빠른 패스 유휴 대기 — 예측 디바운스(수백 ms)와 별도 타이머 (PLAN §9).
     nonisolated static let fastPassIdle: Duration = .seconds(5)
@@ -109,11 +121,11 @@ public final class BackgroundIndexer: ObservableObject {
     /// 되므로, 깊은 패스는 **커서에서 가까운 씬부터** 이해한다. 6장을 쓰는
     /// 동안 1장부터 읽으면 정작 필요한 지식이 마지막에 온다
     /// (docs/m6-scene-split.md §5 — 분할 설계의 일부).
-    public var caretProvider: (() -> Int?)?
+    @ObservationIgnored public var caretProvider: (() -> Int?)?
 
-    private var memoryPressurePaused = false
-    private var profileTasks: [UUID: Task<Void, Never>] = [:]
-    private var profileGeneration = 0
+    @ObservationIgnored private var memoryPressurePaused = false
+    @ObservationIgnored private var profileTasks: [UUID: Task<Void, Never>] = [:]
+    @ObservationIgnored private var profileGeneration = 0
     private static let memoryPressureReason = "메모리가 부족해 읽기를 쉬고 있어요 — 여유가 생기면 다시 시도해 주세요"
 
     /// Recovery only admits a later edit or explicit request; it never reloads a model.
@@ -141,15 +153,15 @@ public final class BackgroundIndexer: ObservableObject {
     private let engine: CompletionEngine
     private let settings: CompletionSettings
     private let sidecarPersistence: any KnowledgeSidecarPersisting
-    private weak var legacyStore: EntryStore?
-    private var legacyScopeProvider: ((UUID) -> StoryMemoryScope?)?
-    private var documentProvider: (() -> ProjectDocumentSnapshot?)?
-    private var writerReader = WriterDocumentReader()
-    private var observedRuntimeIdentity: ProjectRuntimeIdentity?
+    @ObservationIgnored private weak var legacyStore: EntryStore?
+    @ObservationIgnored private var legacyScopeProvider: ((UUID) -> StoryMemoryScope?)?
+    @ObservationIgnored private var documentProvider: (() -> ProjectDocumentSnapshot?)?
+    @ObservationIgnored private var writerReader = WriterDocumentReader()
+    @ObservationIgnored private var observedRuntimeIdentity: ProjectRuntimeIdentity?
     public private(set) var snapshotRuntimeIdentity: ProjectRuntimeIdentity?
     /// One active project's already-loaded derived values. Edits revalidate them against
     /// the new body in background without adding sidecar reads to the typing path.
-    private var preparedProjectSidecar: KnowledgeSidecar?
+    @ObservationIgnored private var preparedProjectSidecar: KnowledgeSidecar?
     let originalNamePreparation = OriginalNameAnchorPreparation()
     public var originalNameAnchorsEnabled = false {
         didSet {
@@ -213,10 +225,10 @@ public final class BackgroundIndexer: ObservableObject {
             rejectedNames: entry.rejectedCharacterNames ?? [])
     }
 
-    private var fastTimer: Task<Void, Never>?
-    private var deepTimer: Task<Void, Never>?
-    private var passTask: Task<Void, Never>?
-    private var resetTask: Task<Void, Never>?
+    @ObservationIgnored private var fastTimer: Task<Void, Never>?
+    @ObservationIgnored private var deepTimer: Task<Void, Never>?
+    @ObservationIgnored private var passTask: Task<Void, Never>?
+    @ObservationIgnored private var resetTask: Task<Void, Never>?
     /// 패스 소유권 토큰 — 선점(새 noteChange·requestPass·전체 다시 읽기)마다
     /// 올라간다. 늦게 끝난 이전 작업은 자기 토큰이 현재와 같을 때만 상태를
     /// 건드린다 (이슈 #82).
@@ -501,7 +513,7 @@ public final class BackgroundIndexer: ObservableObject {
 
     // MARK: - 웜 로드 (저장된 지식 → 스냅샷, LLM 없음)
 
-    private var hydrateTask: Task<Void, Never>?
+    @ObservationIgnored private var hydrateTask: Task<Void, Never>?
     /// hydrate 소유권 토큰 — 새 요청마다 올라가 늦은 발행을 무효화 (#82).
     public private(set) var hydrateGeneration = 0
 

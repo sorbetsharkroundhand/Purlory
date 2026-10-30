@@ -27,7 +27,7 @@ final class IndexerOwnershipTests: XCTestCase {
             engine: CompletionEngine(), settings: settings, sidecarPersistence: persistence)
         reader.attach(documentProvider: { document })
         let hydrated = expectation(description: "Initial project hydration")
-        let hydration = reader.$snapshotGeneration.dropFirst().prefix(1).sink { _ in hydrated.fulfill() }
+        let hydration = reader.snapshotGenerationChanges.dropFirst().prefix(1).sink { _ in hydrated.fulfill() }
         reader.noteDocumentChange(document)
         await fulfillment(of: [hydrated], timeout: 1)
         hydration.cancel()
@@ -42,7 +42,7 @@ final class IndexerOwnershipTests: XCTestCase {
         XCTAssertEqual(reader.manualPhase, .idle, "Editing must release obsolete manual ownership")
         let stalePhase = expectation(description: "Preempted finalizer must not publish")
         stalePhase.isInverted = true
-        let subscription = reader.$manualPhase.dropFirst().sink { _ in stalePhase.fulfill() }
+        let subscription = reader.manualPhaseChanges.dropFirst().sink { _ in stalePhase.fulfill() }
         await persistence.release()
         await fulfillment(of: [stalePhase], timeout: 0.2)
         XCTAssertEqual(reader.manualPhase, .idle)
@@ -84,7 +84,7 @@ final class IndexerOwnershipTests: XCTestCase {
                     kind: .manuscript, mode: .fiction)
             }
             let refreshed = expectation(description: "Knowledge for generation \(generation)")
-            let subscription = reader.$snapshotGeneration.dropFirst().prefix(1).sink { _ in
+            let subscription = reader.snapshotGenerationChanges.dropFirst().prefix(1).sink { _ in
                 refreshed.fulfill()
             }
             reader.noteDocumentChange(document)
@@ -129,7 +129,7 @@ final class IndexerOwnershipTests: XCTestCase {
         reader.noteDocumentChange(document)
         let stalePhase = expectation(description: "Old reset failure must not publish")
         stalePhase.isInverted = true
-        let subscription = reader.$manualPhase.dropFirst().sink { _ in stalePhase.fulfill() }
+        let subscription = reader.manualPhaseChanges.dropFirst().sink { _ in stalePhase.fulfill() }
 
         await persistence.release()
         await fulfillment(of: [stalePhase], timeout: 0.2)
@@ -165,7 +165,7 @@ final class IndexerOwnershipTests: XCTestCase {
         identity = ProjectRuntimeIdentity(key: aKey, generation: 3)
         let stalePublication = expectation(description: "Retired A must not publish")
         stalePublication.isInverted = true
-        let staleSubscription = reader.$snapshot.compactMap { $0 }.sink { _ in
+        let staleSubscription = reader.snapshotChanges.compactMap { $0 }.sink { _ in
             stalePublication.fulfill()
         }
         await persistence.release()
@@ -174,7 +174,7 @@ final class IndexerOwnershipTests: XCTestCase {
         staleSubscription.cancel()
 
         let currentPublication = expectation(description: "Current A can still hydrate")
-        let currentSubscription = reader.$snapshot.compactMap { $0 }.prefix(1).sink { _ in
+        let currentSubscription = reader.snapshotChanges.compactMap { $0 }.prefix(1).sink { _ in
             currentPublication.fulfill()
         }
         reader.noteDocumentChange(document())
@@ -198,7 +198,7 @@ final class IndexerOwnershipTests: XCTestCase {
         }
         indexer.attach(documentProvider: document)
         let hydrated = expectation(description: "Original A hydrated")
-        let subscription = indexer.$snapshot.dropFirst().compactMap { $0 }.prefix(1).sink { _ in
+        let subscription = indexer.snapshotChanges.dropFirst().compactMap { $0 }.prefix(1).sink { _ in
             hydrated.fulfill()
         }
         indexer.noteDocumentChange(document())

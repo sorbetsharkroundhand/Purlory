@@ -92,8 +92,8 @@ import Combine
             guard let self, let parent = notification.object as? NSWindow, parent === self.window?.parent else { return }
             self.close()
         }.store(in: &subscriptions)
-        session.$activeProject.dropFirst().sink { [weak self] _ in self?.close() }.store(in: &subscriptions)
-        session.$isTransitioning.dropFirst().sink { [weak self] value in if value { self?.close() } }.store(in: &subscriptions)
+        session.activeProjectChanges.dropFirst().sink { [weak self] _ in self?.close() }.store(in: &subscriptions)
+        session.isTransitioningChanges.dropFirst().sink { [weak self] value in if value { self?.close() } }.store(in: &subscriptions)
         reload()
     }
     required init?(coder: NSCoder) { nil }
