@@ -64,5 +64,5 @@
 
 - [x] Review full branch for module cycles, stale source consumption, data ownership and resource regressions.
 - [x] Run swift build, swift test, swift build --product PurloryBench and git diff --check.
-- [ ] Build developer bundle and run isolated launch/quit once after implementation.
-- [ ] Record exact structural/performance results and remaining native/Store acceptance limits.
+- [x] Build developer bundle and run isolated launch/quit once after implementation.
+- [x] Record exact structural/performance results and remaining native/Store acceptance limits.
