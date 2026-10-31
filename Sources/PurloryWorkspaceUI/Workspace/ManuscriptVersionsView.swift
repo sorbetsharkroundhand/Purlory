@@ -86,7 +86,7 @@ struct ManuscriptVersionsView: View {
             }.frame(maxHeight: .infinity)
         }.padding(20).frame(width: 820, height: 570).purloryUIFont(12)
             .foregroundStyle(theme.inkC).background(theme.editorSurfaceC)
-            .accessibilityIdentifier("purlory.versions.panel")
+            .accessibilityElement(children: .contain)
             .onAppear { refresh() }
             .onChange(of: session.runtimeIdentity?.key) { _, _ in comparison = nil; refresh() }
     }

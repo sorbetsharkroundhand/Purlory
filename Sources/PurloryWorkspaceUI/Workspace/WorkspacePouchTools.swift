@@ -140,7 +140,7 @@ struct WorkspacePouchTools: View {
         .onReceive(NotificationCenter.default.publisher(for: NSText.didChangeNotification)) { _ in
             markedText = editor?.hasMarkedText() == true
         }
-        .accessibilityIdentifier("purlory.workspace.pouch.tools")
+        .accessibilityElement(children: .contain)
     }
     private var divider: some View { theme.sepC.frame(height: 1) }
     private func panelButton(_ tile: WorkspaceTileID, _ title: String, _ symbol: String) -> some View {

@@ -60,6 +60,7 @@ final class WorkspacePouchView: NSView {
         if let toolsHost { toolsHost.rootView = root }
         else {
             let host = NSHostingView(rootView: root)
+            host.setAccessibilityIdentifier("purlory.workspace.pouch.tools")
             host.sizingOptions = []; host.wantsLayer = true
             host.frame = CGRect(x: 0, y: 0, width: WorkspacePouchStyle.width - 12, height: 1)
             host.appearance = appearance
