@@ -19,6 +19,7 @@ struct ManuscriptVersionsView: View {
                 Text("원고 기록").purloryUIFont(16, .semibold)
                 Spacer()
                 Button("닫기", action: close).keyboardShortcut(.cancelAction)
+                    .accessibilityIdentifier("purlory.versions.close")
             }
             Text("현재 문서 또는 제목으로 나뉜 장면을 보관합니다. 원문을 비교하고 문단별로 되돌릴 수 있습니다.")
                 .foregroundStyle(theme.ink2C)
@@ -45,6 +46,7 @@ struct ManuscriptVersionsView: View {
                                     .background(comparison?.version.id == version.id ? theme.activeBgC : theme.hoverC,
                                                 in: RoundedRectangle(cornerRadius: 6))
                             }.buttonStyle(.plain).accessibilityLabel("\(version.label) 비교")
+                                .accessibilityIdentifier("purlory.versions.compare.\(version.id.uuidString)")
                         }
                     }
                 }.frame(width: 185)
@@ -101,6 +103,7 @@ struct ManuscriptVersionsView: View {
     }
     private func canRestore(_ comparison: ManuscriptComparison) -> Bool {
         session.isEditorEditable && comparison.identity == session.runtimeIdentity && !saving
+            && requests.editor(for: comparison.identity.key)?.undoManager != nil
     }
     private func refresh() {
         guard let source = session.selectedDocumentSnapshot else { versions = []; return }
@@ -110,11 +113,13 @@ struct ManuscriptVersionsView: View {
     private func capture(scene: Bool) {
         let offset = scene ? sceneOffset : nil
         guard !scene || offset != nil else { return }
+        let identity = session.runtimeIdentity, versionLabel = label
         saving = true; message = nil
         Task { @MainActor in
             defer { saving = false }
             do {
-                _ = try await ManuscriptVersionActions.capture(session: session, requests: requests, sceneAt: offset, label: label)
+                guard session.runtimeIdentity == identity else { throw ProjectSessionError.staleRuntime }
+                _ = try await ManuscriptVersionActions.capture(session: session, requests: requests, sceneAt: offset, label: versionLabel)
                 label = ""; message = "원고 기록을 저장했습니다."; refresh()
             } catch { message = error.localizedDescription }
         }

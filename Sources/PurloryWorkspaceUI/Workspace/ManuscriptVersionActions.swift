@@ -14,7 +14,9 @@ import AppKit
     }
     static func restore(_ comparison: ManuscriptComparison, change: Int? = nil,
         session: ProjectSession, requests: ProjectEditorRequests, undoManager: UndoManager? = nil) throws {
-        guard session.runtimeIdentity == comparison.identity else { throw ProjectSessionError.staleRuntime }
+        guard session.runtimeIdentity == comparison.identity,
+              (undoManager ?? requests.editor(for: comparison.identity.key)?.undoManager) != nil
+        else { throw ProjectSessionError.staleRuntime }
         try WorkspaceDocumentTransaction.perform([.init(key: comparison.identity.key,
             expectedBody: comparison.expectedBody, body: comparison.restoredBody(change: change))],
             in: session, requests: requests, undoManager: undoManager, actionName: "원고 기록 복원")

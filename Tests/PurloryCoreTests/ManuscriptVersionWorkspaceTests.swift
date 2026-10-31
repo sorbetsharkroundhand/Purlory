@@ -4,6 +4,17 @@ import XCTest
 @testable import PurloryWorkspaceUI
 
 @MainActor final class ManuscriptVersionWorkspaceTests: XCTestCase {
+    func testRestoreWithoutAnUndoOwnerRefusesToMutateTheManuscript() async throws {
+        let root = try temporaryProjectRoot(); defer { try? FileManager.default.removeItem(at: root) }
+        let session = ProjectSession(store: ProjectStore(root: root), defaults: UserDefaults(suiteName: UUID().uuidString)!)
+        try await session.saveAndActivate(projectFixture())
+        let version = try ManuscriptVersion.capture(XCTUnwrap(session.selectedDocumentSnapshot))
+        session.updateSelectedDocumentBody("Changed")
+        let comparison = try version.comparison(with: XCTUnwrap(session.selectedDocumentSnapshot))
+        XCTAssertThrowsError(try ManuscriptVersionActions.restore(comparison, session: session, requests: ProjectEditorRequests()))
+        XCTAssertEqual(session.selectedDocument?.body, "Changed")
+    }
+
     func testCaptureSurvivesDerivedPurgeAndVerifiedBackupWithOriginalAssets() async throws {
         let root = try temporaryProjectRoot(); defer { try? FileManager.default.removeItem(at: root) }
         let store = ProjectStore(root: root), defaults = UserDefaults(suiteName: UUID().uuidString)!

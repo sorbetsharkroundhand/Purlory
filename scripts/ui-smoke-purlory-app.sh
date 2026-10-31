@@ -490,6 +490,32 @@ close_writer_information() {
     ui press "purlory.tile.close.characters"
 }
 
+open_manuscript_versions() {
+    open_pouch_menu
+    ui press "purlory.workspace.object-settings"
+    wait_ui present "purlory.workspace.versions"
+    ui press "purlory.workspace.versions"
+    wait_ui present "purlory.versions.capture-document"
+}
+
+version_record_path() {
+    python3 - "$PROJECT_DIRECTORY" <<'PY'
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1]).resolve()
+manifest = json.loads((root / 'project.json').read_text())
+records = [record for key, record in manifest.get('userData', {}).items()
+           if key.startswith('manuscript-version-')]
+if len(records) != 1:
+    raise SystemExit(1)
+path = root / records[0]['relativePath']
+if path.is_symlink() or not path.resolve().is_relative_to(root / 'UserData' / 'records'):
+    raise SystemExit('Snapshot record outside UserData')
+if not path.is_file():
+    raise SystemExit(1)
+print(path)
+PY
+}
+
 assert_autocomplete_disabled() {
     open_pouch_menu
     wait_ui autocomplete ""
@@ -513,6 +539,35 @@ ui type "$EDITED_BODY"
 wait_ui equals "$PERSISTED_BODY"
 ui undo ""
 wait_ui equals "$PROJECT_BODY"
+ui redo ""
+wait_ui equals "$PERSISTED_BODY"
+# A saved original survives editing, native undo/redo, relaunch and recovery.
+open_manuscript_versions
+ui press "purlory.versions.capture-document"
+for _ in $(seq 1 40); do
+    if VERSION_RECORD=$(version_record_path); then break; fi
+    sleep 0.25
+done
+[ -n "$VERSION_RECORD" ] || fail "Manuscript version was not saved"
+[ "$(plutil -extract text raw -o - "$VERSION_RECORD")" = "$PERSISTED_BODY" ] \
+    || fail "Manuscript version did not retain the original"
+VERSION_ID=$(plutil -extract id raw -o - "$VERSION_RECORD")
+VERSION_HASH=$(file_hash "$VERSION_RECORD")
+ui press "purlory.versions.close"
+wait_ui focused ""
+ui end ""
+VERSION_SUFFIX=" version-$TOKEN"
+ui type "$VERSION_SUFFIX"
+wait_ui equals "$PERSISTED_BODY$VERSION_SUFFIX"
+open_manuscript_versions
+ui press "purlory.versions.compare.$VERSION_ID"
+wait_ui present "purlory.versions.restore-all"
+ui press "purlory.versions.restore-all"
+ui press "purlory.versions.close"
+wait_ui focused ""
+wait_ui equals "$PERSISTED_BODY"
+ui undo ""
+wait_ui equals "$PERSISTED_BODY$VERSION_SUFFIX"
 ui redo ""
 wait_ui equals "$PERSISTED_BODY"
 # Implemented Write/Map modes remain available without model setup (#302).
@@ -798,6 +853,10 @@ RECOVERED_DIRECTORY="$PROJECT_ROOT/$RECOVERED_ID"
     || fail "Recovery lost the managed image"
 [ "$(file_hash "$RECOVERED_DIRECTORY/${WRITER_RECORD#"$PROJECT_DIRECTORY/"}")" = "$(file_hash "$WRITER_RECORD")" ] \
     || fail "Recovery changed durable writer data"
+[ "$(file_hash "$VERSION_RECORD")" = "$VERSION_HASH" ] \
+    || fail "Editing or recovery changed the saved original"
+[ "$(file_hash "$RECOVERED_DIRECTORY/${VERSION_RECORD#"$PROJECT_DIRECTORY/"}")" = "$VERSION_HASH" ] \
+    || fail "Recovery lost the manuscript version"
 assert_isolated_project_mode
 launch
 wait_ui equals 'E=mc^2x'
@@ -806,4 +865,4 @@ assert_recovery_source
 check_original
 
 PASSED=1
-echo "✓ UI 스모크 통과 — 문서 전환 · 작가 설정 · 이미지·수식 편집·Undo·Redo·재실행 · 포커스 · 복구 실패·취소·사본 열기 · manifest 검증"
+echo "✓ UI 스모크 통과 — 원고 기록 저장·비교·복원 · 문서 전환 · 작가 설정 · 이미지·수식 편집·Undo·Redo·재실행 · 포커스 · 복구 실패·취소·사본 열기 · manifest 검증"
