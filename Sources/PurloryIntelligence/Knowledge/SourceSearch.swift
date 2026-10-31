@@ -16,6 +16,12 @@ public struct SourceSearchHit: Identifiable, Equatable, Sendable {
     public var id: String {
         "\(projectID.rawValue)|\(documentID.rawValue)|\(matchedRange.location)|\(revision)"
     }
+    package init(projectID: WritingProjectID, documentID: WritingDocumentID, title: String,
+                 evidence: EvidenceAnchor, revision: String, matchedText: String, matchedRange: NSRange, reason: Reason) {
+        self.projectID = projectID; self.documentID = documentID; self.title = title
+        self.evidence = evidence; self.revision = revision; self.matchedText = matchedText
+        self.matchedRange = matchedRange; self.reason = reason
+    }
 }
 
 /// Explicit model-free retrieval over immutable originals; never called during prediction.
@@ -25,6 +31,33 @@ public enum SourceSearch {
         cursor: Int, scope: SourceSearchScope, purpose: SourceSearchPurpose = .inspection,
         limit: Int = 100
     ) throws -> [SourceSearchHit] {
+        try results(query: raw, in: project, origin: origin, cursor: cursor, scope: scope,
+            purpose: purpose, limit: limit, preparation: nil)
+    }
+
+    /// An explicit search may prepare the local index. Failure leaves the complete
+    /// literal path available; cancellation still retires the request immediately.
+    public static func results(
+        query raw: String, in project: WritingProject, origin: WritingDocumentID,
+        cursor: Int, scope: SourceSearchScope, purpose: SourceSearchPurpose = .inspection,
+        limit: Int = 100, index: ProjectSourceIndex
+    ) async throws -> [SourceSearchHit] {
+        let query = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty, query.utf16.count <= 500, limit > 0 else { return [] }
+        let preparation: SourceIndexPreparation?
+        do { preparation = try await index.prepare(terms: [query] + aliases(for: query, in: project), in: project) }
+        catch is CancellationError { throw CancellationError() }
+        catch { preparation = nil }
+        try Task.checkCancellation()
+        return try results(query: query, in: project, origin: origin, cursor: cursor, scope: scope,
+            purpose: purpose, limit: limit, preparation: preparation)
+    }
+
+    private static func results(
+        query raw: String, in project: WritingProject, origin: WritingDocumentID,
+        cursor: Int, scope: SourceSearchScope, purpose: SourceSearchPurpose,
+        limit: Int, preparation: SourceIndexPreparation?
+    ) throws -> [SourceSearchHit] {
         try Task.checkCancellation()
         let query = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty, query.utf16.count <= 500, limit > 0,
@@ -33,16 +66,21 @@ public enum SourceSearch {
         let maximum = min(100, limit)
         let terms = [query] + aliases(for: query, in: project)
         var results: [SourceSearchHit] = [], seen: Set<String> = []
+        var outlines = preparation?.outlines ?? [:], revisions = preparation?.revisions ?? [:]
+        if purpose == .beforeCursor { outlines[origin] = nil }
         // Literal originals outrank sorted alias expansions, then stored document/offset order.
         for (termIndex, term) in terms.enumerated() {
             for (documentIndex, document) in project.documents.enumerated() {
                 try Task.checkCancellation()
                 guard !project.trashedDocumentIDs.contains(document.id),
                       scope == .project || document.id == origin,
-                      purpose != .beforeCursor || documentIndex <= originIndex else { continue }
+                      purpose != .beforeCursor || documentIndex <= originIndex,
+                      preparation?.candidates[term]?.contains(document.id) != false else { continue }
                 let body = purpose == .beforeCursor && document.id == origin
                     ? prefix(document.body, upTo: cursor) : document.body
-                let ns = body as NSString, outline = DocumentOutline.parse(body)
+                let ns = body as NSString
+                let outline = outlines[document.id] ?? DocumentOutline.parse(body)
+                outlines[document.id] = outline
                 let boundedCursor = min(max(0, cursor), ns.length)
                 let ranges: [Range<Int>]
                 if scope == .project { ranges = [0..<ns.length] }
@@ -72,10 +110,12 @@ public enum SourceSearch {
                             length: min(region.upperBound, NSMaxRange(match) + 24)
                                 - max(region.lowerBound, match.location - 24)))
                         let scene = outline.scenes.first { $0.utf16Range.contains(match.location) }
+                        let revision = revisions[document.id] ?? DocumentOutline.stableHash(document.body)
+                        revisions[document.id] = revision
                         results.append(SourceSearchHit(projectID: project.id, documentID: document.id,
                             title: document.title, evidence: EvidenceAnchor(documentID: document.id,
                                 sceneHash: scene?.contentHash, quote: ns.substring(with: context),
-                                utf16Hint: context.location), revision: DocumentOutline.stableHash(document.body),
+                                utf16Hint: context.location), revision: revision,
                             matchedText: ns.substring(with: match), matchedRange: match,
                             reason: termIndex == 0 ? .literal : .confirmedName))
                         if results.count == maximum { return results }

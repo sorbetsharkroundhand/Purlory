@@ -159,6 +159,28 @@ public actor ProjectStore {
         }
     }
 
+    /// A scoped synchronous lease for an opaque derived file and its companions.
+    /// Keeping the operation under the store lock prevents deletion/activation races;
+    /// the domain owns the file format and must close its handles before returning.
+    package func withIntelligenceFile<Result: Sendable>(
+        projectID: WritingProjectID, documentID: WritingDocumentID? = nil,
+        name: String, companions: [String] = [],
+        operation: @Sendable (URL) throws -> Result
+    ) throws -> Result {
+        try withStoreLock {
+            if let documentID { try validateDocument(documentID, in: projectID) }
+            else { _ = try readManifest(id: projectID) }
+            let directory = try projectURL(projectID, "Intelligence")
+            try files.createDirectory(at: directory)
+            for leaf in [name] + companions {
+                guard !leaf.contains("/"), !leaf.isEmpty else { throw ProjectStoreError.unsafePath(leaf) }
+                _ = try projectURL(projectID, "Intelligence/\(leaf)")
+            }
+            try Task.checkCancellation()
+            return try operation(projectURL(projectID, "Intelligence/\(name)"))
+        }
+    }
+
     package func withStoreLock<T>(_ operation: () throws -> T) throws -> T {
         try Task.checkCancellation()
         try ProjectPaths.rejectSymlink(root)

@@ -23,7 +23,7 @@ struct WorkspaceSearchResult: Identifiable, Sendable {
     let action: Action
 }
 
-/// One persistent, explicit search surface. No inference or disk work is involved.
+/// One persistent, explicit search surface with local source indexing and no inference.
 @MainActor final class WorkspaceSearchModel: ObservableObject {
     @Published var query = ""
     @Published var scope: WorkspaceSearchScope = .project
@@ -47,13 +47,14 @@ struct WorkspaceSearchResult: Identifiable, Sendable {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines), scope = scope
         guard query.utf16.count <= 500 else { message = "검색어를 조금 줄여 주세요."; return }
         let typewriter = spatial.typewriter, focus = spatial.focusDimming, current = ticket
+        let sourceIndex = session.sourceSearchIndex
         searching = true
         task = Task { [weak self] in
             do {
                 try await Task.sleep(for: .milliseconds(140))
                 let worker = Task.detached(priority: .userInitiated) {
-                    try Self.build(project: project, origin: origin, native: native, query: query,
-                        scope: scope, typewriter: typewriter, focus: focus)
+                    try await Self.build(project: project, origin: origin, native: native, query: query,
+                        scope: scope, typewriter: typewriter, focus: focus, sourceIndex: sourceIndex)
                 }
                 let found = try await withTaskCancellationHandler { try await worker.value }
                     onCancel: { worker.cancel() }
@@ -72,7 +73,7 @@ struct WorkspaceSearchResult: Identifiable, Sendable {
     }
 
     nonisolated private static func build(project: WritingProject, origin: WritingDocumentID, native: String?,
-        query: String, scope: WorkspaceSearchScope, typewriter: Bool, focus: Bool) throws -> [WorkspaceSearchResult] {
+        query: String, scope: WorkspaceSearchScope, typewriter: Bool, focus: Bool, sourceIndex: ProjectSourceIndex) async throws -> [WorkspaceSearchResult] {
         try Task.checkCancellation()
         if scope == .document {
             guard !query.isEmpty, let native else { return [] }
@@ -99,7 +100,7 @@ struct WorkspaceSearchResult: Identifiable, Sendable {
             .map { WorkspaceSearchResult(id: $0.id, title: $0.title,
                 detail: "\($0.kind.rawValue) · \($0.detail)", action: .command($0.action)) }
         if scope == .project, !query.isEmpty {
-            for hit in try SourceSearch.results(query: query, in: project, origin: origin, cursor: 0, scope: .project) {
+            for hit in try await SourceSearch.results(query: query, in: project, origin: origin, cursor: 0, scope: .project, index: sourceIndex) {
                 let reference = OriginalSourceReference(key: .init(projectID: project.id, documentID: hit.documentID),
                     revision: hit.revision,
                     evidence: .init(documentID: hit.documentID, quote: hit.matchedText, utf16Hint: hit.matchedRange.location),

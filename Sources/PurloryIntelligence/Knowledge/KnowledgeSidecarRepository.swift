@@ -30,16 +30,15 @@ public actor KnowledgeSidecarRepository: KnowledgeSidecarPersisting {
     }
 
     public func load(scope: StoryMemoryScope) async -> KnowledgeSidecar {
-        let data: Data?
-        switch scope {
-        case .project(let projectID, let documentID):
-            data = try? await projectStore?.readIntelligence(
-                projectID: projectID, documentID: documentID)
-        case .legacy(let documentID):
-            data = try? Data(contentsOf: legacyURL(documentID))
-        }
-        guard let data else { return KnowledgeSidecar(scope: scope) }
-        return KnowledgeSidecar.decoded(data, for: scope)
+        do {
+            return try await withDatabase(scope: scope) { database, original in
+                if let stored = try database.loadSidecar(scope: scope) { return stored }
+                let sidecar = (try? Data(contentsOf: original)).map { KnowledgeSidecar.decoded($0, for: scope) }
+                    ?? KnowledgeSidecar(scope: scope)
+                try database.saveSidecar(sidecar, verifying: true)
+                return sidecar
+            }
+        } catch { return KnowledgeSidecar(scope: scope) }
     }
 
     public func save(
@@ -49,18 +48,8 @@ public actor KnowledgeSidecarRepository: KnowledgeSidecarPersisting {
     ) async throws {
         try Task.checkCancellation()
         guard sidecar.scope == scope else { throw Error.scopeMismatch }
-        let data = try sidecar.encoded(pruningTo: liveHashes)
-        switch scope {
-        case .project(let projectID, let documentID):
-            guard let projectStore else { throw Error.projectStoreUnavailable }
-            try Task.checkCancellation()
-            try await projectStore.writeIntelligence(
-                data, projectID: projectID, documentID: documentID)
-        case .legacy(let documentID):
-            try Task.checkCancellation()
-            try FileManager.default.createDirectory(
-                at: legacyDirectory, withIntermediateDirectories: true)
-            try data.write(to: legacyURL(documentID), options: .atomic)
+        try await withDatabase(scope: scope) { database, _ in
+            try database.saveSidecar(sidecar, pruningTo: liveHashes)
         }
     }
 
@@ -76,19 +65,27 @@ public actor KnowledgeSidecarRepository: KnowledgeSidecarPersisting {
     }
 
     public func remove(scope: StoryMemoryScope) async throws {
-        switch scope {
-        case .project(let projectID, let documentID):
-            guard let projectStore else { throw Error.projectStoreUnavailable }
-            try await projectStore.removeIntelligence(
-                projectID: projectID, documentID: documentID)
-        case .legacy(let documentID):
-            let url = legacyURL(documentID)
-            guard FileManager.default.fileExists(atPath: url.path) else { return }
-            try FileManager.default.removeItem(at: url)
+        try await withDatabase(scope: scope) { database, original in
+            // An explicit cache removal also retires its old derived JSON, so it
+            // cannot silently reappear as a migration input on the next load.
+            if FileManager.default.fileExists(atPath: original.path) { try FileManager.default.removeItem(at: original) }
+            try database.removeSidecar(scope: scope)
         }
     }
 
     public func pruneLegacyOrphans(keeping documentIDs: Set<WritingDocumentID>) async {
+        let probe = StoryMemoryScope.legacy(documentID: WritingDocumentID())
+        try? await withDatabase(scope: probe) { database, _ in
+            var retired: [StoryMemoryScope] = []
+            try database.query("SELECT scope FROM sidecars") { statement in
+                let key = IntelligenceDatabase.text(statement, 0)
+                guard key.hasPrefix("legacy/"), let uuid = UUID(uuidString: String(key.dropFirst(7))) else { return }
+                let id = WritingDocumentID(rawValue: uuid)
+                if !documentIDs.contains(id) { retired.append(.legacy(documentID: id)) }
+            }
+            for scope in retired { try database.removeSidecar(scope: scope) }
+        }
+        guard (try? ProjectPaths.rejectSymlink(legacyDirectory)) != nil else { return }
         guard
             let files = try? FileManager.default.contentsOfDirectory(
                 at: legacyDirectory, includingPropertiesForKeys: nil)
@@ -102,7 +99,26 @@ public actor KnowledgeSidecarRepository: KnowledgeSidecarPersisting {
         }
     }
 
-    private func legacyURL(_ documentID: WritingDocumentID) -> URL {
-        legacyDirectory.appendingPathComponent("\(documentID.rawValue.uuidString).json")
+    private func withDatabase<Result: Sendable>(scope: StoryMemoryScope,
+        operation: @Sendable (IntelligenceDatabase, URL) throws -> Result
+    ) async throws -> Result {
+        let originalName: String
+        switch scope {
+        case .project(let projectID, let documentID):
+            guard let projectStore else { throw Error.projectStoreUnavailable }
+            originalName = "\(documentID.rawValue.uuidString).knowledge.json"
+            return try await projectStore.withIntelligenceFile(projectID: projectID, documentID: documentID,
+                name: IntelligenceDatabase.fileName, companions: IntelligenceDatabase.companions + [originalName]) { url in
+                let original = try ProjectPaths.checked(originalName, under: url.deletingLastPathComponent())
+                return try IntelligenceDatabase.withConnection(at: url) { try operation($0, original) }
+            }
+        case .legacy(let documentID):
+            try ProjectPaths.rejectSymlink(legacyDirectory)
+            try FileManager.default.createDirectory(at: legacyDirectory, withIntermediateDirectories: true)
+            originalName = "\(documentID.rawValue.uuidString).json"
+            let original = try ProjectPaths.checked(originalName, under: legacyDirectory)
+            let url = try ProjectPaths.checked(IntelligenceDatabase.fileName, under: legacyDirectory)
+            return try IntelligenceDatabase.withConnection(at: url) { try operation($0, original) }
+        }
     }
 }

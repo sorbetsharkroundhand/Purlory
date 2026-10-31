@@ -30,12 +30,14 @@ final class SourceSearchController: ObservableObject {
     private var subscriptions: Set<AnyCancellable> = []
 
     init(session: ProjectSession, origin: ProjectRuntimeIdentity, cursor: Int,
-         delay: Duration = .milliseconds(120), build: @escaping Builder = { input in
-             try SourceSearch.results(query: input.query, in: input.project,
-                 origin: input.origin.key.documentID, cursor: input.cursor, scope: input.scope)
-         }) {
+         delay: Duration = .milliseconds(120), build: Builder? = nil) {
         self.session = session; self.origin = origin; self.cursor = cursor
-        self.delay = delay; self.build = build
+        self.delay = delay
+        let index = session.sourceSearchIndex
+        self.build = build ?? { input in
+            try await SourceSearch.results(query: input.query, in: input.project,
+                origin: input.origin.key.documentID, cursor: input.cursor, scope: input.scope, index: index)
+        }
         session.runtimeIdentityChanges.dropFirst().sink { [weak self] identity in
             if identity != origin { self?.invalidate() }
         }.store(in: &subscriptions)

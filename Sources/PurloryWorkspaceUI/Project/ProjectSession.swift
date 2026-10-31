@@ -59,6 +59,7 @@ public final class ProjectSession {
     @ObservationIgnored public var documentDidChange: ((ProjectDocumentSnapshot) -> Void)?
 
     private let store: ProjectStore
+    let sourceSearchIndex: ProjectSourceIndex
     private let defaults: UserDefaults
     private let autosaveDelay: Duration
     private let prepareProject: (@Sendable (WritingProject, ProjectStore) async throws -> WritingProject)?
@@ -74,6 +75,7 @@ public final class ProjectSession {
         prepareProject: (@Sendable (WritingProject, ProjectStore) async throws -> WritingProject)? = nil
     ) {
         self.store = store
+        self.sourceSearchIndex = ProjectSourceIndex(store: store)
         self.defaults = defaults
         self.autosaveDelay = autosaveDelay
         self.prepareProject = prepareProject

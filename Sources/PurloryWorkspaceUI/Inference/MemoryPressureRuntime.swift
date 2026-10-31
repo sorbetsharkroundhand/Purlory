@@ -9,11 +9,14 @@ public final class MemoryPressureRuntime {
     public init(completion: CompletionController, indexer: BackgroundIndexer,
                 engine: CompletionEngine,
                 source: any MemoryPressureEventSource = SystemMemoryPressureSource(),
-                writingDiagnostics: WritingDiagnosticsRuntime? = nil) {
+                writingDiagnostics: WritingDiagnosticsRuntime? = nil,
+                projectSession: ProjectSession? = nil) {
+        let sourceIndex = projectSession?.sourceSearchIndex
         coordinator = MemoryPressureCoordinator(
             backgroundPause: { [weak indexer, weak writingDiagnostics] paused in
                 indexer?.setMemoryPressurePaused(paused)
                 writingDiagnostics?.setSharedBackgroundPaused(paused)
+                if let sourceIndex { Task { await sourceIndex.setMemoryPressurePaused(paused) } }
             },
             completionPause: { [weak completion] in completion?.setMemoryPressurePaused($0) },
             releaseModel: {

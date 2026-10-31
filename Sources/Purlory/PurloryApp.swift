@@ -86,7 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard termination == nil else { return }
         projectSession = session
         memoryPressure = MemoryPressureRuntime(completion: completion, indexer: indexer,
-            engine: PurloryApp.sharedEngine, writingDiagnostics: writingDiagnostics)
+            engine: PurloryApp.sharedEngine, writingDiagnostics: writingDiagnostics, projectSession: session)
         termination = ProjectTerminationCoordinator(
             session: session,
             persistPositions: { WritingPositionStore.shared.persistNow() },

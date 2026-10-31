@@ -12,10 +12,10 @@
 
 ## 2. SQLite sidecars and indexed original-source search
 
-- [ ] Verify bundled SQLite capabilities; add migration/transaction/path/search regressions.
-- [ ] Implement schema, safe connection lifecycle, scene upserts and verified JSON import.
-- [ ] Integrate FTS candidates with exact-source fallback into real search surfaces.
-- [ ] Verify incremental writes, recovery, removal and search completeness; review and commit.
+- [x] Verify bundled SQLite capabilities; add migration/transaction/path/search regressions.
+- [x] Implement schema, safe connection lifecycle, scene upserts and verified JSON import.
+- [x] Integrate FTS candidates with exact-source fallback into real search surfaces.
+- [x] Verify incremental writes, recovery, removal and search completeness; review and commit.
 
 ## 3. Pinned two-tier prefix cache
 

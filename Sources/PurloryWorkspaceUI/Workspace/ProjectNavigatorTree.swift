@@ -75,8 +75,9 @@ struct ProjectNavigatorView: View {
             guard isSearching, let project = session.activeProject else { searchResults = []; return }
             try? await Task.sleep(for: .milliseconds(200))
             guard !Task.isCancelled else { return }
-            let query = searchText
-            let results = await Task.detached(priority: .userInitiated) { ProjectSearch.results(query: query, in: project) }.value
+            let query = searchText, index = session.sourceSearchIndex
+            let worker = Task.detached(priority: .userInitiated) { await ProjectSearch.results(query: query, in: project, index: index) }
+            let results = await withTaskCancellationHandler { await worker.value } onCancel: { worker.cancel() }
             if !Task.isCancelled { searchResults = results }
         }
         .task(id: editorRequests.searchFocusRequest) {
