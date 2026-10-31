@@ -333,6 +333,7 @@ struct EditorPane: View {
             if let identity = editorIdentity {
                 PurloryBlockEditor(
                     source: sourceBinding,
+                    currentSource: sourceProvider,
                     controller: completion,
                     theme: theme,
                     lineSpacing: CGFloat(settings.lineSpacing),
@@ -412,6 +413,16 @@ struct EditorPane: View {
             guard let id, let projectID else { return }
             projectSession.updateDocumentSource(source, for: .init(projectID: projectID, documentID: id), activationEpoch: epoch)
         })
+    }
+
+    private var sourceProvider: () -> DocumentSource? {
+        let id = displayedDocument?.id, projectID = projectSession.projectPresentation?.id
+        let epoch = projectSession.activationEpoch
+        return {
+            guard let id, projectSession.activationEpoch == epoch,
+                  projectSession.projectPresentation?.id == projectID else { return nil }
+            return projectSession.document(id)?.source
+        }
     }
 
     private var displayedDocument: WritingDocument? {

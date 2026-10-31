@@ -44,6 +44,9 @@ public enum EditorMetrics {
 public struct PurloryBlockEditor: NSViewRepresentable {
     @Binding var text: String
     private let sourceBinding: Binding<DocumentSource>?
+    /// Native edits may outrun a queued SwiftUI Binding value. The project owner
+    /// supplies a live read; nil retires that owner's authority without reloading.
+    private let currentSource: (() -> DocumentSource?)?
 
     private let controller: CompletionController?
     private let theme: PurloryTheme
@@ -71,6 +74,7 @@ public struct PurloryBlockEditor: NSViewRepresentable {
     public init(
         text: Binding<String> = .constant(""),
         source: Binding<DocumentSource>? = nil,
+        currentSource: (() -> DocumentSource?)? = nil,
         controller: CompletionController? = nil,
         theme: PurloryTheme = .light,
         lineSpacing: CGFloat = CGFloat(CompletionSettings.defaultLineSpacing),
@@ -90,6 +94,7 @@ public struct PurloryBlockEditor: NSViewRepresentable {
     ) {
         self._text = text
         self.sourceBinding = source
+        self.currentSource = currentSource
         self.controller = controller
         self.theme = theme
         self.lineSpacing = lineSpacing
@@ -106,6 +111,11 @@ public struct PurloryBlockEditor: NSViewRepresentable {
         self.isEditable = isEditable
         self.isActiveEditor = isActiveEditor
         self.onEditorActivation = onEditorActivation
+    }
+
+    private func readCurrentSource() -> DocumentSource? {
+        if let currentSource { return currentSource() }
+        return sourceBinding?.wrappedValue
     }
 
     /// Explicit legacy-workspace bridge. Project workspace composition uses the neutral primary
@@ -198,7 +208,7 @@ public struct PurloryBlockEditor: NSViewRepresentable {
         textView.editorWindowDidChange = onEditorWindowChange
         configureActivation(textView, coordinator: context.coordinator)
         configureAssets(textView)
-        let initialSource = sourceBinding?.wrappedValue
+        let initialSource = readCurrentSource()
         let initialText = initialSource?.string ?? text
         textView.load(markdown: initialText)
         context.coordinator.lastSyncedText = initialText
@@ -303,7 +313,11 @@ public struct PurloryBlockEditor: NSViewRepresentable {
         // serialize() 재비교가 아니라 "마지막 동기화 텍스트"와 비교한다 —
         // 직렬화 왕복의 미세한 비대칭이 렌더 → reload → publish → 렌더의
         // 무한 루프(비치볼)로 번지는 것을 차단 (r1 버그).
-        let incomingSource = sourceBinding?.wrappedValue
+        let incomingSource = readCurrentSource()
+        guard currentSource == nil || incomingSource != nil else {
+            textView.isEditable = false
+            return
+        }
         let sourceChanged = incomingSource.map { next in
             context.coordinator.lastSyncedSource.map { !next.isSameVersion(as: $0) } ?? true
         } ?? !text.utf16.elementsEqual(context.coordinator.lastSyncedText.utf16)
@@ -432,7 +446,7 @@ public struct PurloryBlockEditor: NSViewRepresentable {
         func applyWorkspaceSource(_ body: String, to editor: BlockTextView) {
             isDocumentTransitioning = true
             editor.load(markdown: body); lastSyncedText = body
-            lastSyncedSource = parent.sourceBinding?.wrappedValue
+            lastSyncedSource = parent.readCurrentSource()
             isDocumentTransitioning = false
         }
 

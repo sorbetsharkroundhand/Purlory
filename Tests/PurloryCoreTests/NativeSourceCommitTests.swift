@@ -7,6 +7,66 @@ import XCTest
 
 @MainActor
 final class NativeSourceCommitTests: XCTestCase {
+    func testQueuedBindingSnapshotCannotReplaceNewerNativeSourceOrRetiredOwner() async throws {
+        let key = ProjectDocumentKey(projectID: WritingProjectID(), documentID: WritingDocumentID())
+        let original = DocumentSource("Original")
+        var live: DocumentSource? = original
+        var frame = 0
+        // A SwiftUI update can carry the value captured before the latest native key.
+        let queued = Binding<DocumentSource>(get: { original }, set: { live = $0 })
+        func view() -> PurloryBlockEditor {
+            PurloryBlockEditor(source: queued, currentSource: { live }, documentIdentity: .project(key), focusRequest: frame)
+        }
+        let host = NSHostingView(rootView: view())
+        let window = FramedWorkspaceWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.testUndo.groupsByEvent = false; window.contentView = host
+        defer { window.contentView = nil; window.close() }
+        func layout() async { for _ in 0..<10 { host.layoutSubtreeIfNeeded(); await Task.yield() } }
+        func find(_ view: NSView) -> BlockTextView? { (view as? BlockTextView) ?? view.subviews.compactMap(find).first }
+        await layout()
+        let editor = try XCTUnwrap(find(host)), resets = editor.writingProjectionCapture.resetCount
+        for (index, character) in "abc".enumerated() {
+            window.testUndo.beginUndoGrouping()
+            editor.insertText(String(character), replacementRange: editor.selectedRange())
+            window.testUndo.endUndoGrouping()
+            frame += 1; host.rootView = view(); await layout()
+            XCTAssertEqual(editor.string, String("abc".prefix(index + 1)) + "Original")
+            XCTAssertEqual(editor.selectedRange().location, index + 1)
+            XCTAssertEqual(editor.writingProjectionCapture.resetCount, resets)
+        }
+        live = DocumentSource("External")
+        frame += 1; host.rootView = view(); await layout()
+        XCTAssertEqual(editor.string, "External", "A proved external replacement must still load")
+        live = nil
+        frame += 1; host.rootView = view(); await layout()
+        XCTAssertEqual(editor.string, "External")
+        XCTAssertFalse(editor.isEditable, "Retired authority cannot fall back to a queued binding")
+    }
+
+    func testRapidMountedTypingPreservesCharacterOrderAndCaretAcrossFrameUpdates() async throws {
+        let h = try await FramedWorkspaceHarness(mode: .fiction)
+        defer { h.close() }
+        h.window.makeKeyAndOrderFront(nil)
+        let editor = try await h.editor()
+        h.window.makeFirstResponder(editor)
+        editor.setSelectedRange(NSRange(location: 0, length: 0))
+        let original = editor.string, resets = editor.writingProjectionCapture.resetCount
+        let input = "edited-smoke3B28A632EDFE45478BB9C2665A81A440"
+        var prefix = ""
+        for character in input {
+            h.window.testUndo.beginUndoGrouping()
+            editor.insertText(String(character), replacementRange: editor.selectedRange())
+            h.window.testUndo.endUndoGrouping()
+            prefix.append(character)
+            try await Task.sleep(for: .milliseconds(8))
+            await h.layout()
+            XCTAssertEqual(editor.string, prefix + original)
+            XCTAssertEqual(editor.selectedRange(), NSRange(location: prefix.utf16.count, length: 0))
+            XCTAssertEqual(editor.writingProjectionCapture.resetCount, resets)
+        }
+    }
+
     func testMountedProjectEditorKeepsNativeAuthorityAcrossLazyBindingUpdates() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let suite = "Purlory-source-mounted-\(UUID())"
