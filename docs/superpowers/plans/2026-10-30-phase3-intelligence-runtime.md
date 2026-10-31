@@ -25,10 +25,10 @@
 
 ## 4. Durable semantic scene snapshots
 
-- [ ] Add version/scene identity, storage, comparison and stale/undo regressions.
-- [ ] Implement durable capture and original paragraph comparison.
-- [ ] Expose capture/list/compare/apply in the writing workspace with guarded transactions.
-- [ ] Verify backup/cache-purge survival, navigation and native undo; review and commit.
+- [x] Add version/scene identity, storage, comparison and stale/undo regressions.
+- [x] Implement durable capture and original paragraph comparison.
+- [x] Expose capture/list/compare/apply in the writing workspace with guarded transactions.
+- [x] Verify backup/cache-purge survival, navigation and native undo; review and commit.
 
 ## 5. Kiwi cadence and attributed character voice
 

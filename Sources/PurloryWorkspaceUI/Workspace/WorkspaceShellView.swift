@@ -177,6 +177,7 @@ struct WorkspaceSurface: View {
     @State private var assistance: WorkspaceAssistance?
     @State private var entities: WorkspaceEntityController?
     @State private var diagnosticsVisible = false
+    @State private var versionsVisible = false
     @State private var writerSection: SidebarSection?
     @AppStorage("purlory.appearance") private var appearance = ""
     @AppStorage("purlory.sidebarVisible") private var sidebarVisible = true
@@ -238,6 +239,10 @@ struct WorkspaceSurface: View {
                         section: writerSection, theme: theme, spatial: spatial, indexer: indexer)
                 }.frame(width: 460, height: 540).background(theme.editorSurfaceC)
             }
+        }
+        .sheet(isPresented: $versionsVisible, onDismiss: { editorRequests.focusEditor() }) {
+            ManuscriptVersionsView(session: projectSession, requests: editorRequests, theme: theme,
+                close: { versionsVisible = false })
         }
         .onChange(of: projectSession.selectedDocumentID) { _, _ in configureSpatial() }
         .onChange(of: projectSession.projectPresentation?.id) { _, _ in configureSpatial() }
@@ -351,7 +356,8 @@ struct WorkspaceSurface: View {
             theme: theme, tools: AnyView(WorkspacePouchTools(session: projectSession, requests: editorRequests,
                 model: spatial, completion: completion, settings: completion.settings, theme: theme,
                 openCoauthor: { showAssistance(.coauthor, theme: theme) },
-                openSettings: { editorRequests.pouch?.dismissTools(); openSettings() })
+                openSettings: { editorRequests.pouch?.dismissTools(); openSettings() },
+                openVersions: { editorRequests.pouch?.dismissTools(); versionsVisible = true })
                 .defaultAppStorage(projectSession.presentationPreferences)), targetTitle: "집필 도구", actions: [
                 pouchTool(.navigator, id: "purlory.workspace.navigator-toggle", label: "문서 목록", symbol: "folder"),
                 pouchTool(.characters, id: "purlory.workspace.characters", label: "인물·작품 정보", symbol: "person.2"),

@@ -36,6 +36,7 @@ struct WorkspacePouchTools: View {
     let theme: PurloryTheme
     let openCoauthor: () -> Void
     let openSettings: () -> Void
+    var openVersions: () -> Void = {}
     @AppStorage("purlory.appearance") private var appearance = ""
     @Environment(\.colorScheme) private var colorScheme
     @State private var markedText = false
@@ -108,6 +109,9 @@ struct WorkspacePouchTools: View {
                 }
             }
             divider
+            Button(action: openVersions) { Label("원고 기록 · 저장과 비교", systemImage: "clock.arrow.circlepath") }
+                .buttonStyle(PouchRowButtonStyle()).disabled(!session.isEditorEditable || markedText)
+                .accessibilityIdentifier("purlory.workspace.versions")
             HStack(spacing: 4) {
                 Button { model.openAll() } label: {
                     Label("나란히 펼치기", systemImage: "rectangle.split.3x1").purloryUIFont(10.5)
