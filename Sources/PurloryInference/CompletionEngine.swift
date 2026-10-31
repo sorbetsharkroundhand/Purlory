@@ -351,6 +351,7 @@ public actor CompletionEngine {
     public func complete(
         prompt: AssembledPrompt,
         parameters: CompletionParameters,
+        pinnedPrefix: String? = nil,
         onLoadProgress: (@Sendable (Double) -> Void)? = nil
     ) async throws -> Completion {
         if case .continuation(let text) = prompt,
@@ -365,7 +366,7 @@ public actor CompletionEngine {
             try Task.checkCancellation()
             return try await Self.runGeneration(
                 in: container, prompt: prompt, parameters: parameters,
-                promptCache: cache)
+                promptCache: cache, pinnedPrefix: pinnedPrefix)
         }
     }
 
@@ -668,6 +669,7 @@ public actor CompletionEngine {
         prompt: AssembledPrompt,
         parameters: CompletionParameters,
         promptCache: PromptCacheBox,
+        pinnedPrefix: String? = nil,
         onGenerationStarted: (@Sendable () -> Void)? = nil,
         stopAfterFirstChunk: Bool = false
     ) async throws -> Completion {
@@ -692,17 +694,21 @@ public actor CompletionEngine {
                 // 챗 템플릿을 거치지 않고 조립된 텍스트를 그대로 이어쓴다.
                 // 어절 중간("나는 오…")에서도 이어짐 + 선행 공백이 보존된다.
                 var tokens = context.tokenizer.encode(text: text)
+                var retainedPrefix = pinnedPrefix
                 // 토큰 안전 예산 (PLAN §11) — 문자 창이 과할 때만 발동. 잘라낼 때도
                 // 512 격자 단위로 잘라, 다음 요청과의 공통 접두가 유지되게 한다.
                 if tokens.count > parameters.maxPromptTokens {
                     let overflow = tokens.count - parameters.maxPromptTokens
                     let drop = min(((overflow + 511) / 512) * 512, tokens.count - 1)
                     tokens = Array(tokens.dropFirst(drop))
+                    retainedPrefix = nil
                 }
                 promptTokenCount = tokens.count
                 if parameters.kvCacheEnabled,
                     let reuse = try promptCache.begin(
                         modelID: parameters.modelID, tokens: tokens,
+                        pinTokens: PromptCacheMath.pinTokens(text: text, prefix: retainedPrefix, tokens: tokens,
+                            encode: { context.tokenizer.encode(text: $0) }),
                         model: context.model, parameters: generateParameters)
                 {
                     kvCache = reuse.cache

@@ -38,6 +38,7 @@ extension ContextAssembler {
                 jumpQuery: anchor.evidence.quote, jumpUTF16: anchor.evidence.utf16Hint,
                 stableKey: anchor.stableKey, pinned: controls.pinned(anchor.stableKey),
                 evidence: anchor.evidence))
+            if style == .continuation { report.fixedPrefix = "[이전 원문]\n" + anchor.evidence.quote + "\n\n" }
             return (prompt(window, quote: anchor.evidence.quote), report)
         }
         return (prompt(window), report)

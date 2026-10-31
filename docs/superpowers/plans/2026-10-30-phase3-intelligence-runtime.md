@@ -19,9 +19,9 @@
 
 ## 3. Pinned two-tier prefix cache
 
-- [ ] Inspect pinned MLX state/clone APIs and add isolation/owner/token/capability regressions.
-- [ ] Capture and restore a bounded exact A+B snapshot without mutable aliasing.
-- [ ] Integrate prompt boundaries, lease retirement and pressure cleanup; review and commit.
+- [x] Inspect pinned MLX state/clone APIs and add isolation/owner/token/capability regressions.
+- [x] Capture and restore a bounded exact A+B snapshot without mutable aliasing.
+- [x] Integrate prompt boundaries, lease retirement and pressure cleanup; review and commit.
 
 ## 4. Durable semantic scene snapshots
 

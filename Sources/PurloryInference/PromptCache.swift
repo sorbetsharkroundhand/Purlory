@@ -1,4 +1,5 @@
 import Foundation
+import MLX
 import MLXLMCommon
 
 /// Longest-common-prefix math for exact prompt state. The recorded prompt bounds
@@ -27,6 +28,15 @@ enum PromptCacheMath {
 
     /// 재사용분을 뺀 trim 양 — 생성 토큰이든 중단된 프리필이든 이 값으로 몰아 정리된다.
     static func trimAmount(offset: Int, reused: Int) -> Int { offset - reused }
+
+    /// Tokenization can merge at the boundary after A+B. Only the actual matching
+    /// token prefix is reusable; text equality or an estimated token count is not proof.
+    static func pinTokens(text: String, prefix: String?, tokens: [Int], encode: (String) -> [Int]) -> [Int]? {
+        guard let prefix, !prefix.isEmpty, text.utf8.starts(with: prefix.utf8) else { return nil }
+        let encoded = encode(prefix)
+        let count = zip(encoded, tokens).prefix { $0 == $1 }.count
+        return count > 0 ? Array(tokens.prefix(count)) : nil
+    }
 }
 
 /// Shared generation state is leased until the engine has drained its generation task.
@@ -62,32 +72,77 @@ final class PromptCacheBox: @unchecked Sendable {
     private var cache: [KVCache]?
     private var promptTokens: [Int] = []
     private var owner: Owner?
-    private var active: (lease: Lease, tokens: [Int])?
+    private var active: (lease: Lease, tokens: [Int], pinTokens: [Int]?)?
+    private struct Pin {
+        let owner: Owner
+        let tokens: [Int]
+        let cache: [KVCache]
+    }
+    private var pinned: Pin?
+    private let maxPinnedTokens: Int
+    private let maxPinnedBytes: Int
+    private let copyPrefix: ([KVCache], Int, Int) -> [KVCache]?
 
-    func begin(modelID: String, tokens: [Int], model: any LanguageModel, parameters: GenerateParameters) throws -> Reuse? {
-        try begin(owner: Owner(modelID: modelID, modelIdentity: ObjectIdentifier(model), parameters: parameters), tokens: tokens) {
+    // The copy seam keeps ownership and retirement tests independent of Metal.
+    init(maxPinnedTokens: Int = 4096, maxPinnedBytes: Int = 128 * 1024 * 1024,
+         copyPrefix: @escaping ([KVCache], Int, Int) -> [KVCache]? = PromptCacheCapability.independentPrefix) {
+        self.maxPinnedTokens = max(0, maxPinnedTokens)
+        self.maxPinnedBytes = max(0, maxPinnedBytes)
+        self.copyPrefix = copyPrefix
+    }
+
+    func begin(modelID: String, tokens: [Int], pinTokens: [Int]? = nil, model: any LanguageModel, parameters: GenerateParameters) throws -> Reuse? {
+        try begin(owner: Owner(modelID: modelID, modelIdentity: ObjectIdentifier(model), parameters: parameters), tokens: tokens, pinTokens: pinTokens) {
             try makePromptCache(model: model, parameters: parameters)
         }
     }
 
     /// The factory seam shares production ownership logic without requiring a loaded model in tests.
-    func begin(owner: Owner, tokens: [Int], makeCache: () throws -> [KVCache]) rethrows -> Reuse? {
+    func begin(owner: Owner, tokens: [Int], pinTokens: [Int]? = nil, makeCache: () throws -> [KVCache]) rethrows -> Reuse? {
         lock.lock(); defer { lock.unlock() }
         guard active == nil, !tokens.isEmpty else { return nil }
         let lease = Lease()
+        let requestedPin = pinTokens.flatMap {
+            !$0.isEmpty && $0.count <= maxPinnedTokens && tokens.starts(with: $0) ? $0 : nil
+        }
+        if pinned?.owner != owner { pinned = nil }
+        var livePrefix = 0
         if self.owner == owner, let cache, !promptTokens.isEmpty,
            case .exactPrefix(let offset) = PromptCacheCapability.inspect(cache) {
-            let prefix = PromptCacheMath.reusablePrefix(offset: offset, recorded: promptTokens, requested: tokens)
-            if prefix > 0, PromptCacheCapability.trim(cache, to: prefix) {
-                active = (lease, tokens)
-                return Reuse(cache: cache, suffix: Array(tokens[prefix...]), reusedTokens: prefix, lease: lease)
-            }
+            livePrefix = PromptCacheMath.reusablePrefix(offset: offset, recorded: promptTokens, requested: tokens)
         }
+        let pinnedPrefix = pinned.map { tokens.starts(with: $0.tokens) ? min($0.tokens.count, tokens.count - 1) : 0 } ?? 0
+        if pinnedPrefix > livePrefix,
+           let reuse = restorePin(prefix: pinnedPrefix, owner: owner, tokens: tokens, pinTokens: requestedPin, lease: lease) { return reuse }
+        if livePrefix > 0, let cache, PromptCacheCapability.trim(cache, to: livePrefix) {
+            active = (lease, tokens, requestedPin)
+            return Reuse(cache: cache, suffix: Array(tokens[livePrefix...]), reusedTokens: livePrefix, lease: lease)
+        }
+        if pinnedPrefix > 0,
+           let reuse = restorePin(prefix: pinnedPrefix, owner: owner, tokens: tokens, pinTokens: requestedPin, lease: lease) { return reuse }
         cache = nil; promptTokens = []; self.owner = nil
         let fresh = try makeCache()
         cache = fresh; promptTokens = []; self.owner = owner
-        active = (lease, tokens)
+        active = (lease, tokens, requestedPin)
         return Reuse(cache: fresh, suffix: tokens, reusedTokens: 0, lease: lease)
+    }
+
+    private func restorePin(prefix: Int, owner: Owner, tokens: [Int], pinTokens: [Int]?, lease: Lease) -> Reuse? {
+        guard let pinned, pinned.owner == owner,
+              let restored = snapshot(pinned.cache, count: prefix) else { return nil }
+        cache = restored; promptTokens = pinned.tokens; self.owner = owner
+        active = (lease, tokens, pinTokens)
+        return Reuse(cache: restored, suffix: Array(tokens[prefix...]), reusedTokens: prefix, lease: lease)
+    }
+
+    private func snapshot(_ source: [KVCache], count: Int) -> [KVCache]? {
+        guard maxPinnedBytes > 0, count > 0, count <= maxPinnedTokens,
+              case .exactPrefix(let offset) = PromptCacheCapability.inspect(source), count <= offset,
+              let result = copyPrefix(source, count, maxPinnedBytes), result.count == source.count,
+              PromptCacheCapability.inspect(result) == .exactPrefix(offset: count),
+              !result.contains(where: { candidate in source.contains { (candidate as AnyObject) === ($0 as AnyObject) } })
+        else { return nil }
+        return result
     }
 
     /// Captured tokens are committed only by the current lease after generation drains.
@@ -96,8 +151,13 @@ final class PromptCacheBox: @unchecked Sendable {
         guard let active, active.lease == lease else { return }
         if let cache, case .exactPrefix = PromptCacheCapability.inspect(cache) {
             promptTokens = active.tokens
+            if !Task<Never, Never>.isCancelled, let tokens = active.pinTokens, let owner,
+               pinned?.tokens != tokens || pinned?.owner != owner,
+               let snapshot = snapshot(cache, count: tokens.count) {
+                pinned = Pin(owner: owner, tokens: tokens, cache: snapshot)
+            }
         } else {
-            cache = nil; promptTokens = []; owner = nil
+            cache = nil; promptTokens = []; owner = nil; pinned = nil
         }
         self.active = nil
     }
@@ -105,13 +165,14 @@ final class PromptCacheBox: @unchecked Sendable {
     func abandon(lease: Lease) {
         lock.lock(); defer { lock.unlock() }
         guard active?.lease == lease else { return }
+        // A failed live request cannot mutate the independently owned pin.
         cache = nil; promptTokens = []; owner = nil; active = nil
     }
 
     /// Retired leases may still finish, but cannot modify any subsequent owner or state.
     func invalidate() {
         lock.lock(); defer { lock.unlock() }
-        cache = nil; promptTokens = []; owner = nil; active = nil
+        cache = nil; promptTokens = []; owner = nil; active = nil; pinned = nil
     }
 }
 
@@ -136,5 +197,34 @@ enum PromptCacheCapability: Equatable {
             guard layer.trim(count) == count, layer.offset == prefix else { return false }
         }
         return true
+    }
+
+    /// copy() alone creates array views in the pinned MLX version. Gather and
+    /// evaluate the bounded prefix into owned storage so a pin neither aliases live
+    /// updates nor retains an entire long prompt through a slice's backing buffer.
+    static func independentPrefix(_ cache: [KVCache], count: Int, maxBytes: Int) -> [KVCache]? {
+        guard count > 0, case .exactPrefix(let offset) = inspect(cache), count <= offset else { return nil }
+        var bytes = 0
+        for layer in cache {
+            let state = layer.state
+            let validCount = type(of: layer) == KVCacheSimple.self ? state.count == 2 : (state.count == 4 || state.count == 6)
+            guard validCount else { return nil }
+            for array in state {
+                guard array.ndim == 4, array.dim(2) == offset, array.shape.allSatisfy({ $0 > 0 }) else { return nil }
+                let (size, overflow) = (array.nbytes / offset).multipliedReportingOverflow(by: count)
+                guard !overflow, size <= maxBytes - bytes else { return nil }
+                bytes += size
+            }
+        }
+        let snapshot = cache.map { $0.copy() }
+        guard trim(snapshot, to: count) else { return nil }
+        let indices = MLXArray(0..<count)
+        for var layer in snapshot {
+            let owned = layer.state.map { take($0, indices, axis: 2) }
+            eval(owned)
+            layer.state = owned
+        }
+        guard inspect(snapshot) == .exactPrefix(offset: count) else { return nil }
+        return snapshot
     }
 }

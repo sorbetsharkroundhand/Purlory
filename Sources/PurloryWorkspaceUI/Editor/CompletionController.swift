@@ -996,7 +996,7 @@ public final class CompletionController {
         }()
         let requestModelID = parameters.modelID
         do {
-            let completion = try await engine.complete(prompt: prompt, parameters: parameters) {
+            let completion = try await engine.complete(prompt: prompt, parameters: parameters, pinnedPrefix: report.fixedPrefix) {
                 fraction in
                 Task { @MainActor [weak self] in
                     self?.noteLoadProgress(fraction, modelID: requestModelID, expectedGeneration: expected)

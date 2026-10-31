@@ -78,6 +78,8 @@ public struct ContextReport: Sendable, Equatable {
     }
 
     public var items: [Item]
+    /// Exact stable text before cursor-dependent scene/dialogue context.
+    public var fixedPrefix: String? = nil
     /// 조립 시각 — 인스펙터의 "언제 것인지" 표시.
     public var assembledAt: Date
     /// 이 리포트가 조립된 문서 — 다른 작품의 화면에서 보여주거나, 그 작품의
@@ -324,6 +326,7 @@ public enum ContextAssembler {
         {
             header = header.isEmpty ? block : header + "\n" + block
         }
+        let fixedPrefix = header
         // 지금 장면·서사 위치·그라운딩 (v4·v5) — 커서가 속한 씬의 제목·유형·
         // 시점·장소·동석 인물·흐름·층. 커서가 씬을 넘을 때만 변하므로 대화
         // 블록과 같은 "맨 뒤" 자리다 (KV 프리픽스 보호).
@@ -347,10 +350,11 @@ public enum ContextAssembler {
                 header = header.isEmpty ? block : header + "\n" + block
             }
         }
-        let report = ContextReport(items: items)
+        var report = ContextReport(items: items)
         let assembled: AssembledPrompt
         switch style {
         case .continuation:
+            report.fixedPrefix = fixedPrefix.isEmpty ? nil : fixedPrefix
             // 헤더와 본문은 빈 줄 하나로만 구분 — 이어쓰기 흐름을 깨지 않는 최소 구조.
             assembled =
                 header.isEmpty ? .continuation(prefix) : .continuation(header + "\n\n" + prefix)
