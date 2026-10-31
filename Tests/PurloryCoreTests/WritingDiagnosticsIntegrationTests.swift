@@ -318,10 +318,33 @@ final class WritingDiagnosticsIntegrationTests: XCTestCase {
         }
     }
 
+    func testVoiceFindingsReachMarginWithSpeakerEvidenceAndRetireWhenAuthorMetadataChanges() async throws {
+        let early = "서연이 말했다. “나는 오늘도 여기에서 기다립니다.”\n"
+        let late = "서연이 말했다. “난 이제 저쪽으로 그냥 떠날래.”\n"
+        let body = String(repeating: early, count: 12) + String(repeating: late, count: 4)
+        try await withDiagnosticsFixture(mode: .fiction, body: body, characters: [CharacterCard(name: "서연")]) { fixture in
+            try await fixture.settle()
+            let finding = try XCTUnwrap(fixture.runtime.controller.state.findings.first { $0.diagnostic.kind == .characterVoice })
+            XCTAssertTrue(finding.evidence.quote.contains("서연이 말했다"))
+            let insight = try XCTUnwrap(fixture.margin.visibleInsights(for: .fiction).first { $0.id == "writing-quality:" + finding.id })
+            let requests = ProjectEditorRequests()
+            requests.nativeEditor = fixture.editor; requests.nativeEditorKey = fixture.session.runtimeIdentity?.key
+            XCTAssertTrue(fixture.runtime.navigateMarginEvidence(insightID: insight.id, evidence: finding.relatedEvidence[0], requests: requests))
+            XCTAssertEqual((fixture.editor.string as NSString).substring(with: fixture.editor.selectedRange()), finding.relatedEvidence[0].quote)
+            let identity = try XCTUnwrap(fixture.session.runtimeIdentity)
+            let writer = WriterDocumentData(documentID: identity.key.documentID, characters: [CharacterCard(name: "다른 사람")])
+            try fixture.session.updateUserData(writer.encoded(), for: WriterDocumentData.key(for: identity.key.documentID), identity: identity)
+            fixture.runtime.connect(session: fixture.session, editorBridge: fixture.bridge, livingMargin: fixture.margin)
+            try await fixture.settle()
+            XCTAssertFalse(fixture.runtime.controller.state.findings.contains { $0.diagnostic.kind == .characterVoice })
+            XCTAssertFalse(fixture.runtime.navigateMarginEvidence(insightID: insight.id, evidence: finding.evidence, requests: requests))
+        }
+    }
+
     private func withDiagnosticsFixture(mode: WritingMode = .general, body: String = "🙂 됬다.\n**합성 원고**\n앞 $x$ 뒤",
-                                        profileData: Data? = nil, worker: KoreanNativeWorker? = nil, bindAfterLoad: Bool = false,
+                                        profileData: Data? = nil, worker: KoreanNativeWorker? = nil, bindAfterLoad: Bool = false, characters: [CharacterCard] = [],
                                         run: @MainActor (DiagnosticsIntegrationFixture) async throws -> Void) async throws {
-        let fixture = try await DiagnosticsIntegrationFixture(mode: mode, body: body, profileData: profileData, worker: worker, bindAfterLoad: bindAfterLoad)
+        let fixture = try await DiagnosticsIntegrationFixture(mode: mode, body: body, profileData: profileData, worker: worker, bindAfterLoad: bindAfterLoad, characters: characters)
         do { try await run(fixture); await fixture.close() }
         catch { await fixture.close(); throw error }
     }
@@ -343,12 +366,16 @@ private final class DiagnosticsIntegrationFixture {
     private var coordinator: PurloryBlockEditor.Coordinator!
     private var acceptsBinding = true
 
-    init(mode: WritingMode, body: String, profileData: Data?, worker: KoreanNativeWorker?, bindAfterLoad: Bool) async throws {
+    init(mode: WritingMode, body: String, profileData: Data?, worker: KoreanNativeWorker?, bindAfterLoad: Bool, characters: [CharacterCard]) async throws {
         root = try temporaryProjectRoot(); defaults = UserDefaults(suiteName: suite)!
         store = ProjectStore(root: root)
         session = ProjectSession(store: store, defaults: defaults, autosaveDelay: .seconds(3600))
         var project = projectFixture(); project.mode = mode; project.documents[0].body = body
         if let profileData { project.userData[WritingStyleRepository.key] = profileData }
+        if !characters.isEmpty {
+            let id = project.documents[0].id
+            project.userData[WriterDocumentData.key(for: id)] = try WriterDocumentData(documentID: id, characters: characters).encoded()
+        }
         try await session.saveAndActivate(project)
         runtime = WritingDiagnosticsRuntime(worker: worker ?? KoreanNativeWorker(resources: KoreanNativeWorker.bundledResourcesURL),
             observeEnergy: false, clock: clock)

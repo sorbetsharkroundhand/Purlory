@@ -23,6 +23,8 @@ public struct Utterance: Equatable, Sendable {
     public var listenerID: UUID?
     /// 존대 판정 — 종결어미가 닫힌 규칙에 없으면 nil (품질 > 적극성).
     public var politeness: Politeness?
+    /// Present only when explicit adjacent narration proves the named speaker.
+    public var attributionRange: Range<Int>? = nil
 }
 
 /// 대화 귀속 (PLAN §7·§6.4, m6-prep 6단계) — **결정적 우선** (CLAUDE.md §2-5).
@@ -104,6 +106,43 @@ public enum DialogueAttribution {
         return result.sorted { $0.utf16Start < $1.utf16Start }
     }
 
+    /// Conservative attribution for style evidence, without discourse alternation.
+    public static func explicitUtterances(in body: String, cards: [CharacterCard], beforeUTF16: Int? = nil) throws -> [Utterance] {
+        guard !cards.isEmpty, cards.count <= 128 else { return [] }
+        let source = body as NSString, end = beforeUTF16 ?? source.length
+        guard end >= 0, end <= source.length,
+              end == source.length || source.rangeOfComposedCharacterSequence(at: end).location == end else { return [] }
+        var owners: [String: Set<UUID>] = [:]
+        for card in cards {
+            for raw in [card.name] + card.aliases.split(separator: ",").map(String.init) {
+                let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !name.isEmpty, name.utf16.count <= 64 { owners[name, default: []].insert(card.id) }
+            }
+        }
+        guard owners.count <= 512 else { return [] }
+        let verbs = speechVerbStems.map(NSRegularExpression.escapedPattern(for:)).joined(separator: "|")
+        let patterns = try owners.map { name, ids in
+            (ids, try NSRegularExpression(pattern: "(?:^|[\\s\\p{P}])" + NSRegularExpression.escapedPattern(for: name)
+                + "(?:이|가|은|는|께서)\\s+(?:" + verbs + ")"))
+        }
+        var result: [Utterance] = [], offset = 0
+        for line in source.substring(to: end).split(separator: "\n", omittingEmptySubsequences: false) {
+            try Task.checkCancellation()
+            defer { offset += line.utf16.count + 1 }
+            guard line.utf16.count <= 2048 else { continue }
+            let quotes = quotedSpans(in: line)
+            guard quotes.count == 1, let quote = quotes.first, quote.text.utf16.count <= 768 else { continue }
+            let narration = narrationText(of: line), range = NSRange(location: 0, length: narration.utf16.count)
+            // Multiple declared names or a shared alias cannot prove a speaker.
+            let mentioned = owners.filter { narration.contains($0.key) }.values.reduce(into: Set<UUID>()) { $0.formUnion($1) }
+            guard mentioned.count == 1, let speaker = mentioned.first,
+                  patterns.contains(where: { $0.0 == [speaker] && $0.1.firstMatch(in: narration, range: range) != nil }) else { continue }
+            result.append(.init(speakerID: speaker, text: quote.text, utf16Start: offset + quote.utf16Offset,
+                listenerID: nil, politeness: politeness(of: quote.text), attributionRange: offset..<(offset + line.utf16.count)))
+        }
+        return result
+    }
+
     // MARK: - 존대 판정 (결정적 — 닫힌 종결어미 규칙)
 
     /// 발화 → 존대/반말. 문장별로 판정해 다수결, 갈리거나 못 읽으면 nil.
@@ -179,10 +218,12 @@ public enum DialogueAttribution {
             if let pair = quotePairs.first(where: { $0.open == char }) {
                 let contentStart = line.index(after: index)
                 if let closeIndex = line[contentStart...].firstIndex(of: pair.close) {
-                    let text = String(line[contentStart..<closeIndex])
-                        .trimmingCharacters(in: .whitespaces)
+                    let raw = line[contentStart..<closeIndex]
+                    let leading = raw.unicodeScalars.prefix { CharacterSet.whitespaces.contains($0) }
+                        .reduce(0) { $0 + String($1).utf16.count }
+                    let text = String(raw).trimmingCharacters(in: .whitespaces)
                     if !text.isEmpty {
-                        spans.append((text, utf16Offset + String(char).utf16.count))
+                        spans.append((text, utf16Offset + String(char).utf16.count + leading))
                     }
                     utf16Offset += line[index..<line.index(after: closeIndex)].utf16.count
                     index = line.index(after: closeIndex)

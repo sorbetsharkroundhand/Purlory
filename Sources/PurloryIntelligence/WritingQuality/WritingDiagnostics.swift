@@ -20,6 +20,8 @@ public enum WritingDiagnosticKind: String, Codable, CaseIterable, Sendable {
     case repeatedSentenceStart
     case sentenceLength
     case sentenceRhythm
+    case cadenceVariation
+    case characterVoice
 
     case vagueWord
     case overusedWord
@@ -149,6 +151,14 @@ public enum WritingDiagnosticsScope: String, Codable, Sendable {
     case document
 }
 
+/// Declared speaker names, independent of any Fiction storage schema.
+public struct WritingVoiceSubject: Equatable, Sendable {
+    public let id: UUID
+    public let name: String
+    public let aliases: [String]
+    public init(id: UUID, name: String, aliases: [String] = []) { self.id = id; self.name = name; self.aliases = aliases }
+}
+
 public struct WritingDiagnosticsRequest: Sendable {
     public var projectID: WritingProjectID
     public var documentID: WritingDocumentID
@@ -156,6 +166,7 @@ public struct WritingDiagnosticsRequest: Sendable {
     public var languageTag: String
     public var scope: WritingDiagnosticsScope
     public var dirtyRange: WritingDiagnosticRange?
+    public var voiceSubjects: [WritingVoiceSubject] = []
     public var styleProfile: WritingStyleProfile
 
     public init(

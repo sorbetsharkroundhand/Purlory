@@ -45,6 +45,7 @@ package struct KoreanRuleSession {
     private var runs: [Family: Run] = [:]
     private var startRun: SentencePattern?
     private var rhythmRun: SentencePattern?
+    private var cadence: [Evidence] = []
     private var output: [WritingDiagnostic] = []
     package private(set) var acceptsInput = true
     package private(set) var unsupportedRanges: [WritingDiagnosticRange] = []
@@ -52,7 +53,7 @@ package struct KoreanRuleSession {
     package static let maximumFamilies = 1024
     package static let maximumQuoteDepth = 32
     package var retainedOccurrenceCount: Int {
-        var count = current.count + starts.count
+        var count = current.count + starts.count + cadence.count
         for run in runs.values { count += run.evidence.count }
         count += startRun?.run.evidence.count ?? 0
         count += rhythmRun?.run.evidence.count ?? 0
@@ -147,7 +148,7 @@ package struct KoreanRuleSession {
                     quotes.removeLast()
                 } else if let closing = pairs[unit] {
                     delimiter = true
-                    if quotes.isEmpty { finishSentence(); finishRuns(); finishPatterns() }
+                    if quotes.isEmpty { finishSentence(); finishRuns(); finishPatterns(); cadence.removeAll(keepingCapacity: true) }
                     if quotes.count < Self.maximumQuoteDepth { quotes.append(closing) }
                     else {
                         quoteOverflow = 1
@@ -235,6 +236,7 @@ package struct KoreanRuleSession {
         finishClause()
         let range = NSRange(location: start, length: max(0, sentenceEnd - start))
         if styleEnabled, range.length > 0, !clauseUnsupported {
+            if quotes.isEmpty, terminalEnd != nil { observeCadence(range) }
             if clauseCount >= 4 { emit("connective-chain", kind: .connectiveChain, range: range, message: "한 문장에 여러 절이 이어집니다.", reason: "이 문장은 \(clauseCount)개 절을 연결합니다. 호흡을 나눌 위치를 확인해 보세요.") }
             if range.length > 120 { emit("sentence-length", kind: .sentenceLength, severity: .info, range: range, message: "긴 문장입니다.", reason: "이 문장은 UTF-16 기준 \(range.length)자로 120자를 넘습니다. 의도한 호흡인지 확인해 보세요.") }
             var nextStart = startRun, nextRhythm = rhythmRun
@@ -250,6 +252,21 @@ package struct KoreanRuleSession {
         hasClause = false; clauseCount = 0; endings = SHA256(); starts.removeAll(keepingCapacity: true); startForms.removeAll(keepingCapacity: true)
         causal = nil; clauseUnsupported = false
     }
+    private mutating func observeCadence(_ range: NSRange) {
+        cadence.append(.init(range: range, label: ""))
+        let required = profile.repetitionSensitivity == .low ? 12 : 8
+        guard cadence.count >= required else { return }
+        defer { cadence.removeAll(keepingCapacity: true) }
+        let lengths = cadence.map { Double($0.range.length) }
+        let mean = lengths.reduce(0, +) / Double(lengths.count)
+        let variance = lengths.reduce(0) { $0 + pow($1 - mean, 2) } / Double(lengths.count)
+        guard mean >= 8, sqrt(variance) / mean <= 0.08, let last = cadence.last else { return }
+        emit("cadence-variation", kind: .cadenceVariation, range: last.range,
+            related: cadence.dropLast().map(\.range),
+            message: "여러 문장의 길이가 비슷하게 이어집니다.",
+            reason: "완결된 서술문 \(required)개의 길이가 비슷합니다. 원문을 비교해 의도한 호흡인지 확인해 보세요.")
+    }
+
     // Work with local copies to avoid overlapping mutating access to session storage.
     private mutating func updatePattern(_ pattern: inout SentencePattern?, key: String, evidence: Evidence, rule: String, kind: WritingDiagnosticKind, limit: Int) {
         if pattern?.key != key { closePattern(&pattern, rule: rule, kind: kind); pattern = .init(key: key, run: Run()) }

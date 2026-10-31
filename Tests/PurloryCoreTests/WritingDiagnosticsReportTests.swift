@@ -7,6 +7,32 @@ import XCTest
 
 @MainActor
 final class WritingDiagnosticsReportTests: XCTestCase {
+    func testExplicitFictionReportCarriesVoiceEvidenceFromOriginalSourceWithoutChangingUserData() async throws {
+        let body = String(repeating: "**서연**이 말했다. “나는 오늘도 여기에서 기다립니다.”\n", count: 12)
+            + String(repeating: "**서연**이 말했다. “난 이제 저쪽으로 그냥 떠날래.”\n", count: 4)
+        let original = WritingReportSnapshotHolder.snapshot(body)
+        let writer = WriterDocumentData(documentID: original.identity.key.documentID, characters: [CharacterCard(name: "서연")])
+        let data = [WriterDocumentData.key(for: writer.documentID): try writer.encoded()]
+        let source = ProjectDocumentSnapshot(identity: original.identity, title: original.title, body: body,
+            kind: .manuscript, mode: .fiction, userData: data)
+        let holder = WritingReportSnapshotHolder(source)
+        let runtime = WritingDiagnosticsRuntime(observeEnergy: false)
+        runtime.configure(currentSnapshot: { holder.value }); runtime.controller.noteSnapshot(source)
+        var findings: [WritingDiagnosticsFinding] = []
+        for await event in runtime.controller.scanDocument(source) {
+            if case .findings(let values) = event.kind { findings += values }
+            if case .failed(let error) = event.kind { XCTFail("Voice report failed: \(error)") }
+        }
+        let voice = try XCTUnwrap(findings.first { $0.diagnostic.kind == .characterVoice })
+        for evidence in [voice.evidence] + voice.relatedEvidence {
+            let range = NSRange(location: try XCTUnwrap(evidence.utf16Hint), length: evidence.quote.utf16.count)
+            XCTAssertTrue((body as NSString).substring(with: range).utf16.elementsEqual(evidence.quote.utf16))
+        }
+        XCTAssertEqual(holder.value.userData, data)
+        XCTAssertTrue(runtime.controller.state.findings.isEmpty, "An explicit report cannot replace local findings")
+        await runtime.prepareForTermination()
+    }
+
     func testFrozenProjectionCachesEligibleTotalsAndOriginalMapping() throws {
         let index = WritingProjectionIndex()
         index.reset(source: "**한글** 😀")

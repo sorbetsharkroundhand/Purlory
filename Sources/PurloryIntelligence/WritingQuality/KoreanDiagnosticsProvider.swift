@@ -3,7 +3,7 @@ import PurloryKoreanBackend
 
 package actor KoreanDiagnosticsProvider: WritingDiagnosticsProvider, WritingDiagnosticsFailureClassifying {
     package nonisolated let id = KoreanCorrectnessRules.providerID
-    package nonisolated static let ruleRevision = 3
+    package nonisolated static let ruleRevision = 4
     private let morphology: KoreanMorphology
 
     package init(morphology: KoreanMorphology) { self.morphology = morphology }
@@ -31,6 +31,7 @@ package actor KoreanDiagnosticsProvider: WritingDiagnosticsProvider, WritingDiag
         let source = request.text as NSString, total = source.length
         guard !request.text.utf16.contains(0), request.scope == .document || total <= 4096 else { throw KoreanMorphologyError.invalidInput }
         var session = KoreanRuleSession(profile: request.styleProfile)
+        var voice = try KoreanVoiceSession(text: request.text, subjects: request.voiceSubjects, profile: request.styleProfile)
         defer { session.reset() }
         if total == 0 {
             try await emit(.init(diagnostics: [], assessedRange: .init(location: 0, length: 0), totalProseUTF16: 0, unsupportedRanges: []))
@@ -56,7 +57,8 @@ package actor KoreanDiagnosticsProvider: WritingDiagnosticsProvider, WritingDiag
             guard end > cursor, end <= range.upperBound else { throw KoreanMorphologyError.unsupportedInput }
             let ownership = NSRange(location: cursor, length: end - cursor)
             analysis.ownedRange = .init(location: cursor - range.location, length: ownership.length)
-            let findings = session.consume(analysis, proseOffset: range.location, final: final)
+            var findings = session.consume(analysis, proseOffset: range.location, final: final)
+            findings += try voice.consume(analysis, proseOffset: range.location)
             guard session.acceptsInput else { throw KoreanMorphologyError.invalidInput }
             try Task.checkCancellation()
             try await emit(.init(diagnostics: findings, assessedRange: .init(ownership), totalProseUTF16: total, unsupportedRanges: session.unsupportedRanges))

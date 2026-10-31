@@ -63,6 +63,8 @@ enum WritingDiagnosticsPresentation {
         case .repeatedSentenceStart: "반복되는 문장 시작"
         case .sentenceLength: "문장 길이"
         case .sentenceRhythm: "문장 리듬"
+        case .cadenceVariation: "문장 길이 변주"
+        case .characterVoice: "인물 말투"
         case .vagueWord, .overusedWord, .wordAlternative: "단어 제안"
         }
     }

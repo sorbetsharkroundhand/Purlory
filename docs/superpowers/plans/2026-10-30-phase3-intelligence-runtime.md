@@ -32,13 +32,13 @@
 
 ## 5. Kiwi cadence and attributed character voice
 
-- [ ] Add sufficiently sampled cadence/voice fixtures plus quiet ambiguous/short cases.
-- [ ] Implement bounded Kiwi analysis, distribution comparison and evidence anchors.
-- [ ] Integrate diagnostics/report/navigation with cursor and foreground priority fences.
-- [ ] Verify local/model-free behavior and writer preferences; review and commit.
+- [x] Add sufficiently sampled cadence/voice fixtures plus quiet ambiguous/short cases.
+- [x] Implement bounded Kiwi analysis, distribution comparison and evidence anchors.
+- [x] Integrate diagnostics/report/navigation with cursor and foreground priority fences.
+- [x] Verify local/model-free behavior and writer preferences; review and commit.
 
 ## 6. Integrated evidence
 
-- [ ] Review module/data/evidence/ownership invariants across the branch.
+- [x] Review module/data/evidence/ownership invariants across the branch.
 - [ ] Run module checks, swift build, swift test, swift build --product PurloryBench and diff checks.
 - [ ] Build developer bundle, run isolated launch/quit and record artifact identity and remaining owner acceptance.

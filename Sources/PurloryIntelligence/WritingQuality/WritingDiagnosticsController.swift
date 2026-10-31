@@ -25,6 +25,8 @@ package final class WritingDiagnosticsController: ObservableObject {
     private var epoch: UInt64 = 0
     private var profileRevision: UInt64 = 0
     private var profileBytes: Data?
+    private var voiceBytes: Data?
+    private var voiceSubjects: [WritingVoiceSubject] = []
     private var record = WritingStyleRecord()
     private var profileReadable = true
     private var verifiedSourceRevision: String?
@@ -67,6 +69,7 @@ package final class WritingDiagnosticsController: ObservableObject {
             state.coverage.dirty = wholeSource
         }
         readProfile(next, force: changedDocument)
+        readVoiceSubjects(next, force: changedDocument)
         refreshState()
     }
 
@@ -258,8 +261,9 @@ package final class WritingDiagnosticsController: ObservableObject {
                     try await channel.waitForCapacity()
                     await waitForLocal()
                     guard check(), !Task.isCancelled else { throw CancellationError() }
-                    let request = WritingDiagnosticsRequest(projectID: target.identity.key.projectID, documentID: target.identity.key.documentID,
+                    var request = WritingDiagnosticsRequest(projectID: target.identity.key.projectID, documentID: target.identity.key.documentID,
                         text: prepared.1, languageTag: profile.languageTag ?? "ko", scope: .document, styleProfile: profile.profile)
+                    request.voiceSubjects = Self.declaredVoiceSubjects(in: target)
                     try await provider.analyzeChunks(request) { chunk in
                         guard await check(), !Task.isCancelled else { throw CancellationError() }
                         let update = try await mapper.consume(chunk)
@@ -324,6 +328,27 @@ package final class WritingDiagnosticsController: ObservableObject {
             state.coverage.dirty = wholeSource; cache.clear()
         }
     }
+    private func readVoiceSubjects(_ next: ProjectDocumentSnapshot, force: Bool) {
+        let bytes = next.mode == .fiction && next.kind == .manuscript
+            ? next.userData[WriterDocumentData.key(for: next.identity.key.documentID)] : nil
+        guard force || bytes != voiceBytes else { return }
+        voiceBytes = bytes
+        let subjects = Self.declaredVoiceSubjects(in: next)
+        guard subjects != voiceSubjects else { return }
+        voiceSubjects = subjects; profileRevision &+= 1; cache.clear()
+        state.findings.removeAll(); state.coverage.assessed.removeAll(); assessedWindows.removeAll()
+        state.coverage.dirty = wholeSource; resultBudgetExhausted = false
+    }
+    /// Decode only changed author metadata, never manuscript bytes on typing.
+    private static func declaredVoiceSubjects(in source: ProjectDocumentSnapshot) -> [WritingVoiceSubject] {
+        guard source.mode == .fiction, source.kind == .manuscript,
+              let writer = try? WriterDocumentData.decode(source.userData[WriterDocumentData.key(for: source.identity.key.documentID)],
+                documentID: source.identity.key.documentID), writer.characters.count <= 128 else { return [] }
+        return writer.characters.filter { $0.autoRegistered != true }.map {
+            .init(id: $0.id, name: $0.name, aliases: $0.aliases.split(separator: ",").map(String.init))
+        }
+    }
+
     private func stamp(digest: String) -> WritingDiagnosticsStamp? {
         guard let boundIdentity else { return nil }
         return .init(runtime: boundIdentity, nativeRevision: nativeRevision, profileRevision: profileRevision,
@@ -365,8 +390,9 @@ package final class WritingDiagnosticsController: ObservableObject {
                     var assessed = true
                     if let hit = self.cache.value(for: key, text: window.text) { diagnostics = hit }
                     else {
-                        let request = WritingDiagnosticsRequest(projectID: ownedStamp.runtime.key.projectID, documentID: ownedStamp.runtime.key.documentID,
+                        var request = WritingDiagnosticsRequest(projectID: ownedStamp.runtime.key.projectID, documentID: ownedStamp.runtime.key.documentID,
                             text: window.text, languageTag: self.language, scope: .local, styleProfile: self.record.profile)
+                        request.voiceSubjects = self.voiceSubjects
                         guard let result = await self.engine.analyze(request), self.owns(ownedEpoch, ownedStamp) else { return }
                         diagnostics = result.diagnostics
                         assessed = !result.providerOutcomes.isEmpty && result.providerOutcomes.allSatisfy { $0.status == .success }

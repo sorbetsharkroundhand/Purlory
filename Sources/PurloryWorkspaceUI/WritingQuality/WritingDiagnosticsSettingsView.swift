@@ -25,8 +25,8 @@ struct WritingDiagnosticsSettingsView: View {
     }
     @ViewBuilder
     private func controls(_ record: WritingStyleRecord, identity: ProjectRuntimeIdentity) -> some View {
-        sensitivity("반복 표현", value: record.profile.repetitionSensitivity, identity: identity, keyPath: \.repetitionSensitivity)
-        sensitivity("대화문 반복", value: record.profile.dialogueSensitivity, identity: identity, keyPath: \.dialogueSensitivity)
+        sensitivity("반복 표현·문장 호흡", value: record.profile.repetitionSensitivity, identity: identity, keyPath: \.repetitionSensitivity)
+        sensitivity("대화문 반복·말투", value: record.profile.dialogueSensitivity, identity: identity, keyPath: \.dialogueSensitivity)
         Picker("검사 언어", selection: Binding(get: { record.languageTag ?? "ko" }, set: { value in
             update(identity) { $0.languageTag = value }
         })) {
