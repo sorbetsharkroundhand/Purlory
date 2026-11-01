@@ -40,5 +40,11 @@
 ## 6. Integrated evidence
 
 - [x] Review module/data/evidence/ownership invariants across the branch.
-- [ ] Run module checks, swift build, swift test, swift build --product PurloryBench and diff checks.
-- [ ] Build developer bundle, run isolated launch/quit and record artifact identity and remaining owner acceptance.
+- [x] Run module checks, swift build, swift test, swift build --product PurloryBench and diff checks.
+- [x] Build developer bundle, run isolated launch/quit and record artifact identity and remaining owner acceptance.
+
+Final evidence: `docs/release/phase3-intelligence-runtime-verification-2026-11-01.md`.
+The final batch also fixed SwiftUI accessibility identifier inheritance and stale
+binding values overwriting rapid native input. Targeted native UI checks passed;
+the complete shell UI batch remains unverified because its foreground guard stopped
+the run. See the report for the exact scope and remaining human acceptance.

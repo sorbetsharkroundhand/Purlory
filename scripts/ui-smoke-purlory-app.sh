@@ -356,6 +356,13 @@ on run argv
             set searchField to my findElement(rootElement, "AXIdentifier", "purlory.workspace.search.query", 30)
             if searchField is missing value then error "Project search field missing"
             if not (value of attribute "AXFocused" of searchField) then error "Project search focus missing"
+        else if operation is "wake-tools" then
+            -- Typing intentionally hides chrome until a pointer interaction.
+            -- Wake it in the title-bar area without moving the manuscript caret.
+            my activateTarget(targetProcess)
+            set origin to position of rootElement
+            set extent to size of rootElement
+            tell targetProcess to click at {(item 1 of origin) + (item 1 of extent) div 2, (item 2 of origin) + 12}
         else if operation is "resize" then
             set size of rootElement to {expectedValue as integer, 700}
         else if operation is "escape" then
@@ -452,7 +459,7 @@ JXA
 ui() {
     owned_pid || fail "격리 실행 파일 PID 확인 실패"
     osascript "$SMOKE_ROOT/ui.applescript" "$PID" "$1" "${2:-}" "${3:-}" >/dev/null
-    case "$1" in press|resize|recovery-press) sleep 0.3 ;; esac
+    case "$1" in press|resize|recovery-press|wake-tools) sleep 0.3 ;; esac
 }
 
 wait_ui() {
@@ -469,6 +476,7 @@ wait_ui() {
 
 open_pouch_menu() {
     if ! osascript "$SMOKE_ROOT/ui.applescript" "$PID" present "purlory.workspace.pouch.more" >/dev/null 2>&1; then
+        ui wake-tools ""
         ui press "purlory.writer-tools.compatibility"
     fi
     ui press "purlory.workspace.pouch.more"
