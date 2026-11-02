@@ -25,28 +25,28 @@
 
 **Files:** WorkspacePointerSpring.swift, WorkspacePouchController.swift, WorkspaceHTMLStyle.swift, WorkspaceMotionContinuityTests.swift.
 **Interfaces:** Existing move/beginDrag/updateDrag and NSButton.highlight.
-- [ ] Add failing native tests for repeated pointer moves, pouch grab-offset tracking and immediate press color.
-- [ ] Observe the failures, then remove spring following during active drags and add pressed color feedback.
-- [ ] Verify both motion modes and existing drag/focus regressions, then commit.
+- [x] Add failing native tests for repeated pointer moves, pouch grab-offset tracking and immediate press color.
+- [x] Observe the failures, then remove spring following during active drags and add pressed color feedback.
+- [x] Verify both motion modes and existing drag/focus regressions, then commit.
 
 ### Task 2: Spring workspace reflow
 
 **Files:** New WorkspaceSpring.swift; SpatialWorkspaceCanvas.swift; WorkspaceShellView.swift; motion tests.
 **Interfaces:** A critically damped scalar/rect spring (response 0.32 s) retaining position/velocity; existing frameAnimationTime and stepFrames.
-- [ ] Add a native regression proving a reversed reflow initially retains its previous velocity; observe failure.
-- [ ] Implement analytic scalar/rect spring and reflow retargeting. Share the response/damping policy with navigator motion.
-- [ ] Verify no-overshoot settling, cadence equivalence and delayed-frame recovery, plus reflow/drag identity regressions; commit.
+- [x] Add a native regression proving a reversed reflow initially retains its previous velocity; observe failure.
+- [x] Implement analytic scalar/rect spring and reflow retargeting. Share the response/damping policy with navigator motion.
+- [x] Verify no-overshoot settling, cadence equivalence and delayed-frame recovery, plus reflow/drag identity regressions; commit.
 
 ### Task 3: Spring pouch presentation
 
 **Files:** WorkspacePouchController.swift, WorkspacePouchTests.swift.
 **Interfaces:** The same spring values plus existing snapshotAnimationTime/stepSnapshotAnimation.
-- [ ] Add a failing velocity-handoff reversal test and preserve existing frame/opacity/focus/detach coverage.
-- [ ] Carry frame/opacity/blur spring state through reversals and finish safely under Reduce Motion.
-- [ ] Update fixed-time endpoint assertions to the new bounded spring-settling contract; verify and commit.
+- [x] Add a failing velocity-handoff reversal test and preserve existing frame/opacity/focus/detach coverage.
+- [x] Carry frame/opacity/blur spring state through reversals and finish safely under Reduce Motion.
+- [x] Update fixed-time endpoint assertions to the new bounded spring-settling contract; verify and commit.
 
 ### Delivery
 
-- [ ] Review the whole change inline against the spec and editor invariants.
-- [ ] Run the full Swift suite, debug/bench builds and module-boundary check.
-- [ ] Record exact evidence and remaining owner feel checks; preserve the local branch.
+- [x] Review the whole change inline against the spec and editor invariants.
+- [x] Run the full Swift suite, debug/bench builds and module-boundary check.
+- [x] Record exact evidence and remaining owner feel checks; preserve the local branch.
