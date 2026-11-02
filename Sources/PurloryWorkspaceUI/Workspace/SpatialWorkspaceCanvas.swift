@@ -336,6 +336,13 @@ final class SpatialWorkspaceCanvasView: NSView {
         if !fromNavigator, let id = tile.documentID { model.onActivate?(id) }
         var base = geometry
         for (key, host) in hosts where !host.isHidden { base.tiles[key] = host.frame }
+        for (index, column) in model.presentationLayout.columns.enumerated() where base.columns.indices.contains(index) {
+            let frames = column.slots.compactMap { base.tiles[$0.tile] }
+            if let first = frames.first {
+                base.columns[index] = frames.dropFirst().reduce(first) { $0.union($1) }
+            }
+        }
+        base.contentSize = frame.size
         model.beginDrag(
             tile,
             at: canvasPoint(for: event),

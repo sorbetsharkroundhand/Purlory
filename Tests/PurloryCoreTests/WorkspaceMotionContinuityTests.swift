@@ -24,6 +24,9 @@ import XCTest
         await h.layout()
         XCTAssertEqual(host.frame, visible, "Pointer-down must freeze the visible frame, not finish the reflow")
         XCTAssertEqual(model.baseDragGeometry?.tiles[.document(id)], visible)
+        let column = try XCTUnwrap(model.layout.columns.firstIndex { $0.slots.contains { $0.tile == .document(id) } })
+        XCTAssertEqual(model.baseDragGeometry?.columns[column], visible,
+            "Column drop boundaries must follow the same visible frame as their tile")
         canvas.finishPanelDrag(try event(.leftMouseUp, in: canvas, at: point))
         time = 1; canvas.stepFrames(); await h.layout()
         XCTAssertEqual(host.frame, destination)
