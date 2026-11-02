@@ -173,7 +173,7 @@ final class SpatialWorkspaceCanvasView: NSView {
                 }
             }
             // Invariant: Keep all frames strictly unchanged while dragging.
-            if model.isDragging {
+            if model.isDragging || dragTracking {
                 continue
             }
             guard targetFrames[tile] != rect || newTiles.contains(tile) else { continue }
@@ -239,10 +239,16 @@ final class SpatialWorkspaceCanvasView: NSView {
             dragOverlay.frame = CGRect(origin: .zero, size: size)
         }
     }
-    private func stopFrameTransitions() {
+    private func stopFrameTransitions(finish: Bool = true) {
         frameTimer?.invalidate(); frameTimer = nil
+        if !finish {
+            for (tile, host) in hosts where frameTransitions[ObjectIdentifier(host)] != nil {
+                targetFrames.removeValue(forKey: tile)
+            }
+        }
         for value in frameTransitions.values {
-            if value.remove { value.view.removeFromSuperview() } else { value.view.frame = value.target }
+            if value.remove { value.view.removeFromSuperview() }
+            else if finish { value.view.frame = value.target }
         }
         frameTransitions.removeAll()
     }
@@ -322,10 +328,11 @@ final class SpatialWorkspaceCanvasView: NSView {
         guard let model, event.buttonNumber == 0 else { return }
         model.cancelDrag()
         stopDragPresentation()
-        stopFrameTransitions()
-        animateLayout = false; layoutTiles()
+        stopFrameTransitions(finish: false)
+        animateLayout = false
         dragSequence &+= 1
         grabbedTile = tile; grabStart = screenPoint(for: event); dragTracking = true
+        layoutTiles()
         if !fromNavigator, let id = tile.documentID { model.onActivate?(id) }
         var base = geometry
         for (key, host) in hosts where !host.isHidden { base.tiles[key] = host.frame }
