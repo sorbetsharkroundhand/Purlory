@@ -232,7 +232,6 @@ final class WorkspacePouchButton: WorkspaceHTMLButton {
         highlight(false)
         if controller?.endDrag(at: screenPoint(event)) != true { performClick(nil) }
     }
-    override func highlight(_ flag: Bool) { super.highlight(flag); refresh() }
     override func refresh() {
         super.refresh()
         let active = selected || isHighlighted
@@ -312,6 +311,7 @@ struct WorkspacePouchBridge: NSViewRepresentable {
         if let window = view.window { context.coordinator.attach(to: window, from: view) }
         let controller = context.coordinator.controller
         controller.reduceMotion = accessibilityOptions.resolvedReduceMotion(system: systemReduceMotion)
+        controller.accessibilityOptions = accessibilityOptions
         controller.reduceTransparency = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency || accessibilityOptions.reduceTransparency
         controller.theme = theme; controller.actions = actions; controller.extraActions = extraActions
         controller.targetTitle = targetTitle

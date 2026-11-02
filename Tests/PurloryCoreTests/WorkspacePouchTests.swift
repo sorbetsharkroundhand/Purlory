@@ -101,15 +101,15 @@ import XCTest
         animationTime = 0.06; pouch.stepSnapshotAnimation()
         XCTAssertGreaterThan(shrinking.frame.width, original.width * 0.03)
         XCTAssertLessThan(shrinking.frame.width, original.width)
-        animationTime = 0.2; pouch.stepSnapshotAnimation()
+        animationTime = 0.8; pouch.stepSnapshotAnimation()
         XCTAssertNil(pouch.transition)
         XCTAssertTrue(try XCTUnwrap(pouch.panel).isVisible)
         pouch.restore()
         let expanding = try XCTUnwrap(pouch.transition)
-        animationTime = 0.27; pouch.stepSnapshotAnimation()
+        animationTime = 0.88; pouch.stepSnapshotAnimation()
         XCTAssertGreaterThan(expanding.frame.width, original.width * 0.03)
         XCTAssertLessThan(expanding.frame.width, original.width)
-        animationTime = 0.4; pouch.stepSnapshotAnimation()
+        animationTime = 1.6; pouch.stepSnapshotAnimation()
         XCTAssertNil(pouch.transition)
         XCTAssertEqual(h.window.alphaValue, 1)
         XCTAssertTrue(h.window.firstResponder === editor)
@@ -144,6 +144,123 @@ import XCTest
         XCTAssertFalse(interrupted.isVisible)
         XCTAssertNil(pouch.transition)
         XCTAssertNil(pouch.panel)
+        XCTAssertEqual(h.window.alphaValue, 1)
+    }
+
+    func testRepeatedSnapshotReversalPreservesVisibleFrameAndOpacity() async throws {
+        let h = try await FramedWorkspaceHarness(width: 1000, reduceMotion: false)
+        defer { h.close() }
+        h.window.makeKeyAndOrderFront(nil)
+        let editor = try await h.editor()
+        h.window.makeFirstResponder(editor)
+        editor.setSelectedRange(NSRange(location: 1, length: 2))
+        let pouch = try XCTUnwrap(h.requests.pouch)
+        var time = 0.0
+        pouch.snapshotAnimationTime = { time }
+        pouch.collapse()
+        time = 0.03; pouch.stepSnapshotAnimation()
+        let shrinking = try XCTUnwrap(pouch.transition)
+        let firstFrame = shrinking.frame, firstAlpha = shrinking.alphaValue
+        pouch.restore()
+        let expanding = try XCTUnwrap(pouch.transition)
+        XCTAssertEqual(expanding.frame, firstFrame)
+        XCTAssertEqual(expanding.alphaValue, firstAlpha, accuracy: 0.001)
+        time = 0.25; pouch.stepSnapshotAnimation()
+        XCTAssertGreaterThan(expanding.frame.width, firstFrame.width)
+        let secondFrame = expanding.frame, secondAlpha = expanding.alphaValue
+        pouch.collapse()
+        let shrinkingAgain = try XCTUnwrap(pouch.transition)
+        XCTAssertEqual(shrinkingAgain.frame, secondFrame)
+        XCTAssertEqual(shrinkingAgain.alphaValue, secondAlpha, accuracy: 0.001)
+        time = 0.5; pouch.stepSnapshotAnimation()
+        XCTAssertLessThan(shrinkingAgain.frame.width, secondFrame.width)
+        let thirdFrame = shrinkingAgain.frame, thirdAlpha = shrinkingAgain.alphaValue
+        pouch.restore()
+        XCTAssertEqual(pouch.transition?.frame, thirdFrame)
+        XCTAssertEqual(try XCTUnwrap(pouch.transition).alphaValue, thirdAlpha, accuracy: 0.001)
+        time = 1.5; pouch.stepSnapshotAnimation()
+        XCTAssertNil(pouch.transition)
+        XCTAssertEqual(h.window.alphaValue, 1)
+        XCTAssertTrue(h.window.firstResponder === editor)
+        XCTAssertEqual(editor.selectedRange(), NSRange(location: 1, length: 2))
+    }
+
+    func testSnapshotReversalCarriesVelocityBeforeChangingDirection() async throws {
+        let h = try await FramedWorkspaceHarness(width: 1000, reduceMotion: false)
+        defer { h.close() }
+        h.window.makeKeyAndOrderFront(nil)
+        let pouch = try XCTUnwrap(h.requests.pouch)
+        var time = 0.0
+        pouch.snapshotAnimationTime = { time }
+        pouch.collapse()
+        time = 0.04; pouch.stepSnapshotAnimation()
+        let previous = try XCTUnwrap(pouch.transition).frame.width
+        time = 0.05; pouch.stepSnapshotAnimation()
+        let shrinking = try XCTUnwrap(pouch.transition)
+        let width = shrinking.frame.width, alpha = shrinking.alphaValue
+        XCTAssertLessThan(width, previous)
+        pouch.restore()
+        time = 0.051; pouch.stepSnapshotAnimation()
+        let reversed = try XCTUnwrap(pouch.transition)
+        XCTAssertLessThan(reversed.frame.width, width,
+            "Reversal must carry the current shrinking velocity before decelerating")
+        XCTAssertLessThan(reversed.alphaValue, alpha)
+        time = 1; pouch.stepSnapshotAnimation()
+        XCTAssertNil(pouch.transition)
+        XCTAssertEqual(h.window.alphaValue, 1)
+    }
+
+    func testEnablingReducedMotionFinishesAnActiveRestoreWithoutAnotherCommand() async throws {
+        let h = try await FramedWorkspaceHarness(reduceMotion: false)
+        defer { h.close() }
+        h.window.makeKeyAndOrderFront(nil)
+        let pouch = try XCTUnwrap(h.requests.pouch)
+        var time = 0.0
+        pouch.snapshotAnimationTime = { time }
+        pouch.collapse()
+        time = 1; pouch.stepSnapshotAnimation()
+        pouch.restore()
+        time = 1.04; pouch.stepSnapshotAnimation()
+        XCTAssertNotNil(pouch.transition)
+        pouch.reduceMotion = true
+        pouch.stepSnapshotAnimation()
+        XCTAssertNil(pouch.transition)
+        XCTAssertTrue(h.window.isVisible)
+        XCTAssertEqual(h.window.alphaValue, 1)
+    }
+
+    func testSnapshotBlurSharesTheReversedMotionState() async throws {
+        let h = try await FramedWorkspaceHarness(reduceMotion: false)
+        defer { h.close() }
+        h.window.makeKeyAndOrderFront(nil)
+        let pouch = try XCTUnwrap(h.requests.pouch)
+        var time = 0.0
+        pouch.snapshotAnimationTime = { time }
+        func radius() throws -> Double {
+            let layer = try XCTUnwrap(pouch.transition?.contentView?.layer)
+            return try XCTUnwrap(layer.value(forKeyPath: "filters.collapseBlur.inputRadius") as? NSNumber).doubleValue
+        }
+        pouch.collapse()
+        time = 0.05; pouch.stepSnapshotAnimation()
+        let before = try radius()
+        XCTAssertGreaterThan(before, 0); XCTAssertLessThan(before, 12)
+        pouch.restore()
+        XCTAssertEqual(try radius(), before, accuracy: 0.000001)
+        time = 0.051; pouch.stepSnapshotAnimation()
+        XCTAssertGreaterThan(try radius(), before)
+    }
+
+    func testReducedMotionRestoreCancelsAnInFlightSnapshot() async throws {
+        let h = try await FramedWorkspaceHarness(reduceMotion: false)
+        defer { h.close() }
+        h.window.makeKeyAndOrderFront(nil)
+        let pouch = try XCTUnwrap(h.requests.pouch)
+        pouch.collapse()
+        XCTAssertNotNil(pouch.transition)
+        pouch.reduceMotion = true
+        pouch.restore()
+        XCTAssertNil(pouch.transition)
+        XCTAssertTrue(h.window.isVisible)
         XCTAssertEqual(h.window.alphaValue, 1)
     }
 

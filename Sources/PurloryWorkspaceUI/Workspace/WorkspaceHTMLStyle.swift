@@ -50,10 +50,12 @@ class WorkspaceHTMLButton: NSButton {
     }
     override func mouseEntered(with event: NSEvent) { hovered = true; refresh() }
     override func mouseExited(with event: NSEvent) { hovered = false; refresh() }
+    override func highlight(_ flag: Bool) { super.highlight(flag); refresh() }
     func refresh() {
         imagePosition = title.isEmpty ? .imageOnly : .imageLeading
         layer?.cornerRadius = radius
-        let fill = selected ? theme.activeBg : (hovered ? theme.hover : (chip ? theme.chip : .clear))
+        let fill = isEnabled && isHighlighted ? theme.ink.withAlphaComponent(0.08)
+            : (selected ? theme.activeBg : (hovered ? theme.hover : (chip ? theme.chip : .clear)))
         layer?.backgroundColor = fill.cgColor
         contentTintColor = selected ? theme.blue : (hovered ? theme.ink : theme.workspaceMuted)
         needsDisplay = true
