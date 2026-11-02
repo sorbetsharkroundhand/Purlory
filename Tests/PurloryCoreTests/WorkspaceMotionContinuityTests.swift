@@ -88,6 +88,45 @@ import XCTest
         XCTAssertTrue(retained === editor)
     }
 
+    func testReversingReflowCarriesItsVisibleVelocity() async throws {
+        let h = try await FramedWorkspaceHarness(width: 1440, reduceMotion: false)
+        defer { h.close() }
+        h.window.makeKeyAndOrderFront(nil)
+        let model = try XCTUnwrap(h.requests.spatialWorkspace), canvas = try XCTUnwrap(model.canvas)
+        let id = try XCTUnwrap(h.fixture.session.selectedDocumentID)
+        let host = try XCTUnwrap(canvas.hosts[.document(id)])
+        let original = host.frame
+        var time = 0.0
+        canvas.frameAnimationTime = { time }
+        model.toggle(.characters); await h.layout()
+        time = 0.04; canvas.stepFrames()
+        let previousWidth = host.frame.width
+        time = 0.05; canvas.stepFrames()
+        let reversing = host.frame
+        XCTAssertLessThan(reversing.width, previousWidth)
+        model.toggle(.characters); await h.layout()
+        XCTAssertEqual(host.frame, reversing)
+        time = 0.051; canvas.stepFrames()
+        XCTAssertLessThan(host.frame.width, reversing.width,
+            "Retargeting must carry the current velocity before gently reversing")
+        time = 1; canvas.stepFrames()
+        XCTAssertEqual(host.frame, original)
+    }
+
+    func testEnablingReducedMotionFinishesAnActiveReflow() async throws {
+        let h = try await FramedWorkspaceHarness(width: 1440, reduceMotion: false)
+        defer { h.close() }
+        let model = try XCTUnwrap(h.requests.spatialWorkspace), canvas = try XCTUnwrap(model.canvas)
+        let id = try XCTUnwrap(h.fixture.session.selectedDocumentID)
+        var time = 0.0
+        canvas.frameAnimationTime = { time }
+        model.toggle(.characters); await h.layout()
+        time = 0.04; canvas.stepFrames()
+        canvas.reduceMotion = true
+        canvas.stepFrames()
+        XCTAssertEqual(canvas.hosts[.document(id)]?.frame, canvas.geometry.tiles[.document(id)])
+    }
+
     func testOldSnapshotCompletionCannotBrightenANewerDrag() async throws {
         let h = try await FramedWorkspaceHarness(width: 1440, reduceMotion: false)
         defer { h.close() }

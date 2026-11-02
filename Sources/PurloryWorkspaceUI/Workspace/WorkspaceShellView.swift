@@ -1,9 +1,5 @@
 import SwiftUI
 
-enum WorkspaceMotion {
-    static let navigator = Animation.spring(response: 0.3, dampingFraction: 0.9)
-}
-
 /// The shell owns presentation only; document lifetime, storage and indexing belong to the session.
 struct WorkspaceShellView<Navigator: View, Editor: View, Context: View, Rail: View>: View {
     @Binding var navigatorWidth: Double

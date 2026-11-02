@@ -56,10 +56,9 @@ final class SpatialWorkspaceCanvasView: NSView {
     private var targetFrames: [WorkspaceTileID: CGRect] = [:]
     private struct FrameTransition {
         let view: NSView
-        let origin: CGRect
         let target: CGRect
-        let began: Double
-        let duration: Double
+        var spring: WorkspaceSpringRect
+        var updated: Double
         let remove: Bool
     }
     // The resolved SwiftUI preference owns motion policy. The clock seam permits
@@ -183,7 +182,7 @@ final class SpatialWorkspaceCanvasView: NSView {
                     host.alphaValue = 0
                     WorkspaceHTMLStyle.animate(duration) { host.animator().alphaValue = 1 }
                 }
-                transition(host, to: rect, duration: duration)
+                transition(host, to: rect)
             } else {
                 frameTransitions.removeValue(forKey: ObjectIdentifier(host)); host.frame = rect
             }
@@ -201,9 +200,12 @@ final class SpatialWorkspaceCanvasView: NSView {
         model.pouchGeometryDidChange?()
     }
 
-    private func transition(_ view: NSView, to target: CGRect, duration: Double, remove: Bool = false) {
-        frameTransitions[ObjectIdentifier(view)] = .init(view: view, origin: view.frame, target: target,
-            began: frameAnimationTime(), duration: duration, remove: remove)
+    private func transition(_ view: NSView, to target: CGRect, remove: Bool = false) {
+        let key = ObjectIdentifier(view)
+        var spring = frameTransitions[key]?.spring ?? WorkspaceSpringRect(frame: view.frame)
+        spring.frame = view.frame
+        frameTransitions[key] = .init(view: view, target: target, spring: spring,
+            updated: frameAnimationTime(), remove: remove)
         guard frameTimer == nil else { return }
         frameTimer = WorkspaceDisplayClock(view: self) { [weak self] in
             guard let self else { return false }
@@ -213,15 +215,16 @@ final class SpatialWorkspaceCanvasView: NSView {
     }
     func stepFrames() {
         let now = frameAnimationTime()
-        for (key, value) in frameTransitions {
-            let progress = min(1, (now - value.began) / value.duration)
-            let t = WorkspaceHTMLStyle.progress(progress)
-            func mix(_ a: CGFloat, _ b: CGFloat) -> CGFloat { a + (b - a) * t }
-            value.view.frame = CGRect(x: mix(value.origin.minX, value.target.minX), y: mix(value.origin.minY, value.target.minY),
-                width: mix(value.origin.width, value.target.width), height: mix(value.origin.height, value.target.height))
-            if progress >= 1 {
+        for (key, var value) in frameTransitions {
+            value.spring.advance(to: value.target, elapsed: now - value.updated)
+            value.updated = now
+            if reduceMotion || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion || value.spring.isSettled(at: value.target) {
+                value.view.frame = value.target
                 if value.remove { value.view.removeFromSuperview() }
                 frameTransitions.removeValue(forKey: key)
+            } else {
+                value.view.frame = value.spring.frame
+                frameTransitions[key] = value
             }
         }
         updateResizeHandles()
