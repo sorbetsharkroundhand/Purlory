@@ -71,18 +71,29 @@ struct WorkspacePouchAction {
     private(set) var transition: NSPanel?
     private var transitionGeneration: UInt64 = 0
     private var collapsedImage: NSImage?
+    private struct SnapshotPresentation {
+        var frame: WorkspaceSpringRect
+        var alpha: WorkspaceSpringValue
+        var blur: WorkspaceSpringValue
+    }
     private struct SnapshotAnimation {
         weak var window: NSWindow?
         let ghost: NSPanel
-        let from: CGRect
         let to: CGRect
-        let began: Double
-        let duration: Double
-        let fromAlpha: CGFloat
+        var presentation: SnapshotPresentation
+        var updated: Double
+        let blurLayer: CALayer?
         let expanding: Bool
         let generation: UInt64
     }
     private var snapshotAnimation: SnapshotAnimation?
+    private var visibleSnapshotPresentation: SnapshotPresentation? {
+        guard let animation = snapshotAnimation else { return nil }
+        var presentation = animation.presentation
+        presentation.frame.frame = animation.ghost.frame
+        presentation.alpha.value = animation.ghost.alphaValue
+        return presentation
+    }
     private var snapshotClock: WorkspaceDisplayClock?
     // Share the canvas display clock and permit exact intermediate-frame checks.
     var snapshotAnimationTime: () -> Double = { ProcessInfo.processInfo.systemUptime }
@@ -240,7 +251,7 @@ struct WorkspacePouchAction {
 
     func collapse() {
         guard !isCollapsed, let window, let panel else { return }
-        let presentation = transition.map { (frame: $0.frame, alpha: $0.alphaValue) }
+        let presentation = visibleSnapshotPresentation
         model.pouchSection = nil
         releaseContentToPanel()
         target = CGPoint(x: panel.frame.midX - 22, y: panel.frame.midY - 22)
@@ -265,7 +276,7 @@ struct WorkspacePouchAction {
     }
     func restore() {
         guard isCollapsed, let window else { return }
-        let presentation = transition.map { (frame: $0.frame, alpha: $0.alphaValue) }
+        let presentation = visibleSnapshotPresentation
         let origin = panel?.frame ?? CGRect(origin: target, size: CGSize(width: 44, height: 44))
         stopDragTracking(); cancelTransition()
         isCollapsed = false; isDragging = false; start = nil
@@ -335,7 +346,7 @@ struct WorkspacePouchAction {
     }
     private func step() {
         let now = ProcessInfo.processInfo.systemUptime, elapsed = now - lastStep; lastStep = now
-        spring.step(target: target, stiffness: isDragging ? 640 : 280, damping: isDragging ? 50 : 34, elapsed: elapsed)
+        spring.step(target: target, stiffness: 280, damping: 34, elapsed: elapsed)
         panel?.setFrameOrigin(spring.position)
         if spring.isSettled(at: target) {
             timer?.invalidate(); timer = nil
@@ -438,7 +449,7 @@ struct WorkspacePouchAction {
     }
 
     private func animateSnapshot(of window: NSWindow, toward rect: CGRect, expandingFrom origin: CGRect? = nil,
-                                 startingFrom presentation: (frame: CGRect, alpha: CGFloat)? = nil) {
+                                 startingFrom presentation: SnapshotPresentation? = nil) {
         let image: NSImage
         if origin != nil, let cached = collapsedImage {
             image = cached
@@ -454,31 +465,27 @@ struct WorkspacePouchAction {
             if origin == nil { collapsedImage = image }
         }
         let generation = transitionGeneration
-        let frame = presentation?.frame ?? origin ?? window.frame
-        let ghost = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        let initial = presentation ?? SnapshotPresentation(frame: .init(frame: origin ?? window.frame),
+            alpha: .init(value: origin == nil ? 1 : 0), blur: .init(value: origin == nil ? 0 : 12))
+        let ghost = NSPanel(contentRect: initial.frame.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         ghost.isReleasedWhenClosed = false; ghost.ignoresMouseEvents = true; ghost.level = .floating
         ghost.isOpaque = false; ghost.backgroundColor = .clear; ghost.hasShadow = false
         ghost.hidesOnDeactivate = false; ghost.animationBehavior = .none
         ghost.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        let imageView = NSImageView(frame: CGRect(origin: .zero, size: window.frame.size))
+        let imageView = NSImageView(frame: CGRect(origin: .zero, size: initial.frame.frame.size))
         imageView.image = image; imageView.imageScaling = .scaleAxesIndependently
         imageView.autoresizingMask = [.width, .height]
         imageView.wantsLayer = true
         let blur = CIFilter(name: "CIGaussianBlur")
         blur?.name = "collapseBlur"
-        blur?.setValue(origin == nil ? 12 : 0, forKey: kCIInputRadiusKey)
+        blur?.setValue(initial.blur.value, forKey: kCIInputRadiusKey)
         if let blur { imageView.layer?.filters = [blur] }
-        let blurAnimation = CABasicAnimation(keyPath: "filters.collapseBlur.inputRadius")
-        blurAnimation.fromValue = origin == nil ? 0 : 10; blurAnimation.toValue = origin == nil ? 12 : 0
-        blurAnimation.duration = origin == nil ? 0.12 : 0.14
-        blurAnimation.timingFunction = origin == nil ? CAMediaTimingFunction(controlPoints: 0.4, 0, 0.2, 1) : WorkspaceHTMLStyle.calm
-        imageView.layer?.add(blurAnimation, forKey: "pouch.blur")
         ghost.contentView = imageView; transition = ghost
-        ghost.alphaValue = presentation?.alpha ?? (origin == nil ? 1 : 0)
+        ghost.alphaValue = initial.alpha.value
         if origin != nil { window.alphaValue = 0 }
         ghost.orderFrontRegardless()
-        snapshotAnimation = SnapshotAnimation(window: window, ghost: ghost, from: ghost.frame,
-            to: rect, began: snapshotAnimationTime(), duration: origin == nil ? 0.12 : 0.14, fromAlpha: ghost.alphaValue,
+        snapshotAnimation = SnapshotAnimation(window: window, ghost: ghost, to: rect, presentation: initial,
+            updated: snapshotAnimationTime(), blurLayer: blur == nil ? nil : imageView.layer,
             expanding: origin != nil, generation: generation)
         snapshotClock = WorkspaceDisplayClock(view: imageView) { [weak self] in
             guard let self else { return false }
@@ -488,19 +495,27 @@ struct WorkspacePouchAction {
     }
 
     func stepSnapshotAnimation() {
-        guard let animation = snapshotAnimation,
+        guard var animation = snapshotAnimation,
               transitionGeneration == animation.generation, transition === animation.ghost else { return }
-        let elapsed = max(0, (snapshotAnimationTime() - animation.began) / animation.duration)
-        let t = animation.expanding ? WorkspaceHTMLStyle.progress(elapsed)
-            : WorkspaceHTMLStyle.progress(elapsed, x1: 0.4, y1: 0, x2: 0.2, y2: 1)
-        let from = animation.from, to = animation.to
-        animation.ghost.setFrame(CGRect(x: from.minX + (to.minX - from.minX) * t,
-            y: from.minY + (to.minY - from.minY) * t,
-            width: from.width + (to.width - from.width) * t,
-            height: from.height + (to.height - from.height) * t), display: true)
+        let now = snapshotAnimationTime(), elapsed = now - animation.updated
+        animation.updated = now
         let targetAlpha: CGFloat = animation.expanding ? 1 : 0
-        animation.ghost.alphaValue = animation.fromAlpha + (targetAlpha - animation.fromAlpha) * t
-        guard elapsed >= 1 else { return }
+        let targetBlur: CGFloat = animation.expanding ? 0 : 12
+        animation.presentation.frame.advance(to: animation.to, elapsed: elapsed)
+        animation.presentation.alpha.advance(to: targetAlpha, elapsed: elapsed)
+        animation.presentation.blur.advance(to: targetBlur, elapsed: elapsed)
+        let settled = animation.presentation.frame.isSettled(at: animation.to)
+            && animation.presentation.alpha.isSettled(at: targetAlpha, valueTolerance: 0.002, velocityTolerance: 0.02)
+            && animation.presentation.blur.isSettled(at: targetBlur, valueTolerance: 0.02, velocityTolerance: 0.1)
+        if !reduceMotion && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion && !settled {
+            animation.ghost.setFrame(animation.presentation.frame.frame, display: true)
+            animation.ghost.alphaValue = min(1, max(0, animation.presentation.alpha.value))
+            CATransaction.begin(); CATransaction.setDisableActions(true)
+            animation.blurLayer?.setValue(animation.presentation.blur.value, forKeyPath: "filters.collapseBlur.inputRadius")
+            CATransaction.commit()
+            snapshotAnimation = animation
+            return
+        }
         animation.window?.alphaValue = 1
         animation.ghost.orderOut(nil); animation.ghost.close()
         transition = nil; snapshotAnimation = nil

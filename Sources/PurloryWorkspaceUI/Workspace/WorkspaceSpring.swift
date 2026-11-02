@@ -22,8 +22,8 @@ struct WorkspaceSpringValue {
         velocity = (velocity - omega * coefficient * dt) * decay
     }
 
-    func isSettled(at target: CGFloat) -> Bool {
-        abs(value - target) < 0.15 && abs(velocity) < 0.8
+    func isSettled(at target: CGFloat, valueTolerance: CGFloat = 0.15, velocityTolerance: CGFloat = 0.8) -> Bool {
+        abs(value - target) < valueTolerance && abs(velocity) < velocityTolerance
     }
 }
 
