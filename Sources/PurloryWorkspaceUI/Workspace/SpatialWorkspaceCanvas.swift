@@ -157,7 +157,7 @@ final class SpatialWorkspaceCanvasView: NSView {
             }
             if wasHidden {
                 frameTransitions.removeValue(forKey: ObjectIdentifier(host))
-                host.frame = rect
+                setFrame(rect, preservingViewportIn: host)
             }
             if wasHidden && !model.isDragging && !reduceMotion {
                 // Dissolve only the body; tab chrome and the paper frame stay stationary.
@@ -178,13 +178,13 @@ final class SpatialWorkspaceCanvasView: NSView {
             targetFrames[tile] = rect
             if animateLayout && !reduceMotion {
                 if newTiles.contains(tile) {
-                    host.frame = rect
+                    setFrame(rect, preservingViewportIn: host)
                     host.alphaValue = 0
                     WorkspaceHTMLStyle.animate(duration) { host.animator().alphaValue = 1 }
                 }
                 transition(host, to: rect)
             } else {
-                frameTransitions.removeValue(forKey: ObjectIdentifier(host)); host.frame = rect
+                frameTransitions.removeValue(forKey: ObjectIdentifier(host)); setFrame(rect, preservingViewportIn: host)
             }
         }
         newTiles.removeAll()
@@ -219,11 +219,11 @@ final class SpatialWorkspaceCanvasView: NSView {
             value.spring.advance(to: value.target, elapsed: now - value.updated)
             value.updated = now
             if reduceMotion || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion || value.spring.isSettled(at: value.target) {
-                value.view.frame = value.target
+                setFrame(value.target, preservingViewportIn: value.view)
                 if value.remove { value.view.removeFromSuperview() }
                 frameTransitions.removeValue(forKey: key)
             } else {
-                value.view.frame = value.spring.frame
+                setFrame(value.spring.frame, preservingViewportIn: value.view)
                 frameTransitions[key] = value
             }
         }
@@ -231,6 +231,29 @@ final class SpatialWorkspaceCanvasView: NSView {
         updateContentSize()
         model?.pouchGeometryDidChange?()
         if frameTransitions.isEmpty { frameTimer?.invalidate(); frameTimer = nil }
+    }
+    private func setFrame(_ frame: CGRect, preservingViewportIn view: NSView) {
+        guard view.frame != frame else { return }
+        var positions: [(WritingScrollView, CGPoint)] = []
+        func capture(_ child: NSView) {
+            if let scroll = child as? WritingScrollView, scroll.window != nil {
+                if !scroll.workspaceTypewriter { positions.append((scroll, scroll.contentView.bounds.origin)) }
+                return
+            }
+            child.subviews.forEach(capture)
+        }
+        capture(view)
+        view.frame = frame
+        guard !positions.isEmpty else { return }
+        // NSTextView can force the selection into view when its width changes.
+        // Chrome reflow preserves the reader's live viewport, including new scroll input.
+        view.layoutSubtreeIfNeeded()
+        for (scroll, origin) in positions where !scroll.workspaceTypewriter {
+            let clip = scroll.contentView
+            var bounds = clip.bounds; bounds.origin = origin
+            clip.scroll(to: clip.constrainBoundsRect(bounds).origin)
+            scroll.reflectScrolledClipView(clip)
+        }
     }
     private func updateContentSize() {
         // Only actual objects participate in the scroll extent, never overlays.
@@ -250,7 +273,7 @@ final class SpatialWorkspaceCanvasView: NSView {
         }
         for value in frameTransitions.values {
             if value.remove { value.view.removeFromSuperview() }
-            else if finish { value.view.frame = value.target }
+            else if finish { setFrame(value.target, preservingViewportIn: value.view) }
         }
         frameTransitions.removeAll()
     }
@@ -529,7 +552,8 @@ final class SpatialWorkspaceCanvasView: NSView {
                       self.model?.isDragging != true, let host = self.hosts[tile],
                       let destination = self.geometry.tiles[tile] else { return }
                 self.frameTransitions.removeValue(forKey: ObjectIdentifier(host))
-                self.targetFrames[tile] = destination; host.frame = destination; host.isHidden = false
+                self.targetFrames[tile] = destination
+                self.setFrame(destination, preservingViewportIn: host); host.isHidden = false
                 host.layoutSubtreeIfNeeded()
                 self.animateTile(host, from: origin, to: self.screenFrame(of: host), duration: 0.18, hidingHost: true)
             }

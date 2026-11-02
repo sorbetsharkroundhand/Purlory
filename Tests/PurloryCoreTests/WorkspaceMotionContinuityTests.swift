@@ -127,6 +127,29 @@ import XCTest
         XCTAssertEqual(canvas.hosts[.document(id)]?.frame, canvas.geometry.tiles[.document(id)])
     }
 
+    func testReflowPreservesTheLiveManuscriptViewport() async throws {
+        let h = try await FramedWorkspaceHarness(width: 1440, reduceMotion: false)
+        defer { h.close() }
+        h.fixture.session.updateSelectedDocumentBody(String(repeating: "A short manuscript paragraph.\n", count: 120))
+        h.window.makeKeyAndOrderFront(nil)
+        let editor = try await h.editor()
+        h.window.makeFirstResponder(editor); await h.layout()
+        let scroll = try XCTUnwrap(editor.enclosingScrollView)
+        scroll.contentView.scroll(to: CGPoint(x: 0, y: 180))
+        let model = try XCTUnwrap(h.requests.spatialWorkspace), canvas = try XCTUnwrap(model.canvas)
+        var time = 0.0
+        canvas.frameAnimationTime = { time }
+        model.toggle(.characters); await h.layout()
+        time = 0.04; canvas.stepFrames(); await h.layout()
+        XCTAssertEqual(scroll.contentView.bounds.minY, 180, accuracy: 0.1)
+        scroll.contentView.scroll(to: CGPoint(x: 0, y: 260))
+        time = 0.08; canvas.stepFrames(); await h.layout()
+        XCTAssertEqual(scroll.contentView.bounds.minY, 260, accuracy: 0.1,
+            "Reflow must preserve a reader's newer scroll input, not a stale starting offset")
+        time = 1; canvas.stepFrames(); await h.layout()
+        XCTAssertEqual(scroll.contentView.bounds.minY, 260, accuracy: 0.1)
+    }
+
     func testOldSnapshotCompletionCannotBrightenANewerDrag() async throws {
         let h = try await FramedWorkspaceHarness(width: 1440, reduceMotion: false)
         defer { h.close() }
