@@ -166,4 +166,3 @@ public struct JournalFolder: Identifiable, Codable, Equatable, Sendable {
         self.sortOrder = sortOrder
     }
 }
-

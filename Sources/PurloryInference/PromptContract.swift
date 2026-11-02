@@ -35,4 +35,3 @@ public enum AssembledPrompt: Sendable, Equatable {
     /// instruct 챗 — 시스템 + 사용자 메시지.
     case instruct(system: String, user: String)
 }
-

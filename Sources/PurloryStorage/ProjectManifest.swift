@@ -100,4 +100,3 @@ public struct ProjectManifest: Codable, Equatable, Sendable {
         try container.encode(userData, forKey: .userData)
     }
 }
-

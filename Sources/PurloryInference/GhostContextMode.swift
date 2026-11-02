@@ -14,4 +14,3 @@ public enum GhostContextMode: String, CaseIterable, Codable, Sendable {
         }
     }
 }
-

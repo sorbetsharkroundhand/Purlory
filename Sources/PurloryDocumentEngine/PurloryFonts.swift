@@ -184,4 +184,3 @@ public enum PurloryFonts {
         }
     }
 }
-

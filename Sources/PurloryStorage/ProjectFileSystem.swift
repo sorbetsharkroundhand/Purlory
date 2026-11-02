@@ -49,4 +49,3 @@ public struct LocalProjectFileSystem: ProjectFileSystem {
             mode: info.st_mode)
     }
 }
-

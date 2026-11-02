@@ -8,4 +8,3 @@ public struct SceneContentVersion: RawRepresentable, Hashable, Codable, Sendable
         self.rawValue = rawValue
     }
 }
-
