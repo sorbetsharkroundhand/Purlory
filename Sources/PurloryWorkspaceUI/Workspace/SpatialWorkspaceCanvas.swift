@@ -635,6 +635,7 @@ final class SpatialWorkspaceCanvasView: NSView {
         rounding.duration = duration; rounding.timingFunction = WorkspaceHTMLStyle.calm
         imageView.layer?.add(rounding, forKey: "tile.rounding")
         ghost.contentView = imageView
+        let sequence = dragSequence, project = projectID
         transitions.append((ghost, hidingHost ? host : nil))
         if hidingHost { host.alphaValue = 0; ghost.alphaValue = 0.45 } else { ghost.alphaValue = 0.92 }
         ghost.orderFrontRegardless()
@@ -643,7 +644,11 @@ final class SpatialWorkspaceCanvasView: NSView {
             ghost.animator().setFrame(target, display: true); ghost.animator().alphaValue = hidingHost ? 1 : 0
         } completionHandler: { [weak self, weak host, weak ghost] in
             MainActor.assumeIsolated {
-                host?.alphaValue = 1; ghost?.orderOut(nil); ghost?.close()
+                if hidingHost, let self, self.dragSequence == sequence, self.projectID == project,
+                   self.transitions.contains(where: { $0.panel === ghost }) {
+                    host?.alphaValue = 1
+                }
+                ghost?.orderOut(nil); ghost?.close()
                 self?.transitions.removeAll { $0.panel === ghost }
             }
         }

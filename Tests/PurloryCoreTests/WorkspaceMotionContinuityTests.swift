@@ -31,6 +31,36 @@ import XCTest
         XCTAssertTrue(retained === editor)
     }
 
+    func testOldSnapshotCompletionCannotBrightenANewerDrag() async throws {
+        let h = try await FramedWorkspaceHarness(width: 1440, reduceMotion: false)
+        defer { h.close() }
+        h.window.makeKeyAndOrderFront(nil)
+        let model = try XCTUnwrap(h.requests.spatialWorkspace), canvas = try XCTUnwrap(model.canvas)
+        let id = try XCTUnwrap(h.fixture.session.selectedDocumentID)
+        let host = try XCTUnwrap(canvas.hosts[.document(id)])
+        func beginDrag() throws -> CGPoint {
+            let frame = host.frame
+            let start = CGPoint(x: frame.midX, y: frame.minY + 16)
+            let end = CGPoint(x: frame.midX, y: frame.midY)
+            canvas.beginPanelDrag(.document(id), event: try event(.leftMouseDown, in: canvas, at: start))
+            canvas.continuePanelDrag(try event(.leftMouseDragged, in: canvas, at: end))
+            XCTAssertTrue(model.isDragging)
+            XCTAssertFalse(model.isTabDrop)
+            return end
+        }
+        let firstEnd = try beginDrag()
+        canvas.finishPanelDrag(try event(.leftMouseUp, in: canvas, at: firstEnd))
+        await h.layout()
+        _ = try beginDrag()
+        XCTAssertEqual(host.alphaValue, 0.35, accuracy: 0.01)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertTrue(model.isDragging)
+        XCTAssertEqual(host.alphaValue, 0.35, accuracy: 0.01,
+            "Canceled snapshot completion must not overwrite the next gesture's appearance")
+        canvas.cancelInteraction()
+        XCTAssertEqual(host.alphaValue, 1)
+    }
+
     private func event(_ type: NSEvent.EventType, in view: NSView, at point: CGPoint,
                        modifiers: NSEvent.ModifierFlags = []) throws -> NSEvent {
         try XCTUnwrap(NSEvent.mouseEvent(with: type, location: view.convert(point, to: nil),
