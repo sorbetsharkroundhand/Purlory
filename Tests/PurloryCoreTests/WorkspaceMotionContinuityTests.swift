@@ -61,6 +61,41 @@ import XCTest
         XCTAssertEqual(host.alphaValue, 1)
     }
 
+    func testParagraphTargetingDoesNotChangeRichTextOrLayout() async throws {
+        let h = try await FramedWorkspaceHarness(width: 1440, reduceMotion: false)
+        defer { h.close() }
+        h.window.makeKeyAndOrderFront(nil)
+        let a = try XCTUnwrap(h.fixture.session.selectedDocumentID)
+        h.fixture.session.updateSelectedDocumentBody("First\n**이동🙂** $x$\nLast\n")
+        let b = try XCTUnwrap(h.fixture.session.createDocument(title: "Target"))
+        h.fixture.session.updateSelectedDocumentBody("> Target\nAnother paragraph\n")
+        let model = try XCTUnwrap(h.requests.spatialWorkspace)
+        var split = model.layout; split.move(.document(b), to: .after(.document(a)))
+        model.setLayout(split); await h.layout()
+        let project = try XCTUnwrap(h.fixture.session.activeProject?.id)
+        let source = try XCTUnwrap(h.requests.editor(for: .init(projectID: project, documentID: a)))
+        let target = try XCTUnwrap(h.requests.editor(for: .init(projectID: project, documentID: b)))
+        let interaction = try XCTUnwrap(source.workspaceInteraction as? WorkspaceEditorInteraction)
+        let targetInteraction = try XCTUnwrap(target.workspaceInteraction as? WorkspaceEditorInteraction)
+        let original = NSAttributedString(attributedString: try XCTUnwrap(target.textStorage))
+        let rect = try XCTUnwrap(targetInteraction.paragraphRect(at: 0))
+        let offset = (source.string as NSString).range(of: "이동🙂").location
+        let grip = try XCTUnwrap(interaction.paragraphGrip(at: offset))
+        XCTAssertTrue(interaction.mouseDown(try event(.leftMouseDown, in: source,
+            at: CGPoint(x: grip.midX, y: grip.midY), modifiers: [.option])))
+        for y in [rect.minY + 1, rect.maxY - 1] {
+            XCTAssertTrue(interaction.mouseDragged(try event(.leftMouseDragged, in: target,
+                at: CGPoint(x: rect.midX, y: y), modifiers: [.option])))
+            try await Task.sleep(for: .milliseconds(60))
+            XCTAssertTrue(try XCTUnwrap(target.textStorage).isEqual(to: original),
+                "Insertion feedback must not rewrite manuscript paragraph attributes")
+            XCTAssertEqual(targetInteraction.paragraphRect(at: 0), rect)
+        }
+        interaction.detach()
+        XCTAssertTrue(try XCTUnwrap(target.textStorage).isEqual(to: original))
+        XCTAssertEqual(h.fixture.session.document(b)?.body, "> Target\nAnother paragraph\n")
+    }
+
     private func event(_ type: NSEvent.EventType, in view: NSView, at point: CGPoint,
                        modifiers: NSEvent.ModifierFlags = []) throws -> NSEvent {
         try XCTUnwrap(NSEvent.mouseEvent(with: type, location: view.convert(point, to: nil),

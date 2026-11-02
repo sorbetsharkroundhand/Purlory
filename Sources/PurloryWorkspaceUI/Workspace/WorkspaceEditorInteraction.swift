@@ -32,7 +32,6 @@ import Combine
     private var previousTerms: [String] = []
     private var previousActive = false
     private var previousSelection: Int?
-    private var previewTask: Task<Void, Never>?
     private struct Fade { let from: CGFloat; let to: CGFloat; let began: Double }
     private var fades: [Int: Fade] = [:]
     private var renderedOpacity: [Int: CGFloat] = [:]
@@ -47,7 +46,7 @@ import Combine
         }
     }
     private let pointerSpring = WorkspacePointerSpring()
-    private var preview: (range: NSRange, style: NSParagraphStyle, text: String, after: Bool)?
+    private var preview: (range: NSRange, after: Bool)?
     private var centering = false
     private var previousTypewriter = false
     private var previousEditorSize = CGSize.zero
@@ -387,7 +386,7 @@ import Combine
         }
         if let preview, let rect = paragraphRect(at: preview.range.location) {
             editor.palette.workspaceMuted.withAlphaComponent(0.32).setFill()
-            CGRect(x: rect.minX, y: (preview.after ? rect.maxY + 12 : rect.minY - 12), width: rect.width, height: 1.5).fill()
+            CGRect(x: rect.minX, y: (preview.after ? rect.maxY + 2 : rect.minY - 2), width: rect.width, height: 1.5).fill()
         }
     }
     private func drawEntityUnderlines(in paragraph: NSRange, editor: BlockTextView) {
@@ -413,31 +412,14 @@ import Combine
         clearDropPreview()
         let range = nativeParagraph(at: position)
         guard range.length > 0, range.location < storage.length else { return }
-        let original = storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle ?? NSParagraphStyle.default
-        preview = (range, original, editor.string, after)
-        let text = editor.string
-        previewTask = Task { [weak self, weak editor] in
-            let began = ProcessInfo.processInfo.systemUptime
-            repeat {
-                guard !Task.isCancelled, let self, let editor, editor.string == text, !editor.hasMarkedText(), self.preview?.range == range else { return }
-                let progress = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 1 : (ProcessInfo.processInfo.systemUptime - began) / 0.26
-                let changed = original.mutableCopy() as! NSMutableParagraphStyle
-                let gap = 26 * WorkspaceHTMLStyle.progress(progress)
-                if after { changed.paragraphSpacing += gap } else { changed.paragraphSpacingBefore += gap }
-                editor.textStorage?.addAttribute(.paragraphStyle, value: changed, range: range); editor.needsDisplay = true
-                if progress >= 1 { return }
-                try? await Task.sleep(for: .milliseconds(16))
-            } while !Task.isCancelled
-        }
+        // Keep hit testing and manuscript layout stable while choosing a destination.
+        preview = (range, after)
+        editor.needsDisplay = true
     }
     private func clearDropPreview() {
-        previewTask?.cancel(); previewTask = nil
-        guard let preview, let editor else { return }
+        guard preview != nil else { return }
         self.preview = nil
-        if editor.string.utf16.elementsEqual(preview.text.utf16), preview.range.upperBound <= editor.string.utf16.count {
-            editor.textStorage?.addAttribute(.paragraphStyle, value: preview.style, range: preview.range)
-        }
-        editor.needsDisplay = true
+        editor?.needsDisplay = true
     }
     private func clearTargetPreview() { (targetEditor?.workspaceInteraction as? WorkspaceEditorInteraction)?.clearDropPreview() }
     private func showPill(_ event: NSEvent, copying: Bool) {
