@@ -78,6 +78,7 @@ struct WorkspacePouchAction {
         let to: CGRect
         let began: Double
         let duration: Double
+        let fromAlpha: CGFloat
         let expanding: Bool
         let generation: UInt64
     }
@@ -237,6 +238,7 @@ struct WorkspacePouchAction {
 
     func collapse() {
         guard !isCollapsed, let window, let panel else { return }
+        let presentation = transition.map { (frame: $0.frame, alpha: $0.alphaValue) }
         model.pouchSection = nil
         releaseContentToPanel()
         target = CGPoint(x: panel.frame.midX - 22, y: panel.frame.midY - 22)
@@ -254,13 +256,14 @@ struct WorkspacePouchAction {
         refresh()
         panel.orderFrontRegardless()
         if !reduceMotion {
-            animateSnapshot(of: window, toward: collapsedSnapshotFrame(window: window, orb: CGRect(origin: target, size: CGSize(width: 44, height: 44))))
+            animateSnapshot(of: window, toward: collapsedSnapshotFrame(window: window, orb: CGRect(origin: target, size: CGSize(width: 44, height: 44))), startingFrom: presentation)
         }
         window.orderOut(nil)
         panel.orderFrontRegardless(); moveTowardTarget()
     }
     func restore() {
         guard isCollapsed, let window else { return }
+        let presentation = transition.map { (frame: $0.frame, alpha: $0.alphaValue) }
         let origin = panel?.frame ?? CGRect(origin: target, size: CGSize(width: 44, height: 44))
         stopDragTracking(); cancelTransition()
         isCollapsed = false; isDragging = false; start = nil
@@ -274,7 +277,7 @@ struct WorkspacePouchAction {
         // bridge adopts it, including when restoration happens before that bridge.
         refresh(); dock(immediate: false)
         if !reduceMotion {
-            animateSnapshot(of: window, toward: window.frame, expandingFrom: collapsedSnapshotFrame(window: window, orb: origin))
+            animateSnapshot(of: window, toward: window.frame, expandingFrom: collapsedSnapshotFrame(window: window, orb: origin), startingFrom: presentation)
         } else { collapsedImage = nil }
     }
 
@@ -432,7 +435,8 @@ struct WorkspacePouchAction {
         window?.alphaValue = 1
     }
 
-    private func animateSnapshot(of window: NSWindow, toward rect: CGRect, expandingFrom origin: CGRect? = nil) {
+    private func animateSnapshot(of window: NSWindow, toward rect: CGRect, expandingFrom origin: CGRect? = nil,
+                                 startingFrom presentation: (frame: CGRect, alpha: CGFloat)? = nil) {
         let image: NSImage
         if origin != nil, let cached = collapsedImage {
             image = cached
@@ -448,7 +452,8 @@ struct WorkspacePouchAction {
             if origin == nil { collapsedImage = image }
         }
         let generation = transitionGeneration
-        let ghost = NSPanel(contentRect: window.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        let frame = presentation?.frame ?? origin ?? window.frame
+        let ghost = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         ghost.isReleasedWhenClosed = false; ghost.ignoresMouseEvents = true; ghost.level = .floating
         ghost.isOpaque = false; ghost.backgroundColor = .clear; ghost.hasShadow = false
         ghost.hidesOnDeactivate = false; ghost.animationBehavior = .none
@@ -467,10 +472,11 @@ struct WorkspacePouchAction {
         blurAnimation.timingFunction = origin == nil ? CAMediaTimingFunction(controlPoints: 0.4, 0, 0.2, 1) : WorkspaceHTMLStyle.calm
         imageView.layer?.add(blurAnimation, forKey: "pouch.blur")
         ghost.contentView = imageView; transition = ghost
-        if let origin { ghost.setFrame(origin, display: false); ghost.alphaValue = 0; window.alphaValue = 0 }
+        ghost.alphaValue = presentation?.alpha ?? (origin == nil ? 1 : 0)
+        if origin != nil { window.alphaValue = 0 }
         ghost.orderFrontRegardless()
         snapshotAnimation = SnapshotAnimation(window: window, ghost: ghost, from: ghost.frame,
-            to: rect, began: snapshotAnimationTime(), duration: origin == nil ? 0.12 : 0.14,
+            to: rect, began: snapshotAnimationTime(), duration: origin == nil ? 0.12 : 0.14, fromAlpha: ghost.alphaValue,
             expanding: origin != nil, generation: generation)
         snapshotClock = WorkspaceDisplayClock(view: imageView) { [weak self] in
             guard let self else { return false }
@@ -490,7 +496,8 @@ struct WorkspacePouchAction {
             y: from.minY + (to.minY - from.minY) * t,
             width: from.width + (to.width - from.width) * t,
             height: from.height + (to.height - from.height) * t), display: true)
-        animation.ghost.alphaValue = animation.expanding ? t : 1 - t
+        let targetAlpha: CGFloat = animation.expanding ? 1 : 0
+        animation.ghost.alphaValue = animation.fromAlpha + (targetAlpha - animation.fromAlpha) * t
         guard elapsed >= 1 else { return }
         animation.window?.alphaValue = 1
         animation.ghost.orderOut(nil); animation.ghost.close()
