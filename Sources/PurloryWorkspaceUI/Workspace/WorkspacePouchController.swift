@@ -43,6 +43,10 @@ struct WorkspacePouchAction {
     private(set) var isCollapsed = false
     private(set) var isDragging = false
     var reduceMotion = false
+    var accessibilityOptions = WorkspaceAccessibilityOptions()
+    private var motionReduced: Bool {
+        reduceMotion || accessibilityOptions.resolvedReduceMotion(system: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+    }
     var reduceTransparency = false
     var theme: PurloryTheme = .light { didSet { refresh() } }
     var actions: [WorkspacePouchAction] = [] { didSet { refresh() } }
@@ -268,7 +272,7 @@ struct WorkspacePouchAction {
         // Make the orb independent of application activation before hiding the window.
         refresh()
         panel.orderFrontRegardless()
-        if !reduceMotion {
+        if !motionReduced {
             animateSnapshot(of: window, toward: collapsedSnapshotFrame(window: window, orb: CGRect(origin: target, size: CGSize(width: 44, height: 44))), startingFrom: presentation)
         }
         window.orderOut(nil)
@@ -280,7 +284,7 @@ struct WorkspacePouchAction {
         let origin = panel?.frame ?? CGRect(origin: target, size: CGSize(width: 44, height: 44))
         stopDragTracking(); cancelTransition()
         isCollapsed = false; isDragging = false; start = nil
-        if !reduceMotion { window.alphaValue = 0 }
+        if !motionReduced { window.alphaValue = 0 }
         NSApp.unhide(nil)
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
@@ -289,7 +293,7 @@ struct WorkspacePouchAction {
         // Retain the controller until an actual detach/close. A recreated SwiftUI
         // bridge adopts it, including when restoration happens before that bridge.
         refresh(); dock(immediate: false)
-        if !reduceMotion {
+        if !motionReduced {
             animateSnapshot(of: window, toward: window.frame, expandingFrom: collapsedSnapshotFrame(window: window, orb: origin), startingFrom: presentation)
         } else { collapsedImage = nil }
     }
@@ -330,7 +334,7 @@ struct WorkspacePouchAction {
     }
     private func moveTowardTarget() {
         guard let panel else { return }
-        if reduceMotion || isDragging {
+        if motionReduced || isDragging {
             timer?.invalidate(); timer = nil
             spring = WorkspaceSpringPoint(position: target); panel.setFrameOrigin(target)
             return
@@ -403,7 +407,7 @@ struct WorkspacePouchAction {
         if content.placement != placement {
             content.placement = placement; content.frame = placement.frame
         }
-        if opened { content.revealTools(reduceMotion: reduceMotion) }
+        if opened { content.revealTools(reduceMotion: motionReduced) }
     }
     func dismissTools() {
         guard model.pouchSection != nil else { return }
@@ -507,7 +511,7 @@ struct WorkspacePouchAction {
         let settled = animation.presentation.frame.isSettled(at: animation.to)
             && animation.presentation.alpha.isSettled(at: targetAlpha, valueTolerance: 0.002, velocityTolerance: 0.02)
             && animation.presentation.blur.isSettled(at: targetBlur, valueTolerance: 0.02, velocityTolerance: 0.1)
-        if !reduceMotion && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion && !settled {
+        if !motionReduced && !settled {
             animation.ghost.setFrame(animation.presentation.frame.frame, display: true)
             animation.ghost.alphaValue = min(1, max(0, animation.presentation.alpha.value))
             CATransaction.begin(); CATransaction.setDisableActions(true)

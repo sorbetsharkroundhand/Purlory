@@ -89,3 +89,16 @@ cadence invariance does not establish actual 60/120 fps rendering performance.
 The owner should feel-check direct dragging, rapid reflow toggles and repeated
 pouch reversal in the batched native verification, including Reduce Motion.
 This is local source/test evidence, not PR/main CI, Store distribution or RC proof.
+
+## PR integration follow-up
+
+[PR #308](https://github.com/sorbetsharkroundhand/Purlory/pull/308) initially exposed
+12 intermediate-motion assertion failures in CI run `41395190591`: live native
+system checks bypassed the existing DEBUG fixture override. Bundle/smoke and
+unsigned-archive checks passed on that attempt. Native canvas and pouch consumers
+now resolve live system changes through the same bridged
+`WorkspaceAccessibilityOptions` policy as SwiftUI. The DEBUG override remains
+absent from production builds; production cannot disable a system accommodation.
+No workflow, assertion or skip condition was weakened. The 51 affected local
+workspace/accessibility/fidelity tests pass. The final integration CI evidence is
+recorded on the PR.
