@@ -57,14 +57,14 @@ private struct WorkspaceCardHeader: NSViewRepresentable {
         button.setAccessibilityValue(expanded ? "펼쳐짐" : "접힘")
         button.needsDisplay = true
     }
-    final class HeaderButton: NSButton {
+    final class HeaderButton: WorkspaceHTMLButton {
         var cardTitle = "", initial: String?, role: String?, order: String?
         var serif = false, expanded = false
-        var theme = PurloryTheme.light
         var invoke: (() -> Void)?
         override var isFlipped: Bool { true }
         override init(frame: NSRect) {
             super.init(frame: frame); isBordered = false; title = ""; target = self; action = #selector(activate)
+            refusesFirstResponder = false
             setAccessibilityRole(.button)
         }
         required init?(coder: NSCoder) { nil }

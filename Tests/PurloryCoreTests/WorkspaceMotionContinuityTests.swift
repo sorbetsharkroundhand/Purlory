@@ -4,6 +4,60 @@ import XCTest
 @testable import PurloryWorkspaceUI
 
 @MainActor final class WorkspaceMotionContinuityTests: XCTestCase {
+    func testCollapsedPouchTracksEachPointerMoveAtItsGrabOffset() async throws {
+        for reduced in [false, true] {
+            let h = try await FramedWorkspaceHarness(reduceMotion: true)
+            defer { h.close() }
+            h.window.makeKeyAndOrderFront(nil)
+            let pouch = try XCTUnwrap(h.requests.pouch)
+            pouch.collapse(); pouch.reduceMotion = reduced
+            let panel = try XCTUnwrap(pouch.panel)
+            let screen = try XCTUnwrap(h.window.screen ?? NSScreen.main).visibleFrame
+            let start = CGPoint(x: panel.frame.minX + 8, y: panel.frame.minY + 11)
+            pouch.beginDrag(at: start)
+            for delta in [CGFloat(0), CGFloat(37)] {
+                let pointer = CGPoint(x: screen.midX.rounded() + delta, y: screen.midY.rounded() - delta)
+                pouch.updateDrag(to: pointer)
+                XCTAssertEqual(panel.frame.minX, pointer.x - 8, accuracy: 0.1)
+                XCTAssertEqual(panel.frame.minY, pointer.y - 11, accuracy: 0.1)
+            }
+            _ = pouch.endDrag(at: CGPoint(x: screen.midX.rounded() + 37, y: screen.midY.rounded() - 37))
+        }
+    }
+
+    func testNativeChromeButtonShowsPressBeforeActionAndClearsOnCancel() {
+        let button = WorkspaceHTMLButton(frame: CGRect(x: 0, y: 0, width: 28, height: 28))
+        button.refresh()
+        let resting = button.layer?.backgroundColor
+        button.highlight(true)
+        XCTAssertNotEqual(button.layer?.backgroundColor, resting)
+        button.highlight(false)
+        XCTAssertEqual(button.layer?.backgroundColor, resting)
+    }
+
+    func testDragPillTracksTheNextEventWithoutSpringLag() async throws {
+        let h = try await FramedWorkspaceHarness(width: 1440, reduceMotion: false)
+        defer { h.close() }
+        h.window.makeKeyAndOrderFront(nil)
+        let model = try XCTUnwrap(h.requests.spatialWorkspace), canvas = try XCTUnwrap(model.canvas)
+        let id = try XCTUnwrap(h.fixture.session.selectedDocumentID)
+        let rect = try XCTUnwrap(canvas.hosts[.document(id)]?.frame)
+        let existing = Set(NSApp.windows.map(ObjectIdentifier.init))
+        canvas.beginPanelDrag(.document(id), event: try event(.leftMouseDown, in: canvas,
+            at: CGPoint(x: rect.midX, y: rect.minY + 16)))
+        canvas.continuePanelDrag(try event(.leftMouseDragged, in: canvas,
+            at: CGPoint(x: rect.midX, y: rect.minY + 100)))
+        let pill = try XCTUnwrap(NSApp.windows.compactMap { $0 as? NSPanel }.first {
+            !existing.contains(ObjectIdentifier($0)) && $0.contentView is NSVisualEffectView
+        })
+        let next = CGPoint(x: rect.midX + 100, y: rect.minY + 140)
+        canvas.continuePanelDrag(try event(.leftMouseDragged, in: canvas, at: next))
+        let pointer = h.window.convertPoint(toScreen: canvas.convert(next, to: nil))
+        XCTAssertEqual(pill.frame.minX, pointer.x + 12, accuracy: 0.1)
+        XCTAssertEqual(pill.frame.minY, pointer.y - 18, accuracy: 0.1)
+        canvas.cancelInteraction()
+    }
+
     func testGrabbingReflowKeepsVisibleFramesAndClickReleaseResumesLayout() async throws {
         let h = try await FramedWorkspaceHarness(width: 1440, reduceMotion: false)
         defer { h.close() }

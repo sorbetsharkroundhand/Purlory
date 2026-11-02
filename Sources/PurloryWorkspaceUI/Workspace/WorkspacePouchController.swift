@@ -185,6 +185,8 @@ struct WorkspacePouchAction {
     func beginDrag(at point: CGPoint, from button: WorkspacePouchButton? = nil) {
         guard isCollapsed else { return }
         stopDragTracking()
+        timer?.invalidate(); timer = nil
+        if let panel { spring = WorkspaceSpringPoint(position: panel.frame.origin); target = spring.position }
         grabButton = button
         start = point; isDragging = false
         if isCollapsed, let panel {
@@ -317,7 +319,7 @@ struct WorkspacePouchAction {
     }
     private func moveTowardTarget() {
         guard let panel else { return }
-        if reduceMotion {
+        if reduceMotion || isDragging {
             timer?.invalidate(); timer = nil
             spring = WorkspaceSpringPoint(position: target); panel.setFrameOrigin(target)
             return

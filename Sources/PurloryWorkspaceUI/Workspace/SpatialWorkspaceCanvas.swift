@@ -79,7 +79,6 @@ final class SpatialWorkspaceCanvasView: NSView {
     private var revealedSequence = 0
     private var dragPill: NSPanel?
     private var dragOverlay = SpatialDragIndicatorOverlayView()
-    private let pointerSpring = WorkspacePointerSpring()
     private var transitions: [(panel: NSPanel, host: NSView?)] = []
     private var handles: [String: SpatialResizeHandle] = [:]
     private struct Resize {
@@ -586,7 +585,7 @@ final class SpatialWorkspaceCanvasView: NSView {
     }
     private func positionDragPill(_ event: NSEvent) {
         let screen = screenPoint(for: event)
-        if let dragPill { pointerSpring.move(dragPill, to: CGPoint(x: screen.x + 12, y: screen.y - 18), reducedMotion: reduceMotion) }
+        dragPill?.setFrameOrigin(CGPoint(x: screen.x + 12, y: screen.y - 18))
     }
     private func stopDragPresentation() {
         if let grabbedTile, let host = hosts[grabbedTile] {
@@ -598,7 +597,6 @@ final class SpatialWorkspaceCanvasView: NSView {
         dragOverlay.sourcePlaceholderRect = nil
         dragOverlay.indicator = nil
         if draggingCursor { NSCursor.pop(); draggingCursor = false }
-        pointerSpring.stop()
         for transition in transitions { transition.host?.alphaValue = 1; transition.panel.orderOut(nil); transition.panel.close() }
         transitions.removeAll()
         if let dragMonitor { NSEvent.removeMonitor(dragMonitor); self.dragMonitor = nil }

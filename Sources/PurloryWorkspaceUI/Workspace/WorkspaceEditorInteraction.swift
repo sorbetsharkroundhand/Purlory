@@ -45,7 +45,6 @@ import Combine
             self?.flashRange = nil; self?.invalidateParagraph(at: range.location)
         }
     }
-    private let pointerSpring = WorkspacePointerSpring()
     private var preview: (range: NSRange, after: Bool)?
     private var centering = false
     private var previousTypewriter = false
@@ -242,7 +241,7 @@ import Combine
         guard let drag else { return false }
         let target = target
         clearTargetPreview(); self.drag = nil; self.target = nil; targetEditor = nil
-        pointerSpring.stop(); pill?.orderOut(nil); pill?.close(); pill = nil
+        pill?.orderOut(nil); pill?.close(); pill = nil
         if drag.active { NSCursor.pop() }
         guard drag.active, let target, let session, let requests else { return true }
         do {
@@ -447,14 +446,14 @@ import Combine
         surface.addSubview(icon); surface.addSubview(meta); surface.addSubview(label)
         pill?.setContentSize(surface.frame.size); pill?.contentView = surface; pill?.alphaValue = 0.95
         let point = editor.window?.convertPoint(toScreen: event.locationInWindow) ?? event.locationInWindow
-        if let pill { pointerSpring.move(pill, to: CGPoint(x: point.x + 14, y: point.y + 18 - pill.frame.height), reducedMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion) }
+        if let pill { pill.setFrameOrigin(CGPoint(x: point.x + 14, y: point.y + 18 - pill.frame.height)) }
         pill?.orderFrontRegardless()
     }
     private func cancelDrag() {
         clearTargetPreview(); clearDropPreview()
         if drag?.active == true { NSCursor.pop() }
         drag = nil; target = nil; targetEditor = nil
-        pointerSpring.stop(); pill?.orderOut(nil); pill?.close(); pill = nil
+        pill?.orderOut(nil); pill?.close(); pill = nil
     }
     func detach() {
         if let modifierMonitor { NSEvent.removeMonitor(modifierMonitor); self.modifierMonitor = nil }

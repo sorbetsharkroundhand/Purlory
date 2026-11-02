@@ -232,7 +232,6 @@ final class WorkspacePouchButton: WorkspaceHTMLButton {
         highlight(false)
         if controller?.endDrag(at: screenPoint(event)) != true { performClick(nil) }
     }
-    override func highlight(_ flag: Bool) { super.highlight(flag); refresh() }
     override func refresh() {
         super.refresh()
         let active = selected || isHighlighted
