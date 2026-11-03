@@ -1308,12 +1308,20 @@ extension BlockTextView {
     /// 로드 직후 전 문서 1회 전환 — 로드는 undo 대상이 아니므로 storage를 곧장 고친다.
     func convertAllInlineMath() {
         // 남는 raw 스팬 여부는 syncInlineMathFlag가 실측으로 정리한다.
-        let ns = string as NSString
+        guard (string as NSString).range(of: "$", options: .literal).location != NSNotFound else {
+            mayHaveInlineMath = false
+            return
+        }
         var location = 0
-        while location < ns.length {
-            let para = ns.paragraphRange(for: NSRange(location: location, length: 0))
-            location = para.upperBound
-            convertInlineMath(in: para, registersUndo: false)
+        while location < (string as NSString).length {
+            let ns = string as NSString
+            let dollar = ns.range(of: "$", options: .literal, range: NSRange(location: location, length: ns.length - location))
+            guard dollar.location != NSNotFound else { break }
+            let para = ns.paragraphRange(for: NSRange(location: dollar.location, length: 0))
+            let beforeLength = ns.length
+            _ = convertInlineMath(in: para, registersUndo: false)
+            let delta = (string as NSString).length - beforeLength
+            location = max(dollar.location + 1, para.upperBound + delta)
         }
         syncInlineMathFlag()
     }
@@ -1351,8 +1359,10 @@ extension BlockTextView {
         var found = false
         var location = 0
         while location < ns.length, !found {
-            let para = ns.paragraphRange(for: NSRange(location: location, length: 0))
-            location = para.upperBound
+            let dollar = ns.range(of: "$", options: .literal, range: NSRange(location: location, length: ns.length - location))
+            guard dollar.location != NSNotFound else { break }
+            let para = ns.paragraphRange(for: NSRange(location: dollar.location, length: 0))
+            location = max(dollar.upperBound, para.upperBound)
             if hasConvertibleRawMath(in: para) { found = true }
         }
         mayHaveInlineMath = found

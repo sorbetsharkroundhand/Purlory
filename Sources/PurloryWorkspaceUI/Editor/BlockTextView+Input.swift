@@ -96,6 +96,7 @@ extension BlockTextView {
     func invalidateSerialCache() {
         serialLinesValid = false
         serialFastDirty = false
+        serialDirtyRange = nil
     }
 
     /// 편집 **직전**에 삭제될 텍스트의 개행을 센다 — 직렬화 증분 캐시의 안전

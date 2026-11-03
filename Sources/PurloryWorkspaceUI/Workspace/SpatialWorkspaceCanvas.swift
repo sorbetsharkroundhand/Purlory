@@ -878,11 +878,12 @@ struct SpatialDocumentTile: View {
                     .help(msg)
                 }
                 Spacer(minLength: 8)
-                if hoveringStats { Text(statistics.detail).font(PurloryFonts.monoUI(9)).fixedSize() }
+                let stats = statistics
+                if hoveringStats { Text(stats.detail).font(PurloryFonts.monoUI(9)).fixedSize() }
                 Circle().stroke(theme.sepC, lineWidth: 1.5).overlay {
-                    Circle().trim(from: 0, to: statistics.progress).stroke(theme.blueC, style: StrokeStyle(lineWidth: 1.5, lineCap: .round)).rotationEffect(.degrees(-90))
-                }.frame(width: 11, height: 11).accessibilityLabel("집필 목표 \(Int(statistics.progress * 100))퍼센트")
-                Text("\(statistics.characters.formatted())자").font(PurloryFonts.monoUI(10)).fixedSize()
+                    Circle().trim(from: 0, to: stats.progress).stroke(theme.blueC, style: StrokeStyle(lineWidth: 1.5, lineCap: .round)).rotationEffect(.degrees(-90))
+                }.frame(width: 11, height: 11).accessibilityLabel("집필 목표 \(Int(stats.progress * 100))퍼센트")
+                Text("\(stats.characters.formatted())자").font(PurloryFonts.monoUI(10)).fixedSize()
             }.foregroundStyle(theme.workspaceMutedC).padding(.horizontal, 14).frame(height: 26).opacity(quietChrome ? 0 : (hoveringStats ? 1 : 0.65))
                 .allowsHitTesting(!quietChrome)
                 .onHover { hoveringStats = $0 }.help(statistics.detail)

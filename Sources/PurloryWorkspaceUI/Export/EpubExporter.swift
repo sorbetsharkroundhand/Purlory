@@ -2,15 +2,11 @@ import AppKit
 import SwiftMath
 import UniformTypeIdentifiers
 
-/// 소설을 EPUB 3으로 내보낸다 (요구 7 — 파일 메뉴·사이드바 문맥 메뉴).
+/// Exports manuscripts and notes through one EPUB 3 package builder.
 ///
-/// 외부 의존성 없이 최소 규격만 직접 조립한다:
-/// - `mimetype`(무압축·첫 항목) + `META-INF/container.xml` + `OEBPS/`(opf·nav·css·본문)
-/// - 본문 마크다운은 단순 변환기로 XHTML이 된다 — `# `(제목 1)마다 챕터를 나눠
-///   목차(nav)와 spine에 올린다. 소설 본문(문단·제목·인용·목록·이미지) 중심이고,
-///   수식·코드는 고정폭 소스로 남는다.
-/// - 압축은 시스템 `/usr/bin/zip` — mimetype은 규격상 무압축(-0) 첫 항목이어야
-///   해서 두 번에 나눠 담는다.
+/// Markdown becomes XHTML chapters at level-one headings, with MathML for math.
+/// The package includes navigation, a spine, styles, and local image resources.
+/// System zip runs twice so the first member is the uncompressed `mimetype`.
 public enum EpubExporter {
 
     public enum ExportError: LocalizedError {
@@ -39,7 +35,7 @@ public enum EpubExporter {
         panel.nameFieldStringValue = sanitizedFileName(entry.title) + ".epub"
         panel.canCreateDirectories = true
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        // 설정의 저자 이름은 값 스냅샷으로만 넘긴다 (CLAUDE.md §4 격리 경계).
+        // Capture the author setting before starting background work.
         guard ImageAssetScanner.confirmContinueDespiteMissing(in: entry.body) else {
             return
         }
@@ -400,6 +396,8 @@ public enum EpubExporter {
                 html += "<p\(style)>\(inline(line))</p>\n"
             }
         }
+        // An unfinished Markdown fence extends to EOF, but XHTML elements must close.
+        if inCode { html += "</code></pre>\n" }
         // 파일 끝에서 닫히지 않은 그룹 — 열려 있는 만큼은 수식으로 남긴다.
         if inMathGroup || !mathLines.isEmpty { flushMath() }
         closeList()

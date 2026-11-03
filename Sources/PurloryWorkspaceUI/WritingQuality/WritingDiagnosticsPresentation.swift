@@ -7,19 +7,20 @@ enum WritingDiagnosticsPresentation {
     struct Binding { let action: MarginAction; let operation: Operation }
 
     static func insights(from state: WritingDiagnosticsState) -> [MarginInsight] {
-        state.findings.compactMap { finding in
-            let diagnostic = finding.diagnostic
-            guard diagnostic.severity != .info || !diagnostic.alternatives.isEmpty,
-                  !finding.evidence.quote.isEmpty else { return nil }
-            if let confidence = diagnostic.confidence {
-                guard confidence.isFinite, confidence >= LivingMarginPolicy.minimumVisibleConfidence else { return nil }
-            }
-            var message = diagnostic.message
-            if let reason = diagnostic.reason, !reason.isEmpty, reason != message { message += "\n" + reason }
-            return MarginInsight(id: "writing-quality:" + finding.id, kind: .writingQuality, title: title(for: diagnostic.kind),
-                message: message, evidence: [finding.evidence] + finding.relatedEvidence,
-                confidence: diagnostic.confidence, actions: bindings(for: finding).map(\.action))
+        state.findings.compactMap { insight(for: $0) }
+    }
+    static func insight(for finding: WritingDiagnosticsFinding) -> MarginInsight? {
+        let diagnostic = finding.diagnostic
+        guard diagnostic.severity != .info || !diagnostic.alternatives.isEmpty,
+              !finding.evidence.quote.isEmpty else { return nil }
+        if let confidence = diagnostic.confidence {
+            guard confidence.isFinite, confidence >= LivingMarginPolicy.minimumVisibleConfidence else { return nil }
         }
+        var message = diagnostic.message
+        if let reason = diagnostic.reason, !reason.isEmpty, reason != message { message += "\n" + reason }
+        return MarginInsight(id: "writing-quality:" + finding.id, kind: .writingQuality, title: title(for: diagnostic.kind),
+            message: message, evidence: [finding.evidence] + finding.relatedEvidence,
+            confidence: diagnostic.confidence, actions: bindings(for: finding).map(\.action))
     }
     static func bindings(for finding: WritingDiagnosticsFinding) -> [Binding] {
         var values: [Binding] = []

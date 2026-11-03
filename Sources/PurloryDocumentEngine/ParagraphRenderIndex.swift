@@ -52,6 +52,12 @@ package final class ParagraphRenderIndex {
         return result
     }
 
+    /// Exact 0-based paragraph rank for a paragraph boundary offset (including `utf16Length`).
+    package func paragraphRank(forParagraphAt offset: Int) -> Int? {
+        guard offset >= 0, offset <= utf16Length else { return nil }
+        return boundaryRank(offset)
+    }
+
     /// Replacement must cover complete indexed paragraphs. Reject stale/non-aligned
     /// assumptions instead of silently corrupting all later media locations.
     @discardableResult

@@ -3,10 +3,45 @@ import AppKit
 /// Derived native spans, separate from author attributes and temporary search/selection layers.
 @MainActor
 final class WritingDiagnosticsDecorationLayer {
+    struct ResolutionKey: Hashable {
+        let id: String
+        let stamp: WritingDiagnosticsStamp
+        let source: WritingDiagnosticRange
+        let quote: String
+    }
     private var ranges: [NSRange] = []
     private var revision: UInt64 = 0
     private var identity: ProjectRuntimeIdentity?
+    private var resolvedCacheRevision: UInt64 = 0
+    private var resolvedCacheIdentity: ProjectRuntimeIdentity?
+    private var resolvedCacheStorageLength: Int = -1
+    private var resolvedRanges: [ResolutionKey: NSRange?] = [:]
     private(set) var lastQueryVisits = 0
+
+    func prepareResolutionCache(revision: UInt64, identity: ProjectRuntimeIdentity?, storageLength: Int, validMapping: Bool) {
+        guard validMapping else {
+            resolvedRanges.removeAll(keepingCapacity: true)
+            resolvedCacheRevision = 0
+            resolvedCacheIdentity = nil
+            resolvedCacheStorageLength = -1
+            return
+        }
+        if resolvedCacheRevision != revision || resolvedCacheIdentity != identity || resolvedCacheStorageLength != storageLength {
+            resolvedRanges.removeAll(keepingCapacity: true)
+            resolvedCacheRevision = revision
+            resolvedCacheIdentity = identity
+            resolvedCacheStorageLength = storageLength
+        }
+    }
+
+    func cachedResolution(for key: ResolutionKey) -> NSRange?? {
+        resolvedRanges[key]
+    }
+
+    func storeResolution(_ range: NSRange?, for key: ResolutionKey) {
+        resolvedRanges[key] = range
+    }
+
     func set(_ ranges: [NSRange], revision: UInt64, identity: ProjectRuntimeIdentity?) {
         self.revision = revision; self.identity = identity
         self.ranges.removeAll(keepingCapacity: true)
@@ -40,15 +75,34 @@ final class WritingDiagnosticsDecorationLayer {
 extension BlockTextView {
     func setWritingDiagnostics(_ findings: [WritingDiagnosticsFinding], revision: UInt64) {
         let identity = writingRuntimeIdentityProvider?()
+        let storageLength = textStorage?.length ?? 0
+        let validMapping = revision == writingNativeRevision
+            && !hasMarkedText()
+            && writingProjectionCapture.compositionDepth == 0
+            && writingProjectionCapture.mappedRevision == revision
+            && writingProjectionCapture.mappedIdentity == identity
+        writingDecorations.prepareResolutionCache(
+            revision: revision, identity: identity, storageLength: storageLength, validMapping: validMapping)
         var ranges: [NSRange] = []
-        if revision == writingNativeRevision, !hasMarkedText() {
+        if validMapping {
             for finding in findings where finding.diagnostic.category == .correctness && finding.diagnostic.severity == .correctness {
                 guard finding.stamp.nativeRevision == revision, finding.stamp.runtime == identity,
                       finding.sourceRanges.count == 1, let source = finding.sourceRanges.first,
-                      finding.evidence.documentID == identity?.key.documentID, finding.evidence.utf16Hint == source.location,
-                      let native = nativeRange(forSource: source, revision: revision),
+                      finding.evidence.documentID == identity?.key.documentID, finding.evidence.utf16Hint == source.location else { continue }
+                let key = WritingDiagnosticsDecorationLayer.ResolutionKey(
+                    id: finding.id, stamp: finding.stamp, source: source, quote: finding.evidence.quote)
+                if let cached = writingDecorations.cachedResolution(for: key) {
+                    if let resolved = cached { ranges.append(resolved) }
+                    continue
+                }
+                writingDecorationLookupCount += 1
+                guard let native = nativeRange(forSource: source, revision: revision),
                       let mapped = writingProjectionCapture.nativeLookup?(source),
-                      mapped.original.utf16.elementsEqual(finding.evidence.quote.utf16) else { continue }
+                      mapped.original.utf16.elementsEqual(finding.evidence.quote.utf16) else {
+                    writingDecorations.storeResolution(nil, for: key)
+                    continue
+                }
+                writingDecorations.storeResolution(native.nsRange, for: key)
                 ranges.append(native.nsRange)
             }
         }

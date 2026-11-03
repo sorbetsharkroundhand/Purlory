@@ -15,6 +15,7 @@ import SwiftUI
         let reference: OriginalSourceReference?
     }
     @Published private(set) var peek: Peek?
+    private(set) var noteParagraphScanCount = 0
     private weak var session: ProjectSession?
     private weak var requests: ProjectEditorRequests?
     private var hideTask: Task<Void, Never>?
@@ -51,7 +52,11 @@ import SwiftUI
                 let source = note.body as NSString
                 var cursor = 0, headings: [(String, NSRange)] = []
                 while cursor < source.length {
-                    let range = source.paragraphRange(for: NSRange(location: cursor, length: 0)); cursor = range.upperBound
+                    let hashMatch = source.range(of: "#", options: .literal, range: NSRange(location: cursor, length: source.length - cursor))
+                    guard hashMatch.location != NSNotFound else { break }
+                    self.noteParagraphScanCount += 1
+                    let range = source.paragraphRange(for: NSRange(location: hashMatch.location, length: 0))
+                    cursor = max(range.upperBound, hashMatch.upperBound)
                     let line = source.substring(with: range).trimmingCharacters(in: .whitespacesAndNewlines)
                     if line.hasPrefix("#"), let space = line.firstIndex(of: " "), line[..<space].allSatisfy({ $0 == "#" }) {
                         headings.append((String(line[line.index(after: space)...]), range))
@@ -63,7 +68,14 @@ import SwiftUI
                     let range = source.rangeOfComposedCharacterSequences(for: NSRange(location: heading.1.location, length: min(1024, end - heading.1.location)))
                     guard range.length > 0, let reference = OriginalSourceReference.exact(
                         .init(documentID: note.id, quote: source.substring(with: range), utf16Hint: range.location), in: project) else { continue }
-                    let text = source.substring(with: NSRange(location: heading.1.upperBound, length: max(0, end - heading.1.upperBound)))
+                    var bodyStart = heading.1.upperBound
+                    while bodyStart < end {
+                        let ch = source.character(at: bodyStart)
+                        if ch == 0x20 || ch == 0x09 || ch == 0x0A || ch == 0x0D { bodyStart += 1 } else { break }
+                    }
+                    let previewRange = source.rangeOfComposedCharacterSequences(
+                        for: NSRange(location: bodyStart, length: min(1024, max(0, end - bodyStart))))
+                    let text = (previewRange.length > 0 ? source.substring(with: previewRange) : "")
                         .trimmingCharacters(in: .whitespacesAndNewlines)
                     self.records.append(.init(name: heading.0, aliases: "", note: String(text.prefix(240)), badge: "고증", role: note.title, tags: "", reference: reference))
                 }

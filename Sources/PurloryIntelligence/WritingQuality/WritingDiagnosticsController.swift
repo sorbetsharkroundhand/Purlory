@@ -382,8 +382,9 @@ package final class WritingDiagnosticsController: ObservableObject {
                 for window in self.index.windows(intersecting: range) {
                     guard let ownedStamp = self.stamp(digest: window.digest), self.owns(ownedEpoch, ownedStamp) else { return }
                     let context = Self.context(of: window)
-                    for segment in window.segments where segment.unsupported { self.state.coverage.unsupported.append(.init(segment.source)) }
-                    self.state.coverage.unsupported = Self.merged(self.state.coverage.unsupported)
+                    var unsupported = self.state.coverage.unsupported
+                    for segment in window.segments where segment.unsupported { unsupported.append(.init(segment.source)) }
+                    self.state.coverage.unsupported = Self.merged(unsupported)
                     let key = WritingDiagnosticsCache.Key(digest: window.digest, languageTag: self.language,
                         profileRevision: ownedStamp.profileRevision, providerRevision: ownedStamp.providerRevision, ruleRevision: ownedStamp.ruleRevision)
                     let diagnostics: [WritingDiagnostic]
@@ -405,16 +406,18 @@ package final class WritingDiagnosticsController: ObservableObject {
                     }
                     guard self.owns(ownedEpoch, ownedStamp) else { return }
                     let published = self.publish(diagnostics, window: window, stamp: ownedStamp)
+                    var coverage = self.state.coverage
                     if assessed && published && self.retainAssessment(context) {
-                        self.state.coverage.assessed = Self.merged(self.state.coverage.assessed + window.segments.filter(\.eligible).map { .init($0.source) })
-                        self.state.coverage.dirty = Self.subtract(context.nsRange, from: self.state.coverage.dirty)
+                        coverage.assessed = Self.merged(coverage.assessed + window.segments.filter(\.eligible).map { .init($0.source) })
+                        coverage.dirty = Self.subtract(context.nsRange, from: coverage.dirty)
                     } else {
                         failed.append(context)
-                        self.state.coverage.assessed = Self.subtract(context.nsRange, from: self.state.coverage.assessed)
+                        coverage.assessed = Self.subtract(context.nsRange, from: coverage.assessed)
                     }
-                    self.state.coverage.dirty = Self.merged(self.state.coverage.dirty + failed)
-                    for unassessed in failed { self.state.coverage.assessed = Self.subtract(unassessed.nsRange, from: self.state.coverage.assessed) }
-                    self.state.coverage.pending = Self.subtract(context.nsRange, from: self.state.coverage.pending)
+                    coverage.dirty = Self.merged(coverage.dirty + failed)
+                    for unassessed in failed { coverage.assessed = Self.subtract(unassessed.nsRange, from: coverage.assessed) }
+                    coverage.pending = Self.subtract(context.nsRange, from: coverage.pending)
+                    self.state.coverage = coverage
                     await Task.yield()
                     guard self.owns(ownedEpoch, ownedStamp) else { return }
                 }

@@ -91,17 +91,20 @@ package enum WritingProseProjection {
                 if trimmed == "$$" || (trimmed.hasSuffix("$$") && trimmed.count >= 2) { inMath = false }
             } else {
                 var body = range
-                if let match = alignment.firstMatch(in: line, range: NSRange(location: 0, length: range.length)) {
+                if line.hasPrefix("<p "),
+                   let match = alignment.firstMatch(in: line, range: NSRange(location: 0, length: range.length)) {
                     body = NSRange(location: offset + match.range(at: 1).location, length: match.range(at: 1).length)
                 }
-                let content = ns.substring(with: body)
+                let content = body == range ? line : ns.substring(with: body)
                 let completeMath = content.hasPrefix("$$") && content.hasSuffix("$$") && content.count >= 4
                 let opensMath = content.trimmingCharacters(in: .whitespaces) == "$$"
                     || (content.hasPrefix("$$") && !content.dropFirst(2).hasPrefix("$"))
                 if completeMath || opensMath {
                     inMath = !completeMath
-                } else if divider.firstMatch(in: content, range: NSRange(location: 0, length: body.length)) == nil {
-                    if let match = prefix.firstMatch(in: content, range: NSRange(location: 0, length: body.length)) {
+                } else if !(content.hasPrefix("---") && divider.firstMatch(in: content, range: NSRange(location: 0, length: body.length)) != nil) {
+                    if let first = content.unicodeScalars.first,
+                       "#-* >0123456789".unicodeScalars.contains(first),
+                       let match = prefix.firstMatch(in: content, range: NSRange(location: 0, length: body.length)) {
                         // Checkbox prefixes take precedence over the shorter bullet marker.
                         let trimmedContent = content.drop(while: { $0 == " " || $0 == "\t" })
                         let indentUTF16 = content.utf16.count - trimmedContent.utf16.count
@@ -109,7 +112,7 @@ package enum WritingProseProjection {
                             ? indentUTF16 + 6 : match.range.length
                         body.location += count; body.length -= count
                     }
-                    runs += inlineRuns(ns.substring(with: body), offset: body.location)
+                    runs += inlineRuns(body == range ? content : ns.substring(with: body), offset: body.location)
                 }
             }
             if end < ns.length { runs.append(Run(source: NSRange(location: end, length: 1), eligible: true)) }
@@ -150,8 +153,11 @@ package enum WritingProseProjection {
     package static func inlineRuns(_ text: String, offset: Int) -> [Run] {
         var omitted: [NSRange] = [], barriers: [NSRange] = []
         let spans = MarkdownInlineScanner.scan(text)
-        for region in MathScanner.regions(in: text, skipping: spans.filter { $0.style.code }.map(\.sourceRange)) {
-            omitted.append(region.range); barriers.append(region.range)
+        let ns = text as NSString
+        if ns.range(of: "$", options: .literal).location != NSNotFound {
+            for region in MathScanner.regions(in: text, skipping: spans.filter { $0.style.code }.map(\.sourceRange)) {
+                omitted.append(region.range); barriers.append(region.range)
+            }
         }
         for link in links(in: text) {
             if link.image { omitted.append(link.source); barriers.append(link.source) }
@@ -188,6 +194,7 @@ package enum WritingProseProjection {
     package struct Link { package let source: NSRange; package let label: NSRange; package let image: Bool }
     /// Reuse Purlory's balanced/escaped destination grammar; never expose a URL tail as prose.
     package static func links(in text: String) -> [Link] {
+        guard (text as NSString).range(of: "](", options: .literal).location != NSNotFound else { return [] }
         let body = text[...]
         var cursor = body.startIndex, result: [Link] = []
         func skipSpaces(_ index: inout String.Index) {

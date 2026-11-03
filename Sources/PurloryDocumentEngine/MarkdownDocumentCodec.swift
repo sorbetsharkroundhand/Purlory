@@ -28,6 +28,40 @@ package struct MarkdownDocumentCodec {
         }
         self.trailingLineFeed = trailingLineFeed
     }
+    package mutating func replaceSubrange(_ oldRange: Range<Int>, with newCount: Int, in rows: [Row], trailingLineFeed: Bool) {
+        let oldRowCount = source.chunkCount
+        guard oldRange.lowerBound >= 0, oldRange.upperBound <= oldRowCount,
+              newCount >= 0, oldRowCount - oldRange.count + newCount == rows.count,
+              !rows.isEmpty else {
+            reset(rows, trailingLineFeed: trailingLineFeed); return
+        }
+        if oldRange.count == newCount {
+            let chunkStart = max(0, oldRange.lowerBound - 1)
+            let chunkEnd = min(rows.count, oldRange.upperBound + 1)
+            var changed = Set(chunkStart..<chunkEnd)
+            if self.trailingLineFeed != trailingLineFeed, let last = rows.indices.last {
+                changed.insert(last)
+            }
+            for row in changed.sorted() {
+                source = try! source.replacingChunk(at: row,
+                    with: Self.chunk(at: row, rows: rows, trailingLineFeed: trailingLineFeed))
+            }
+            self.trailingLineFeed = trailingLineFeed
+            return
+        }
+        let chunkStart = max(0, oldRange.lowerBound - 1)
+        let oldChunkEnd = min(oldRowCount, oldRange.upperBound + 1)
+        let newChunkEnd = min(rows.count, oldRange.lowerBound + newCount + 1)
+        let replacementChunks = (chunkStart..<newChunkEnd).map {
+            Self.chunk(at: $0, rows: rows, trailingLineFeed: trailingLineFeed)
+        }
+        source = try! source.replacingChunks(in: chunkStart..<oldChunkEnd, with: replacementChunks)
+        if self.trailingLineFeed != trailingLineFeed, let last = rows.indices.last, last >= newChunkEnd {
+            source = try! source.replacingChunk(at: last,
+                with: Self.chunk(at: last, rows: rows, trailingLineFeed: trailingLineFeed))
+        }
+        self.trailingLineFeed = trailingLineFeed
+    }
     private static func chunk(at index: Int, rows: [Row], trailingLineFeed: Bool) -> String {
         let row = rows[index]
         let previousCode = index > 0 && rows[index - 1].isCode

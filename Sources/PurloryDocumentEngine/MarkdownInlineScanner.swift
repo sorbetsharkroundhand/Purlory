@@ -24,6 +24,7 @@ package enum MarkdownInlineScanner {
     package static let italic = regex(#"(?<!\*)\*([^*\n]+)\*(?!\*)"#)
     package static let strikethrough = regex(#"(?<!~)~~([^~\n]+)~~(?!~)"#)
     package static let highlight = regex(#"(?<!=)==([^=\n]+)==(?!=)"#)
+    private static let markerCharacters = CharacterSet(charactersIn: "<`*~=")
     private enum Kind { case font, code, boldItalic, bold, italic, strikethrough, highlight }
     private static func regex(_ pattern: String) -> NSRegularExpression {
         try! NSRegularExpression(pattern: pattern)
@@ -49,6 +50,10 @@ package enum MarkdownInlineScanner {
         ]
         while location < ns.length {
             let search = NSRange(location: location, length: ns.length - location)
+            if ns.rangeOfCharacter(from: markerCharacters, options: [], range: search).location == NSNotFound {
+                append(search, inherited)
+                break
+            }
             var best: (NSTextCheckingResult, Kind)?
             for (rx, kind) in rules {
                 if let match = rx.firstMatch(in: text, range: search),

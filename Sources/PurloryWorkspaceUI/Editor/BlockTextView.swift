@@ -214,6 +214,8 @@ final class BlockTextView: NSTextView {
     /// 메모리는 대략 문서 크기의 사본 하나(600k자 ≈ 1.2MB) — 지연을 위한 거래.
     var markdownCodec = MarkdownDocumentCodec()
     var serialLines: [(text: String, isCode: Bool, codeLang: String?)] = []
+    var serialCacheRebuildCount = 0
+    var writingDecorationLookupCount = 0
     /// false면 다음 `serialize()`가 전체 재구축한다 — 정답이 보장되는 폴백.
     var serialLinesValid = false
     /// 추적 중인 문단만 다시 브리지하면 되는 상태.
@@ -222,6 +224,10 @@ final class BlockTextView: NSTextView {
     var serialFastIndex: Int?
     /// 그 문단의 시작 오프셋 — 편집이 같은 문단인지 확인하는 키.
     var serialFastStart = 0
+    /// 마지막으로 `serialLines`가 동기화되었을 때의 `textStorage` UTF-16 길이.
+    var serialSyncedLength = 0
+    /// 줄바꿈/병합/속성 편집 등 다중 문단 범위를 부분 갱신하기 위한 더티 범위.
+    var serialDirtyRange: NSRange?
     /// `shouldChangeText`가 이 편집을 가로챘는가 — 못 가로챈 편집(프로그래matic)은
     /// 삭제 개행 수를 알 수 없어 안전하게 전체 재구축한다.
     var serialPendingTracked = false

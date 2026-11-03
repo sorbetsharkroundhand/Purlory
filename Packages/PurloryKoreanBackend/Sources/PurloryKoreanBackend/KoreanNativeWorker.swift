@@ -3,7 +3,12 @@ import Foundation
 public final class KoreanNativeWorker: @unchecked Sendable {
     public static let maximumInputUTF16 = 1024
     public static var bundledResourcesURL: URL {
-        (Bundle.module.resourceURL ?? Bundle.module.bundleURL).appendingPathComponent("Kiwi")
+        if Bundle.main.bundleURL.pathExtension == "app",
+           let url = Bundle.main.url(forResource: "Purlory_PurloryKoreanBackend", withExtension: "bundle"),
+           let bundle = Bundle(url: url) {
+            return (bundle.resourceURL ?? bundle.bundleURL).appendingPathComponent("Kiwi")
+        }
+        return (Bundle.module.resourceURL ?? Bundle.module.bundleURL).appendingPathComponent("Kiwi")
     }
     private let ownership = NativeOwnership()
     private let executor = NativeSerialThread()

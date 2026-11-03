@@ -133,7 +133,7 @@ extension BlockTextView {
                 var codeLang: String?
                 // 정렬 래퍼(<p align="…">…</p>)는 블록 판정 전에 벗긴다.
                 var align: String?
-                if !inCode, !inMathGroup {
+                if !inCode, !inMathGroup, line.hasPrefix("<p ") {
                     let full = NSRange(location: 0, length: (line as NSString).length)
                     if let match = Self.alignWrapper.firstMatch(in: line, range: full) {
                         align = (line as NSString).substring(with: match.range(at: 1))
@@ -177,7 +177,7 @@ extension BlockTextView {
                 } else if let listMatch = Self.parseListPrefix(line) {
                     block = listMatch.block; checked = listMatch.checked
                     marker = listMatch.marker; indent = listMatch.indent; line = listMatch.body
-                } else if line.range(of: #"^---+\s*$"#, options: .regularExpression) != nil {
+                } else if line.hasPrefix("---"), line.range(of: #"^---+\s*$"#, options: .regularExpression) != nil {
                     block = .divider; line = ""
                 } else if line.hasPrefix("$$"), line.hasSuffix("$$"), line.count >= 4 {
                     block = .math; line = String(line.dropFirst(2).dropLast(2))
@@ -188,7 +188,7 @@ extension BlockTextView {
                     block = .math
                     mathDelim = "open"
                     inMathGroup = true
-                } else if line.range(
+                } else if line.hasPrefix("!["), line.range(
                     of: #"^!\[[^\]]*\]\([^)\s]+\)(?:\{[^}]*\})?$"#,
                     options: .regularExpression) != nil {
                     // 한 줄 전체가 이미지 마크다운 — 원문(![](src){…})을 소스로 보관하고
@@ -347,6 +347,8 @@ extension BlockTextView {
         writingProjectionCapture.beginSerialization(storage: textStorage)
         if !serialLinesValid {
             rebuildSerialCache()
+        } else if let dirty = serialDirtyRange {
+            applySerialDirtyRangeUpdate(dirty)
         } else if serialFastDirty {
             applyFastSerialUpdate()
         }
@@ -506,6 +508,7 @@ extension BlockTextView {
     /// 전체 재구축 — 예전 serialize의 전체 순회. `serialLinesValid`가 false일 때만
     /// 돈다(첫 호출·구조 변화·불확실). 이후 증분 갱신의 기준선이 된다.
     func rebuildSerialCache() {
+        serialCacheRebuildCount += 1
         let ns = string as NSString
         var lines: [(text: String, isCode: Bool, codeLang: String?)] = []
         let selLoc = min(selectedRange().location, ns.length)
@@ -529,8 +532,13 @@ extension BlockTextView {
         markdownCodec.reset(lines, trailingLineFeed: ns.length > 0 && ns.character(at: ns.length - 1) == 0x0A)
         serialLinesValid = true
         serialFastDirty = false
+        serialDirtyRange = nil
+        serialSyncedLength = ns.length
         serialFastIndex = fastIdx
         serialFastStart = fastStart
+        if ns.length > 0, mediaParagraphIndex?.utf16Length != ns.length {
+            _ = indexedMediaParagraphs(in: NSRange(location: 0, length: 0))
+        }
     }
 
     /// 빠른 경로: 추적 중인 문단 하나만 다시 브리지해 캐시에 splice.
@@ -558,6 +566,82 @@ extension BlockTextView {
         serialLines[idx] = line
         markdownCodec.update(serialLines, at: idx, codeBoundaryChanged: codeBoundaryChanged,
             trailingLineFeed: ns.length > 0 && ns.character(at: ns.length - 1) == 0x0A)
+        serialSyncedLength = ns.length
+    }
+
+    /// 문단 이동·줄바꿈·병합·속성 편집 시 더티 문단 범위만 다시 직렬화해 캐시에 splice한다.
+    func applySerialDirtyRangeUpdate(_ dirty: NSRange) {
+        serialDirtyRange = nil
+        serialFastDirty = false
+        let ns = string as NSString
+        guard serialSyncedLength > 0, ns.length > 0, !serialLines.isEmpty,
+              let index = mediaParagraphIndex, index.utf16Length == ns.length else {
+            rebuildSerialCache()
+            return
+        }
+        var effectiveDirty = dirty
+        if let captureDirty = writingProjectionCapture.currentDirtyRange {
+            let start = min(effectiveDirty.location, captureDirty.location)
+            let end = max(effectiveDirty.upperBound, captureDirty.upperBound)
+            effectiveDirty = NSRange(location: start, length: max(0, end - start))
+        }
+        let queryStart = min(max(0, effectiveDirty.location - 1), ns.length)
+        let queryEnd = min(max(queryStart, effectiveDirty.upperBound + 1), ns.length)
+        let newParaRange = ns.paragraphRange(
+            for: NSRange(location: queryStart, length: queryEnd - queryStart))
+        guard let startRank = index.paragraphRank(forParagraphAt: newParaRange.location),
+              let newEndRank = index.paragraphRank(forParagraphAt: newParaRange.upperBound) else {
+            rebuildSerialCache()
+            return
+        }
+        let newTotalRows = index.paragraphCount
+        let oldTotalRows = serialLines.count
+        let oldEndRank = oldTotalRows - (newTotalRows - newEndRank)
+        guard startRank >= 0, startRank <= oldEndRank, oldEndRank <= oldTotalRows,
+              startRank <= newEndRank, newEndRank <= newTotalRows else {
+            rebuildSerialCache()
+            return
+        }
+        var updatedLines: [(text: String, isCode: Bool, codeLang: String?)] = []
+        updatedLines.reserveCapacity(newEndRank - startRank)
+        var location = newParaRange.location
+        let selLoc = min(selectedRange().location, ns.length)
+        var fastIdx: Int?
+        var fastStart = 0
+        while location < newParaRange.upperBound {
+            let para = ns.paragraphRange(for: NSRange(location: location, length: 0))
+            guard para.upperBound > location else { break }
+            var line = serializedLine(of: para)
+            line.text.makeContiguousUTF8()
+            updatedLines.append(line)
+            if fastIdx == nil, para.lowerBound <= selLoc, selLoc <= para.upperBound {
+                fastIdx = startRank + updatedLines.count - 1
+                fastStart = para.location
+            }
+            location = para.upperBound
+        }
+        guard updatedLines.count == newEndRank - startRank else {
+            rebuildSerialCache()
+            return
+        }
+        let trailingLineFeed = ns.length > 0 && ns.character(at: ns.length - 1) == 0x0A
+        serialLines.replaceSubrange(startRank..<oldEndRank, with: updatedLines)
+        markdownCodec.replaceSubrange(
+            startRank..<oldEndRank, with: updatedLines.count,
+            in: serialLines, trailingLineFeed: trailingLineFeed)
+        serialSyncedLength = ns.length
+        if let fastIdx {
+            serialFastIndex = fastIdx
+            serialFastStart = fastStart
+        } else {
+            let caretPara = ns.paragraphRange(for: NSRange(location: selLoc, length: 0))
+            if let rank = index.paragraphRank(forParagraphAt: caretPara.location), rank < serialLines.count {
+                serialFastIndex = rank
+                serialFastStart = caretPara.location
+            } else {
+                serialFastIndex = nil
+            }
+        }
     }
 
     // MARK: 긴 문단 나누기 (docs/editor-paragraph-split.md)
@@ -677,31 +761,54 @@ extension BlockTextView {
         serialPendingTracked = false
         serialPendingRemovedNewlines = 0
 
-        guard serialLinesValid else { return }  // 이미 재구축 예약됨
+        guard serialLinesValid, !editedMask.isEmpty else { return }
 
         let ns = string as NSString
-        // 안전 조건 ①: 이 편집이 shouldChangeText를 거쳤고, 개행을 지우지 않았다.
-        guard editedMask.contains(.editedCharacters), tracked, removedNewlines == 0 else {
-            serialLinesValid = false
-            return
-        }
-        // 안전 조건 ②: 삽입된 새 텍스트에 개행이 없다(문단 분할 없음).
         let clamped = NSRange(
             location: min(editedRange.location, ns.length),
             length: min(editedRange.length, max(0, ns.length - editedRange.location)))
-        if clamped.length > 0,
-            ns.rangeOfCharacter(from: .newlines, options: [], range: clamped).location != NSNotFound
-        {
-            serialLinesValid = false
-            return
+
+        // 단일 문단 내 문자 편집이고 기존 범위 더티가 없을 때:
+        if serialDirtyRange == nil, editedMask.contains(.editedCharacters), tracked, removedNewlines == 0,
+           clamped.length == 0 || ns.rangeOfCharacter(from: .newlines, options: [], range: clamped).location == NSNotFound {
+            let para = ns.paragraphRange(
+                for: NSRange(location: min(editedRange.location, max(0, ns.length)), length: 0))
+            // 문단 내부(경계 1글자 안쪽) 편집은 이웃 문단 프로젝션 캡처에 영향을 주지 않는다.
+            let strictlyInsideParagraph = clamped.location > para.location
+                && (clamped.upperBound < para.upperBound || para.upperBound == ns.length)
+            if para.location == serialFastStart, strictlyInsideParagraph {
+                serialFastDirty = true
+                return
+            }
+            if !serialFastDirty, strictlyInsideParagraph, ns.length > 0,
+               let index = mediaParagraphIndex, index.utf16Length == ns.length,
+               index.paragraphCount == serialLines.count,
+               let rank = index.paragraphRank(forParagraphAt: para.location),
+               rank < serialLines.count {
+                serialFastIndex = rank
+                serialFastStart = para.location
+                serialFastDirty = true
+                return
+            }
         }
-        // 안전 조건 ③: 편집이 추적 중인 문단 안이다.
-        let para = ns.paragraphRange(
-            for: NSRange(location: min(editedRange.location, max(0, ns.length)), length: 0))
-        if para.location == serialFastStart {
-            serialFastDirty = true
+
+        // 다중 문단/경계/개행/속성 편집: 더티 범위를 누적해 부분 문단 splice로 처리한다.
+        let oldRange = NSRange(
+            location: editedRange.location,
+            length: max(0, editedRange.length - delta))
+        var baseDirty = serialDirtyRange
+        if baseDirty == nil, serialFastDirty {
+            let fastEnd = min(ns.length, max(serialFastStart, editedRange.location))
+            baseDirty = NSRange(location: min(serialFastStart, fastEnd), length: max(0, fastEnd - serialFastStart))
+            serialFastDirty = false
+        }
+        if let previous = baseDirty {
+            let rebased = rebaseMediaRange(previous, replacing: oldRange, withLength: clamped.length)
+            let start = min(rebased.location, clamped.location)
+            let end = max(rebased.upperBound, clamped.upperBound)
+            serialDirtyRange = NSRange(location: start, length: max(0, end - start))
         } else {
-            serialLinesValid = false  // 다른 문단 — 재구축이 새 커서 문단으로 재조준
+            serialDirtyRange = clamped
         }
     }
 

@@ -33,6 +33,7 @@ final class WritingEditorProjectionCapture {
     private var boundRevision: UInt64?
     private var boundIdentity: ProjectRuntimeIdentity?
     private var dirty: NSRange?
+    var currentDirtyRange: NSRange? { dirty }
     private var oldDirty: NSRange?
     private var changes: [Change] = []
     private var bindingIdentity: ProjectRuntimeIdentity?

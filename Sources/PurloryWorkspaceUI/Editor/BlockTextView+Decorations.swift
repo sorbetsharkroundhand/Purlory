@@ -148,10 +148,15 @@ extension BlockTextView {
     func decorateInlineLinks(in range: NSRange) {
         guard !isSourceMode, let storage = textStorage, range.length > 0 else { return }
         let ns = storage.string as NSString
-        var loc = range.location
-        while loc < min(range.upperBound, ns.length) {
-            let para = ns.paragraphRange(for: NSRange(location: loc, length: 0))
-            defer { loc = max(para.upperBound, loc + 1) }
+        let clamped = NSIntersectionRange(range, NSRange(location: 0, length: ns.length))
+        guard clamped.length > 0,
+              ns.range(of: "](", options: .literal, range: clamped).location != NSNotFound else { return }
+        var loc = clamped.location
+        while loc < clamped.upperBound {
+            let match = ns.range(of: "](", options: .literal, range: NSRange(location: loc, length: clamped.upperBound - loc))
+            guard match.location != NSNotFound else { break }
+            let para = ns.paragraphRange(for: NSRange(location: match.location, length: 0))
+            defer { loc = max(para.upperBound, match.upperBound) }
             let info = storageBlockInfo(in: para)
             guard ![PurloryBlock.code, .math, .divider, .image].contains(info.block) else { continue }
             let text = paragraphContent(para)

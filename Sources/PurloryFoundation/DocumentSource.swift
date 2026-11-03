@@ -129,6 +129,19 @@ public struct DocumentSource: Sendable, Equatable {
         return DocumentSource(root: root, random: random, visits: visits)
     }
 
+    package func replacingChunks(in range: Range<Int>, with texts: [String]) throws -> DocumentSource {
+        guard range.lowerBound >= 0, range.upperBound <= chunkCount else { throw EditError.outOfBounds }
+        if range.count == 1, texts.count == 1 {
+            return try replacingChunk(at: range.lowerBound, with: texts[0])
+        }
+        var visits = 0, random = storage.random
+        let (before, rest) = Tree.split(storage.root, count: range.lowerBound, visits: &visits)
+        let (_, after) = Tree.split(rest, count: range.count, visits: &visits)
+        let replacement = Self.tree(texts, random: &random, visits: &visits)
+        let root = Tree.merge(Tree.merge(before, replacement, visits: &visits), after, visits: &visits)
+        return DocumentSource(root: root, random: random, visits: visits)
+    }
+
     private func validate(_ range: NSRange) throws {
         guard range.location >= 0, range.location <= utf16Length, range.length >= 0,
               range.length <= utf16Length - range.location else { throw EditError.outOfBounds }

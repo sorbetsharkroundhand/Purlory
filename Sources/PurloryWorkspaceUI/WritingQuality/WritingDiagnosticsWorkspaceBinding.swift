@@ -13,6 +13,7 @@ final class WritingDiagnosticsWorkspaceBinding {
     private var epoch: UInt64 = 0
     private var active = true
     private var findingIDs: [String: String] = [:]
+    private var insightCache: [String: (stamp: WritingDiagnosticsStamp, insight: MarginInsight?)] = [:]
     private let actions: WritingDiagnosticsActions
 
     init(controller: WritingDiagnosticsController, session: ProjectSession, bridge: ProjectEditorBridge, margin: LivingMarginModel) {
@@ -56,11 +57,25 @@ final class WritingDiagnosticsWorkspaceBinding {
     private func publish() {
         guard let snapshot = session?.selectedDocumentSnapshot, let editor = bridge?.editor,
               editor.writingRuntimeIdentityProvider?() == snapshot.identity else {
-            findingIDs.removeAll(); margin?.replace(writingQuality: []); return
+            findingIDs.removeAll(); insightCache.removeAll(); margin?.replace(writingQuality: []); return
         }
         var prepared = controller.state
         prepared.findings = prepared.findings.filter { controller.isCurrent($0.stamp) && $0.stamp.runtime == snapshot.identity }
-        let insights = WritingDiagnosticsPresentation.insights(from: prepared)
+        var nextCache: [String: (stamp: WritingDiagnosticsStamp, insight: MarginInsight?)] = [:]
+        nextCache.reserveCapacity(prepared.findings.count)
+        var insights: [MarginInsight] = []
+        insights.reserveCapacity(prepared.findings.count)
+        for finding in prepared.findings {
+            let insight: MarginInsight?
+            if let cached = insightCache[finding.id], cached.stamp == finding.stamp {
+                insight = cached.insight
+            } else {
+                insight = WritingDiagnosticsPresentation.insight(for: finding)
+            }
+            nextCache[finding.id] = (finding.stamp, insight)
+            if let insight { insights.append(insight) }
+        }
+        insightCache = nextCache
         findingIDs = Dictionary(uniqueKeysWithValues: prepared.findings.map { ("writing-quality:" + $0.id, $0.id) })
         editor.setWritingDiagnostics(prepared.findings, revision: editor.writingNativeRevision)
         margin?.replace(writingQuality: insights)
@@ -81,7 +96,7 @@ final class WritingDiagnosticsWorkspaceBinding {
         return try actions.perform(action, findingID: findingID)
     }
     func resetPublication() {
-        epoch &+= 1; publication?.cancel(); publication = nil; findingIDs.removeAll()
+        epoch &+= 1; publication?.cancel(); publication = nil; findingIDs.removeAll(); insightCache.removeAll()
         if let editor = bridge?.editor { editor.setWritingDiagnostics([], revision: editor.writingNativeRevision) }
         margin?.replace(writingQuality: [])
     }
