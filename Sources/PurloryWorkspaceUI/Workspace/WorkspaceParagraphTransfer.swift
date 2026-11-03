@@ -43,6 +43,22 @@ enum WorkspaceParagraphTransfer {
         targetBody = targetNS.replacingCharacters(in: NSRange(location: insertion, length: 0), with: payload)
         var edits = [ProjectDocumentEdit(key: target.key, expectedBody: target.body, body: targetBody)]
         if !same && !copying { edits.append(.init(key: source.key, expectedBody: source.body, body: removed)) }
+        if !copying,
+           requests.editor(for: source.key)?.hasMarkedText() != true,
+           requests.editor(for: target.key)?.hasMarkedText() != true {
+            _ = ManuscriptVersionActions.captureSafetySnapshotIfNeeded(
+                for: source.key,
+                label: "문단 이동 전 자동 보관",
+                in: session
+            )
+            if !same {
+                _ = ManuscriptVersionActions.captureSafetySnapshotIfNeeded(
+                    for: target.key,
+                    label: "문단 이동 전 자동 보관",
+                    in: session
+                )
+            }
+        }
         try WorkspaceDocumentTransaction.perform(edits, in: session, requests: requests, undoManager: undoManager,
             actionName: copying ? "문단 복제" : "문단 이동")
         requests.spatialWorkspace?.open(target.key.documentID)

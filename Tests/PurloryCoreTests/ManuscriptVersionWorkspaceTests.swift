@@ -1,6 +1,7 @@
 import AppKit
 import XCTest
 @testable import PurloryCore
+@testable import PurloryStorage
 @testable import PurloryWorkspaceUI
 
 @MainActor final class ManuscriptVersionWorkspaceTests: XCTestCase {
@@ -23,6 +24,10 @@ import XCTest
         try await session.saveAndActivate(project)
         try await store.addAsset(Data([1, 2, 3]), reference: "images/a.png", to: project.id)
         let version = try await ManuscriptVersionActions.capture(session: session, requests: ProjectEditorRequests(), label: "초고")
+        let sha = try XCTUnwrap(version.gitCommitSHA)
+        XCTAssertEqual(sha.count, 40)
+        let gitReadback = try await store.readManuscriptGitBlob(projectID: project.id, commitSHA: sha, documentID: version.documentID)
+        XCTAssertEqual(gitReadback, version.text)
         session.updateSelectedDocumentBody("바뀐 원고"); try await session.saveNow()
         try await store.writeIntelligence(Data("derived".utf8), projectID: project.id, documentID: version.documentID)
         try await store.removeIntelligence(projectID: project.id, documentID: version.documentID)
@@ -40,6 +45,57 @@ import XCTest
         XCTAssertEqual(try String(contentsOf: destination, encoding: .utf8), version.text)
         XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("images/a.png")), Data([1, 2, 3]))
     }
+
+    func testRealGitRepositoryBranchingMergingAndQuickNoteIsolation() async throws {
+        let root = try temporaryProjectRoot(); defer { try? FileManager.default.removeItem(at: root) }
+        let store = ProjectStore(root: root), defaults = UserDefaults(suiteName: UUID().uuidString)!
+        let session = ProjectSession(store: store, defaults: defaults, autosaveDelay: .seconds(3600))
+        var project = projectFixture()
+        let manuscriptID = project.documents[0].id
+        let noteID = project.documents[1].id
+        project.documents[0].body = "1문단 시작\n\n2문단 유지\n\n3문단 결말\n"
+        project.documents[1].body = "초기 메모\n"
+        try await session.saveAndActivate(project)
+
+        let requests = ProjectEditorRequests()
+        let editor = BlockTextView(frame: .init(x: 0, y: 0, width: 600, height: 500))
+        let undo = UndoManager(); undo.groupsByEvent = false; editor.documentUndoManager = undo
+        editor.load(markdown: project.documents[0].body)
+        requests.register(editor, for: .init(projectID: project.id, documentID: manuscriptID))
+
+        // Quick note appends to the .note document without switching away from the manuscript.
+        let targetNoteID = try ManuscriptVersionActions.appendQuickNote("갑자기 떠오른 대사", session: session, requests: requests)
+        XCTAssertEqual(targetNoteID, noteID)
+        XCTAssertEqual(session.selectedDocumentID, manuscriptID)
+        XCTAssertTrue(session.document(noteID)?.body.contains("갑자기 떠오른 대사") == true)
+
+        // 1. Save initial manuscript version
+        let baseVersion = try await ManuscriptVersionActions.capture(session: session, requests: requests, label: "1장 초고")
+        XCTAssertEqual(baseVersion.branchName, "본편")
+        XCTAssertNotNil(baseVersion.gitCommitSHA)
+
+        // 2. Create a branch ("다른 결말") and edit the 3rd paragraph
+        let branchStart = try await ManuscriptVersionActions.createBranch(name: "다른 결말", from: baseVersion, session: session, requests: requests, undoManager: undo)
+        XCTAssertEqual(branchStart.branchName, "다른 결말")
+        let altBody = "1문단 시작\n\n2문단 유지\n\n3문단 배드엔딩 결말\n"
+        session.updateSelectedDocumentBody(altBody); editor.load(markdown: altBody)
+        _ = try await ManuscriptVersionActions.capture(session: session, requests: requests, label: "배드엔딩 작성")
+
+        // 3. Switch back to "본편" and edit the 1st paragraph
+        try await ManuscriptVersionActions.switchBranch(to: "본편", session: session, requests: requests, undoManager: undo)
+        XCTAssertEqual(session.selectedDocument?.body, "1문단 시작\n\n2문단 유지\n\n3문단 결말\n")
+        let mainBody = "1문단 새로운 시작\n\n2문단 유지\n\n3문단 결말\n"
+        session.updateSelectedDocumentBody(mainBody); editor.load(markdown: mainBody)
+        _ = try await ManuscriptVersionActions.capture(session: session, requests: requests, label: "본편 도입부 수정")
+
+        // 4. Merge "다른 결말" into "본편" (3-way merge combines 1st paragraph from "본편" and 3rd paragraph from "다른 결말")
+        let mergeCommit = try await ManuscriptVersionActions.applyMerge(from: "다른 결말", session: session, requests: requests, undoManager: undo)
+        XCTAssertEqual(mergeCommit.parentIDs.count, 2)
+        XCTAssertEqual(session.selectedDocument?.body, "1문단 새로운 시작\n\n2문단 유지\n\n3문단 배드엔딩 결말\n")
+        // Note document remains untouched by manuscript branch switches and merges
+        XCTAssertTrue(session.document(noteID)?.body.contains("갑자기 떠오른 대사") == true)
+    }
+
     func testRestoreSynchronizesNativeSourceAndUndoAndRejectsStaleRuntimeAndIME() async throws {
         let root = try temporaryProjectRoot(); defer { try? FileManager.default.removeItem(at: root) }
         let session = ProjectSession(store: ProjectStore(root: root), defaults: UserDefaults(suiteName: UUID().uuidString)!, autosaveDelay: .seconds(3600))
@@ -71,5 +127,44 @@ import XCTest
         XCTAssertEqual(session.selectedDocument?.body, changed)
         editor.unmarkText()
         undo.endUndoGrouping()
+    }
+
+    func testParagraphMoveAutomaticallyCapturesSafetyVersionSnapshot() async throws {
+        let root = try temporaryProjectRoot(); defer { try? FileManager.default.removeItem(at: root) }
+        let store = ProjectStore(root: root), defaults = UserDefaults(suiteName: UUID().uuidString)!
+        let session = ProjectSession(store: store, defaults: defaults, autosaveDelay: .seconds(3600))
+        var project = projectFixture()
+        let manuscriptID = project.documents[0].id
+        let originalBody = "첫 문단입니다.\n\n이동할 문단입니다.\n\n마지막 문단입니다.\n"
+        project.documents[0].body = originalBody
+        try await session.saveAndActivate(project)
+
+        let key = ProjectDocumentKey(projectID: project.id, documentID: manuscriptID)
+        let moveChunk = "이동할 문단입니다.\n"
+        let sourceAnchor = WorkspaceParagraphAnchor(
+            key: key,
+            body: originalBody,
+            range: (originalBody as NSString).range(of: moveChunk)
+        )
+        let targetAnchor = WorkspaceParagraphAnchor(
+            key: key,
+            body: originalBody,
+            range: (originalBody as NSString).range(of: "첫 문단입니다.\n")
+        )
+        let undo = UndoManager(); undo.groupsByEvent = false
+        try WorkspaceParagraphTransfer.perform(
+            source: sourceAnchor,
+            target: targetAnchor,
+            after: false,
+            copy: false,
+            session: session,
+            requests: ProjectEditorRequests(),
+            undoManager: undo
+        )
+
+        let savedVersions = try ManuscriptVersion.list(in: XCTUnwrap(session.activeProject?.userData), documentID: manuscriptID)
+        XCTAssertEqual(savedVersions.count, 1)
+        XCTAssertEqual(savedVersions.first?.label, "문단 이동 전 자동 보관")
+        XCTAssertEqual(savedVersions.first?.text, originalBody)
     }
 }

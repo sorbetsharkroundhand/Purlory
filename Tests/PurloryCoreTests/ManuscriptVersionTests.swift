@@ -3,8 +3,8 @@ import XCTest
 
 final class ManuscriptVersionTests: XCTestCase {
     private let key = ProjectDocumentKey(projectID: WritingProjectID(), documentID: WritingDocumentID())
-    private func source(_ body: String, generation: UInt64 = 1) -> ProjectDocumentSnapshot {
-        .init(identity: .init(key: key, generation: generation), title: "원고", body: body, kind: .manuscript, mode: .general)
+    private func source(_ body: String, generation: UInt64 = 1, kind: WritingDocument.Kind = .manuscript) -> ProjectDocumentSnapshot {
+        .init(identity: .init(key: key, generation: generation), title: "원고", body: body, kind: kind, mode: .general)
     }
     func testDurableRoundTripAndParagraphChangesPreserveOriginalUnicodeAndMarkup() throws {
         let original = "첫 문단🙂\n\n**이전 문장** $x$\n\n![](images/a.png)\n"
@@ -17,6 +17,42 @@ final class ManuscriptVersionTests: XCTestCase {
         let changed = try XCTUnwrap(comparison.changes.firstIndex { $0.saved.contains("이전 문장") })
         XCTAssertEqual(try comparison.restoredBody(change: changed), current.replacingOccurrences(of: "바꾼 문장", with: "이전 문장"))
         XCTAssertEqual(try comparison.restoredBody(), original)
+    }
+    func testNoteAndReferenceDocumentsRefuseVersionCapture() throws {
+        XCTAssertThrowsError(try ManuscriptVersion.capture(source("단순 메모", kind: .note))) { error in
+            XCTAssertEqual(error as? ManuscriptVersionError, .unsupportedDocumentKind)
+        }
+        XCTAssertThrowsError(try ManuscriptVersion.capture(source("참고 자료", kind: .reference))) { error in
+            XCTAssertEqual(error as? ManuscriptVersionError, .unsupportedDocumentKind)
+        }
+    }
+    func testLowestCommonAncestorAndThreeWayParagraphMerge() throws {
+        let root = try ManuscriptVersion.capture(source("1문단\n\n2문단\n\n3문단\n"), label: "루트")
+        let mainNext = try ManuscriptVersion.capture(
+            source("1문단 수정(본편)\n\n2문단\n\n3문단\n"),
+            label: "본편 수정",
+            parentIDs: [root.id],
+            branchName: "본편"
+        )
+        let altNext = try ManuscriptVersion.capture(
+            source("1문단\n\n2문단\n\n3문단 수정(갈림길)\n"),
+            label: "갈림길 수정",
+            parentIDs: [root.id],
+            branchName: "다른 결말"
+        )
+        let all = [root, mainNext, altNext]
+        let lca = ManuscriptVersion.lowestCommonAncestor(of: mainNext.id, and: altNext.id, in: all)
+        XCTAssertEqual(lca?.id, root.id)
+
+        let cleanMerge = ManuscriptThreeWayMerge.merge(base: lca?.text, ours: mainNext.text, theirs: altNext.text)
+        XCTAssertFalse(cleanMerge.hasConflicts)
+        XCTAssertEqual(cleanMerge.resolvedText(), "1문단 수정(본편)\n\n2문단\n\n3문단 수정(갈림길)\n")
+
+        let conflictingAlt = "1문단 수정(갈림길)\n\n2문단\n\n3문단\n"
+        let conflictMerge = ManuscriptThreeWayMerge.merge(base: lca?.text, ours: mainNext.text, theirs: conflictingAlt)
+        XCTAssertEqual(conflictMerge.conflicts.count, 1)
+        XCTAssertEqual(conflictMerge.resolvedText(using: [0: .theirs]), "1문단 수정(갈림길)\n\n2문단\n\n3문단\n")
+        XCTAssertEqual(conflictMerge.resolvedText(using: [0: .both]), "1문단 수정(본편)\n\n1문단 수정(갈림길)\n\n2문단\n\n3문단\n")
     }
     func testSceneReanchorsByUniqueOriginalHeadingAndPreservesOtherScenes() throws {
         let version = try ManuscriptVersion.capture(source("# 시작\n처음\n\n# 밤\n이전 장면🙂\n"), sceneAt: 17)
@@ -54,5 +90,23 @@ final class ManuscriptVersionTests: XCTestCase {
         XCTAssertThrowsError(try ManuscriptVersion.list(in: [version.userDataKey: Data("broken".utf8)], documentID: key.documentID))
         let foreign = ProjectDocumentSnapshot(identity: .init(key: .init(projectID: key.projectID, documentID: WritingDocumentID()), generation: 1), title: "다른 원고", body: "원문", kind: .manuscript, mode: .general)
         XCTAssertThrowsError(try version.comparison(with: foreign))
+    }
+    func testResumeBriefExtractsSceneHeadingExcerptAndLinkedQuickNotes() throws {
+        let docID = WritingDocumentID()
+        let noteID = WritingDocumentID()
+        let project = WritingProject(
+            id: WritingProjectID(),
+            title: "소설 프로젝트",
+            mode: .fiction,
+            documents: [
+                WritingDocument(id: docID, title: "1장", body: "# 새벽 역\n\n기차가 도착했다.\n\n# 밤의 골목\n\n발소리가 멀어졌다.\n", kind: .manuscript),
+                WritingDocument(id: noteID, title: "빠른 메모", body: "- [1장] 시계탑 복선 추가\n- [2장] 다른 장 메모\n- [1장] 마지막 대사 톤 낮추기\n", kind: .note)
+            ]
+        )
+        let brief = try XCTUnwrap(ManuscriptResumeBrief.build(for: docID, in: project))
+        XCTAssertEqual(brief.currentSceneHeading, "밤의 골목")
+        XCTAssertEqual(brief.trailingExcerpt, "발소리가 멀어졌다.")
+        XCTAssertEqual(brief.linkedNotes, ["마지막 대사 톤 낮추기", "시계탑 복선 추가"])
+        XCTAssertNil(ManuscriptResumeBrief.build(for: noteID, in: project))
     }
 }

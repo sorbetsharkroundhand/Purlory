@@ -58,7 +58,7 @@ public final class ProjectSession {
     @ObservationIgnored public var willTransition: (() -> Void)?
     @ObservationIgnored public var documentDidChange: ((ProjectDocumentSnapshot) -> Void)?
 
-    private let store: ProjectStore
+    package let store: ProjectStore
     let sourceSearchIndex: ProjectSourceIndex
     private let defaults: UserDefaults
     private let autosaveDelay: Duration
@@ -456,6 +456,23 @@ public final class ProjectSession {
         guard project.userData[key] != data else { return }
         project.userData[key] = data
         activeProject = project
+        noteDocumentChange()
+        markDirty()
+    }
+
+    func updateProjectUserData(_ entries: [String: Data], projectID: WritingProjectID) throws {
+        guard phase == .ready, !isTransitioning, var project = activeProject,
+              project.id == projectID else { throw ProjectSessionError.staleRuntime }
+        var changed = false
+        for (key, data) in entries {
+            try ProjectUserDataKey.validate(key)
+            if project.userData[key] != data {
+                project.userData[key] = data
+                changed = true
+            }
+        }
+        guard changed else { return }
+        publishProject(project, metadataChanged: false)
         noteDocumentChange()
         markDirty()
     }

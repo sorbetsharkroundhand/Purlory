@@ -40,10 +40,16 @@ struct WorkspacePouchTools: View {
     @AppStorage("purlory.appearance") private var appearance = ""
     @Environment(\.colorScheme) private var colorScheme
     @State private var markedText = false
+    @State private var quickNote = ""
+    @State private var savingVersion = false
 
     private var editor: BlockTextView? {
         guard let id = session.selectedDocumentID, let project = session.activeProject else { return nil }
         return requests.editor(for: .init(projectID: project.id, documentID: id))
+    }
+    private var isManuscriptSelected: Bool {
+        guard let kind = session.selectedDocumentPresentation?.kind else { return true }
+        return kind == .manuscript
     }
     private var canGenerate: Bool {
         session.isEditorEditable && editor != nil && !markedText && completion.engineState == .ready
@@ -70,6 +76,24 @@ struct WorkspacePouchTools: View {
                 panelButton(.characters, "인물·작품", "person.2")
                 panelButton(.narrative, "서사 흐름", "arrow.triangle.branch")
                 panelButton(.search, "원문 검색", "magnifyingglass")
+            }
+            HStack(spacing: 6) {
+                TextField("떠오른 생각이나 대사를 바로 메모…", text: $quickNote)
+                    .textFieldStyle(.plain)
+                    .padding(.horizontal, 8).padding(.vertical, 5)
+                    .background(theme.hoverC, in: RoundedRectangle(cornerRadius: 6))
+                    .onSubmit { submitQuickNote() }
+                    .accessibilityIdentifier("purlory.workspace.pouch.quick-note")
+                Button("메모") { submitQuickNote() }
+                    .buttonStyle(PouchRowButtonStyle())
+                    .padding(.horizontal, 8).padding(.vertical, 5)
+                    .background(theme.hoverC, in: RoundedRectangle(cornerRadius: 6))
+                    .disabled(quickNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !session.isEditorEditable || markedText)
+                    .accessibilityIdentifier("purlory.workspace.pouch.quick-note.save")
+            }
+            if let brief = activeResumeBrief,
+               (!brief.linkedNotes.isEmpty || brief.hasMultipleBranches || brief.currentSceneHeading != nil) {
+                resumeBriefCard(brief)
             }
             divider
             VStack(spacing: 8) {
@@ -108,10 +132,30 @@ struct WorkspacePouchTools: View {
                         .background(WorkspaceAccessibilityProbe(identifier: "purlory.workspace.pouch.coauthor", label: "공동 집필"))
                 }
             }
-            divider
-            Button(action: openVersions) { Label("원고 기록 · 저장과 비교", systemImage: "clock.arrow.circlepath") }
-                .buttonStyle(PouchRowButtonStyle()).disabled(!session.isEditorEditable || markedText)
-                .accessibilityIdentifier("purlory.workspace.versions")
+            if isManuscriptSelected {
+                divider
+                HStack(spacing: 6) {
+                    Button(action: quickSaveVersion) {
+                        Label("지금 버전 남기기", systemImage: "bookmark.fill")
+                            .purloryUIFont(11, .medium)
+                            .frame(maxWidth: .infinity).frame(height: 30)
+                            .background(theme.hoverC, in: RoundedRectangle(cornerRadius: 7))
+                    }
+                    .buttonStyle(PouchRowButtonStyle())
+                    .disabled(!session.isEditorEditable || markedText || savingVersion)
+                    .accessibilityIdentifier("purlory.workspace.versions.quick-save")
+
+                    Button(action: openVersions) {
+                        Label("원고 기록 · 저장과 비교", systemImage: "clock.arrow.circlepath")
+                            .purloryUIFont(11, .medium)
+                            .frame(maxWidth: .infinity).frame(height: 30)
+                            .background(theme.hoverC, in: RoundedRectangle(cornerRadius: 7))
+                    }
+                    .buttonStyle(PouchRowButtonStyle())
+                    .disabled(!session.isEditorEditable || markedText)
+                    .accessibilityIdentifier("purlory.workspace.versions")
+                }
+            }
             HStack(spacing: 4) {
                 Button { model.openAll() } label: {
                     Label("나란히 펼치기", systemImage: "rectangle.split.3x1").purloryUIFont(10.5)
@@ -141,6 +185,78 @@ struct WorkspacePouchTools: View {
             markedText = editor?.hasMarkedText() == true
         }
         .accessibilityElement(children: .contain)
+    }
+    private func submitQuickNote() {
+        let text = quickNote.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, session.isEditorEditable, !markedText else { return }
+        do {
+            _ = try ManuscriptVersionActions.appendQuickNote(text, session: session, requests: requests)
+            quickNote = ""
+            requests.pouch?.dismissTools()
+            model.showToast("빠른 메모에 남겼습니다")
+        } catch {
+            model.showToast(error.localizedDescription)
+        }
+    }
+    private func quickSaveVersion() {
+        guard isManuscriptSelected, session.isEditorEditable, !markedText, !savingVersion else { return }
+        savingVersion = true
+        Task { @MainActor in
+            defer { savingVersion = false }
+            do {
+                _ = try await ManuscriptVersionActions.capture(session: session, requests: requests)
+                requests.pouch?.dismissTools()
+                model.showToast("현재 원고 버전을 남겼습니다")
+            } catch {
+                model.showToast(error.localizedDescription)
+            }
+        }
+    }
+    private var activeResumeBrief: ManuscriptResumeBrief? {
+        guard isManuscriptSelected, let docID = session.selectedDocumentID, let project = session.activeProject else {
+            return nil
+        }
+        let cursor = editor.flatMap { view in
+            view.writingProjectionCapture.nativeRows.sourceOffset(forNative: view.selectedRange().location)
+        }
+        return ManuscriptResumeBrief.build(for: docID, in: project, cursorOffset: cursor)
+    }
+    @ViewBuilder
+    private func resumeBriefCard(_ brief: ManuscriptResumeBrief) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                if let heading = brief.currentSceneHeading {
+                    Label(heading, systemImage: "bookmark")
+                        .purloryUIFont(10, .medium)
+                        .foregroundStyle(theme.ink2C)
+                        .lineLimit(1)
+                } else {
+                    Label(brief.documentTitle, systemImage: "doc.text")
+                        .purloryUIFont(10, .medium)
+                        .foregroundStyle(theme.ink2C)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 4)
+                if brief.hasMultipleBranches {
+                    Text(brief.activeBranch)
+                        .purloryUIFont(9.5, .medium)
+                        .foregroundStyle(theme.novelC)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(theme.activeBgC, in: Capsule())
+                }
+            }
+            ForEach(Array(brief.linkedNotes.prefix(2).enumerated()), id: \.offset) { _, note in
+                HStack(alignment: .top, spacing: 4) {
+                    Text("•").foregroundStyle(theme.novelC).purloryUIFont(10, .semibold)
+                    Text(note).purloryUIFont(10).foregroundStyle(theme.ink2C).lineLimit(1)
+                }
+            }
+        }
+        .padding(.horizontal, 8).padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(theme.hoverC.opacity(0.65), in: RoundedRectangle(cornerRadius: 6))
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("purlory.workspace.pouch.resume-brief")
     }
     private var divider: some View { theme.sepC.frame(height: 1) }
     private func panelButton(_ tile: WorkspaceTileID, _ title: String, _ symbol: String) -> some View {
