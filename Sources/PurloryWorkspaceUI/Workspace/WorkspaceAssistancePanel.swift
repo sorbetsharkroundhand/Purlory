@@ -11,19 +11,24 @@ import SwiftUI
     private var monitor: Any?
     private var subscriptions: Set<AnyCancellable> = []
     static func present(_ mode: WorkspaceAssistance.Mode, model: WorkspaceAssistance, requests: ProjectEditorRequests, theme: PurloryTheme) {
-        guard let editor = requests.nativeEditor, let parent = editor.window else { return }
+        guard let editor = requests.nativeEditor, editor.window != nil else { return }
         active?.close()
         do {
             if mode == .coauthor { try model.openCoauthor(editor: editor) }
             else { try model.capture(mode, editor: editor) }
         } catch { return }
+        presentCaptured(mode, model: model, requests: requests, editor: editor, theme: theme)
+    }
+    static func presentCaptured(_ mode: WorkspaceAssistance.Mode, model: WorkspaceAssistance, requests: ProjectEditorRequests, editor: BlockTextView? = nil, theme: PurloryTheme) {
+        guard let targetEditor = editor ?? requests.nativeEditor, let parent = targetEditor.window else { return }
+        active?.close()
         let panel = WorkspaceAssistancePanel(model: model, requests: requests)
         active = panel
         let width = min(460, max(300, parent.frame.width - 32))
         panel.window?.title = mode.rawValue
         panel.window?.appearance = NSAppearance(named: theme == .dark ? .darkAqua : .aqua)
         panel.window?.contentView = NSHostingView(rootView: WorkspaceAssistanceView(model: model, theme: theme, close: { [weak panel] in panel?.close() }).frame(width: width))
-        panel.window?.setContentSize(NSSize(width: width, height: mode == .coauthor ? 210 : 150))
+        panel.window?.setContentSize(NSSize(width: width, height: mode == .coauthor ? 210 : (mode == .polish ? 230 : 150)))
         panel.backdrop.show(over: parent, opacity: 0.5)
         if let window = panel.window {
             window.setFrameOrigin(.init(x: parent.frame.midX - width / 2, y: parent.frame.midY - window.frame.height / 2))
@@ -32,6 +37,9 @@ import SwiftUI
         panel.fit()
         NotificationCenter.default.publisher(for: NSWindow.willCloseNotification, object: parent)
             .sink { [weak panel] _ in panel?.close() }.store(in: &panel.subscriptions)
+    }
+    static func dismissIfMatches(_ model: WorkspaceAssistance) {
+        if active?.model === model { active?.close() }
     }
     private init(model: WorkspaceAssistance, requests: ProjectEditorRequests) {
         self.model = model; self.requests = requests
@@ -95,15 +103,52 @@ struct WorkspaceAssistanceView: View {
                             .focused($promptFocused).accessibilityIdentifier("purlory.coauthor.prompt")
                     }.padding(7).frame(height: embedded ? 64 : 76).background(theme.chipC, in: RoundedRectangle(cornerRadius: 8))
                 }
-                if model.generating || !model.result.isEmpty {
-                    Group {
-                        if embedded { resultText }
-                        else { ScrollView { resultText }.frame(maxHeight: 176).fixedSize(horizontal: false, vertical: true) }
+                if model.mode == .polish, let original = model.capturedSelectionMarkdown, !original.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("선택한 원문")
+                            .purloryUIFont(10.5, .semibold)
+                            .foregroundStyle(theme.ink3C)
+                        ScrollView {
+                            Text(original)
+                                .font(PurloryFonts.serifUI(12))
+                                .lineSpacing(6)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityIdentifier("purlory.polish.original")
+                        }
+                        .frame(maxHeight: 110)
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(embedded ? 8 : 12)
+                    .background(theme.chipC, in: RoundedRectangle(cornerRadius: 8))
+                }
+                if model.mode == .polish || model.generating || !model.result.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        if model.mode == .polish {
+                            Text("다듬은 제안")
+                                .purloryUIFont(10.5, .semibold)
+                                .foregroundStyle(theme.novelC)
+                        }
+                        Group {
+                            if embedded { resultText }
+                            else { ScrollView { resultText }.frame(maxHeight: 176).fixedSize(horizontal: false, vertical: true) }
+                        }
                     }.padding(embedded ? 8 : 12).background(theme.novelBgC, in: RoundedRectangle(cornerRadius: 8))
                 }
                 if let error = model.errorMessage { Text(error).purloryUIFont(11).foregroundStyle(theme.dangerC).fixedSize(horizontal: false, vertical: true) }
             }.padding(embedded ? 0 : 16)
             HStack(spacing: 8) {
+                if !embedded && model.mode == .polish {
+                    Button("취소", action: close)
+                        .buttonStyle(.plain)
+                        .purloryUIFont(12, .medium)
+                        .foregroundStyle(theme.ink2C)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(theme.chipC, in: RoundedRectangle(cornerRadius: 8))
+                        .accessibilityIdentifier("purlory.polish.cancel")
+                }
                 Spacer()
                 if !model.generating && !model.result.isEmpty {
                     Button(model.mode == .margin ? "노트 추가" : (model.mode == .polish ? "다듬은 문장 적용" : "본문에 넣기")) { if model.insert() { close() } }

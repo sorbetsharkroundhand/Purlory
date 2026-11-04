@@ -351,6 +351,34 @@ public struct DocumentOutline: Equatable, Sendable {
         return (level, title)
     }
 
+    /// Extracts a single-line synopsis preview (up to 80 characters) from the first prose paragraph of a scene section.
+    package static func synopsisPreview(of line: Substring) -> String {
+        var text = line.trimmingCharacters(in: .whitespacesAndNewlines)[...]
+        if text.isEmpty || isSceneBreakLine(text) || headingLine(text) != nil {
+            return ""
+        }
+        while text.hasPrefix(">") || text.hasPrefix("-") || text.hasPrefix("*") {
+            let next = text.dropFirst()
+            if next.first == " " || next.first == "\t" {
+                text = next.drop(while: { $0 == " " || $0 == "\t" })
+            } else {
+                break
+            }
+        }
+        let cleaned = text.replacingOccurrences(of: "**", with: "")
+            .replacingOccurrences(of: "__", with: "")
+            .replacingOccurrences(of: "`", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return "" }
+        if let firstSentenceRange = sentencePieces(in: cleaned[...]).first {
+            let firstSentence = cleaned[firstSentenceRange].trimmingCharacters(in: .whitespacesAndNewlines)
+            if !firstSentence.isEmpty {
+                return firstSentence.count > 80 ? String(firstSentence.prefix(80)) + "…" : firstSentence
+            }
+        }
+        return cleaned.count > 80 ? String(cleaned.prefix(80)) + "…" : cleaned
+    }
+
     /// Content revisions cannot identify repeated source occurrences. Omit ambiguous keys.
     package var unambiguousSceneIndicesByHash: [String: Int] {
         var indices: [String: Int] = [:], repeated: Set<String> = []

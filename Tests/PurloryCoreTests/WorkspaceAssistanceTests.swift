@@ -16,8 +16,12 @@ import XCTest
         let model = WorkspaceAssistance(session: h.fixture.session, requests: h.requests, margin: LivingMarginModel()) { _, _ in
             AskAnswerGeneration { emit in try emit("다듬은 문장.") }
         }
-        let applied = await model.runInline(.polish, editor: editor)
-        XCTAssertTrue(applied)
+        let ready = await model.runInline(.polish, editor: editor)
+        XCTAssertTrue(ready)
+        XCTAssertEqual(model.capturedSelectionMarkdown, "**고칠 문장.**")
+        XCTAssertEqual(model.result, "다듬은 문장.")
+        XCTAssertEqual(h.fixture.session.selectedDocument?.body, original, "Polish completion must preserve original body until explicit insert")
+        XCTAssertTrue(model.insert())
         XCTAssertEqual(h.fixture.session.selectedDocument?.body, "앞 문장. 다듬은 문장. 뒤 문장.")
         editor.undoManager?.undo(); await h.layout()
         XCTAssertEqual(h.fixture.session.selectedDocument?.body, original)

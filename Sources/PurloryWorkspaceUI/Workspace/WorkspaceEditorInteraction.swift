@@ -8,8 +8,19 @@ import Combine
     private weak var editor: BlockTextView?
     private weak var session: ProjectSession?
     private weak var requests: ProjectEditorRequests?
-    private weak var model: SpatialWorkspaceController?
+    private(set) weak var model: SpatialWorkspaceController?
     private var subscription: AnyCancellable?
+    private var postPresentationSubscription: AnyCancellable?
+    var onPresentationChange: (() -> Void)?
+    var suppressesEditorWritingDiagnostics: Bool {
+        guard let model else { return false }
+        if model.layout.contains(.margin) { return false }
+        if let prefs = session?.presentationPreferences,
+           let shows = prefs.object(forKey: "editor.showsWritingDiagnostics") as? Bool, !shows {
+            return true
+        }
+        return model.focusDimming
+    }
     private var hovered: Int?
     private(set) var optionHeld = false
     private var modifierMonitor: Any?
@@ -61,6 +72,10 @@ import Combine
         }
         subscription = model.presentationWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { [weak self] in self?.presentationDidChange() }
+        }
+        postPresentationSubscription = model.presentationDidChange.sink { [weak self] _ in
+            self?.onPresentationChange?()
+            self?.editor?.needsDisplay = true
         }
         layoutDidChange()
     }
@@ -459,5 +474,7 @@ import Combine
         if let modifierMonitor { NSEvent.removeMonitor(modifierMonitor); self.modifierMonitor = nil }
         cancelDrag(); flashTask?.cancel(); flashTask = nil; presentationClock?.invalidate(); presentationClock = nil
         motionRegions.removeAll(); subscription?.cancel(); subscription = nil
+        postPresentationSubscription?.cancel(); postPresentationSubscription = nil
+        onPresentationChange = nil
     }
 }

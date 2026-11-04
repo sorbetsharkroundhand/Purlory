@@ -14,6 +14,37 @@ struct StoryMapProjection: Equatable, Sendable {
         let characterIDs: Set<UUID>
         let threadIDs: Set<String>
         let laneSlots: [Int]
+        let progressRatio: Double
+        let lengthRatio: Double
+        let eventCount: Int
+
+        init(
+            id: String,
+            kind: Kind,
+            title: String,
+            sceneID: String,
+            sourceRange: Range<Int>,
+            evidence: EvidenceAnchor,
+            characterIDs: Set<UUID>,
+            threadIDs: Set<String>,
+            laneSlots: [Int],
+            progressRatio: Double = 0,
+            lengthRatio: Double = 0,
+            eventCount: Int = 0
+        ) {
+            self.id = id
+            self.kind = kind
+            self.title = title
+            self.sceneID = sceneID
+            self.sourceRange = sourceRange
+            self.evidence = evidence
+            self.characterIDs = characterIDs
+            self.threadIDs = threadIDs
+            self.laneSlots = laneSlots
+            self.progressRatio = progressRatio
+            self.lengthRatio = lengthRatio
+            self.eventCount = eventCount
+        }
     }
     struct Character: Equatable, Sendable, Identifiable { let id: UUID; let title: String }
     struct Thread: Equatable, Sendable, Identifiable { let id: String; let title: String; let slot: Int }
@@ -41,6 +72,7 @@ struct StoryMapProjection: Equatable, Sendable {
         }
         let outline = verified?.outline ?? DocumentOutline.parse(document.body)
         let text = document.body as NSString
+        let denominator = Double(max(1, length))
         var scenes: [Row] = []
         for (index, scene) in outline.scenes.enumerated() {
             if index.isMultiple(of: 32) { await Task.yield(); try Task.checkCancellation() }
@@ -63,7 +95,10 @@ struct StoryMapProjection: Equatable, Sendable {
             scenes.append(.init(id: id, kind: .scene, title: title,
                 sceneID: id, sourceRange: range,
                 evidence: .init(documentID: scope.documentID, quote: quote, utf16Hint: range.lowerBound),
-                characterIDs: [], threadIDs: [], laneSlots: []))
+                characterIDs: [], threadIDs: [], laneSlots: [],
+                progressRatio: Double(range.lowerBound) / denominator,
+                lengthRatio: Double(range.count) / denominator,
+                eventCount: 0))
         }
         guard let verified, verified.canonicalEvents.count + outline.scenes.count <= 8192,
               verified.plotThreads.count <= 128,
@@ -78,6 +113,7 @@ struct StoryMapProjection: Equatable, Sendable {
         let expanded = Set(outline.scenes.map { $0.contentHash + "-minor" })
         let graph = order == .manuscript ? GraphRow.flowRows(from: verified, expandedMinors: expanded) : GraphRow.chronoRows(from: verified)
         var mapped: [(GraphRow, Row)] = []
+        var eventCountsBySceneID: [String: Int] = [:]
         for (index, row) in graph.enumerated() {
             if index.isMultiple(of: 32) { await Task.yield(); try Task.checkCancellation() }
             switch row {
@@ -88,19 +124,38 @@ struct StoryMapProjection: Equatable, Sendable {
                       let quote = event.quote, !quote.isEmpty, quote.utf16.count <= 1024,
                       let original = SourceAnchor.uniqueOriginalRange(for: quote, in: document.body,
                           within: NSRange(location: bounds.lowerBound, length: bounds.count)) else { continue }
+                let eventRange = original.location..<(original.location + original.length)
+                eventCountsBySceneID[scene.id, default: 0] += 1
                 mapped.append((row, .init(id: "event:" + event.canonicalKey, kind: .event,
-                    title: event.summary, sceneID: scene.id, sourceRange: original.location..<(original.location + original.length),
+                    title: event.summary, sceneID: scene.id, sourceRange: eventRange,
                     evidence: .init(documentID: scope.documentID, quote: quote, utf16Hint: original.location),
-                    characterIDs: Set(event.participants), threadIDs: Set(verified.threadIDsByEvent[event.canonicalKey] ?? []), laneSlots: [])))
+                    characterIDs: Set(event.participants), threadIDs: Set(verified.threadIDsByEvent[event.canonicalKey] ?? []), laneSlots: [],
+                    progressRatio: Double(eventRange.lowerBound) / denominator,
+                    lengthRatio: Double(eventRange.count) / denominator,
+                    eventCount: 1)))
             default: break
             }
         }
         try Task.checkCancellation()
+        scenes = scenes.map { scene in
+            .init(id: scene.id, kind: scene.kind, title: scene.title, sceneID: scene.sceneID,
+                  sourceRange: scene.sourceRange, evidence: scene.evidence,
+                  characterIDs: scene.characterIDs, threadIDs: scene.threadIDs, laneSlots: scene.laneSlots,
+                  progressRatio: scene.progressRatio, lengthRatio: scene.lengthRatio,
+                  eventCount: eventCountsBySceneID[scene.id, default: 0])
+        }
         let layout = ThreadGraphLayout.compute(rows: mapped.map { $0.0 }, threads: verified.plotThreads)
         let rows = mapped.map { graphRow, row -> Row in
-            guard let key = graphRow.eventKey else { return row }
+            guard let key = graphRow.eventKey else {
+                return .init(id: row.id, kind: row.kind, title: row.title, sceneID: row.sceneID,
+                             sourceRange: row.sourceRange, evidence: row.evidence,
+                             characterIDs: row.characterIDs, threadIDs: row.threadIDs, laneSlots: row.laneSlots,
+                             progressRatio: row.progressRatio, lengthRatio: row.lengthRatio,
+                             eventCount: eventCountsBySceneID[row.sceneID, default: 0])
+            }
             return .init(id: row.id, kind: row.kind, title: row.title, sceneID: row.sceneID, sourceRange: row.sourceRange,
-                evidence: row.evidence, characterIDs: row.characterIDs, threadIDs: row.threadIDs, laneSlots: layout.nodes[key]?.laneSlots ?? [])
+                evidence: row.evidence, characterIDs: row.characterIDs, threadIDs: row.threadIDs, laneSlots: layout.nodes[key]?.laneSlots ?? [],
+                progressRatio: row.progressRatio, lengthRatio: row.lengthRatio, eventCount: row.eventCount)
         }
         let participants = rows.reduce(into: Set<UUID>()) { $0.formUnion($1.characterIDs) }
         try Task.checkCancellation()

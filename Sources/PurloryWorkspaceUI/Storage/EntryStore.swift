@@ -1074,7 +1074,14 @@ public final class EntryStore: ObservableObject {
         let existing = entries[index].characters?.first(where: { $0.id == cardInput.id })
         var card = cardInput
         if let existing {
-            if card.note != existing.note { card.locked = true }
+            if card.note != existing.note
+                || card.motivation != existing.motivation
+                || card.goal != existing.goal
+                || card.conflict != existing.conflict
+                || card.epiphany != existing.epiphany
+            {
+                card.locked = true
+            }
             if card != existing { card.autoRegistered = nil }
         }
         let isDiscrete = existing == nil || card.locked != existing?.locked

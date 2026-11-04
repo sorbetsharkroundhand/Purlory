@@ -126,12 +126,17 @@ import Combine
     }
 
     var canInsertResult: Bool { current && !generating && !result.isEmpty && errorMessage == nil }
+    var capturedSelectionMarkdown: String? { capture?.selection?.markdown }
     /// The author's click authorizes this single captured edit, never later source revisions.
     @discardableResult func runInline(_ mode: Mode, editor: BlockTextView) async -> Bool {
         guard mode != .coauthor else { return false }
         do { try capture(mode, editor: editor) }
         catch { requests.spatialWorkspace?.showToast("현재 원문에서 다시 실행해 주세요."); return false }
         editor.hideSelectionToolbar()
+        if mode == .polish {
+            let theme: PurloryTheme = editor.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .dark : .light
+            WorkspaceAssistancePanel.presentCaptured(.polish, model: self, requests: requests, editor: editor, theme: theme)
+        }
         requests.spatialWorkspace?.showToast(mode == .polish ? "선택한 문장의 결을 다듬는 중..." : "원고를 읽고 마진 노트를 적는 중...")
         let ticket = serial &+ 1
         await generate(prompt: "")
@@ -140,8 +145,11 @@ import Combine
         guard errorMessage == nil, !Task.isCancelled else {
             requests.spatialWorkspace?.showToast(errorMessage ?? "생성이 중단됐어요."); return false
         }
+        if mode == .polish {
+            return canInsertResult
+        }
         let applied = insert()
-        requests.spatialWorkspace?.showToast(applied ? (mode == .polish ? "문장을 다듬었습니다" : "새 마진 노트를 추가했습니다") : (errorMessage ?? "원문이 바뀌어 적용하지 않았어요."))
+        requests.spatialWorkspace?.showToast(applied ? "새 마진 노트를 추가했습니다" : (errorMessage ?? "원문이 바뀌어 적용하지 않았어요."))
         return applied
     }
     private var current: Bool {
@@ -219,9 +227,14 @@ import Combine
                 try WorkspaceDocumentTransaction.perform([.init(key: capture.key, expectedBody: capture.body, body: body)],
                     in: session, requests: requests, actionName: mode.rawValue)
                 requests.spatialWorkspace?.open(capture.key.documentID)
+                if mode == .polish {
+                    requests.spatialWorkspace?.showToast("문장을 다듬었습니다")
+                }
             }
             if mode == .coauthor { coauthorDrafts.removeValue(forKey: capture.key); coauthorKey = nil; result = "" }
-            self.capture = nil; return true
+            self.capture = nil
+            WorkspaceAssistancePanel.dismissIfMatches(self)
+            return true
         } catch { errorMessage = error.localizedDescription; return false }
     }
     func cancel() {

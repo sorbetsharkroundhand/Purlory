@@ -36,6 +36,7 @@ public final class CompletionSettings: ObservableObject {    /// 입력이 멈�
         static let kvCache = "completion.kvCache"
         static let lineSpacing = "editor.lineSpacing"
         static let fontSize = "editor.fontSize"
+        static let showsWritingDiagnosticsInEditor = "editor.showsWritingDiagnostics"
         /// 저자 이름은 예측 동작이 아니라 **작품 메타데이터**라 `completion.*`이
         /// 아닌 앱 전역 이름공간(`purlory.*`)에 둔다 — 예측 파라미터 스냅샷
         /// (`CompletionParameters`)에도 들어가지 않는다.
@@ -102,6 +103,10 @@ public final class CompletionSettings: ObservableObject {    /// 입력이 멈�
             defaults.set(editorFontSize, forKey: Keys.fontSize)
         }
     }
+    /// Controls whether writing diagnostic underlines are drawn inside the editor during drafting.
+    @Published public var showsWritingDiagnosticsInEditor: Bool {
+        didSet { defaults.set(showsWritingDiagnosticsInEditor, forKey: Keys.showsWritingDiagnosticsInEditor) }
+    }
     public init(defaults: UserDefaults = .standard, memoryPolicy: ModelMemoryPolicy = .current) {
         self.defaults = defaults
         let base = CompletionParameters()
@@ -151,6 +156,9 @@ public final class CompletionSettings: ObservableObject {    /// 입력이 멈�
         self.editorFontSize =
             defaults.object(forKey: Keys.fontSize) as? Double
             ?? Self.defaultFontSize
+        self.showsWritingDiagnosticsInEditor =
+            defaults.object(forKey: Keys.showsWritingDiagnosticsInEditor) as? Bool
+            ?? true
         self.authorName = defaults.string(forKey: Keys.authorName) ?? ""
     }
 

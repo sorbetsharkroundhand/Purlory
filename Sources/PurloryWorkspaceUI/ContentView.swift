@@ -154,7 +154,8 @@ public struct ContentView: View {
         livingMargin: LivingMarginModel? = nil
     ) {
         if let writingDiagnostics, let editorBridge, let livingMargin {
-            writingDiagnostics.connect(session: session, editorBridge: editorBridge, livingMargin: livingMargin)
+            writingDiagnostics.connect(session: session, editorBridge: editorBridge, livingMargin: livingMargin,
+                settings: completion.settings)
         }
         writingDiagnostics?.configure(currentSnapshot: { [weak session] in session?.selectedDocumentSnapshot })
         completion.documentContextProvider = nil

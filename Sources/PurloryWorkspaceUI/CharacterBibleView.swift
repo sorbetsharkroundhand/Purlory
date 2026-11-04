@@ -329,6 +329,7 @@ struct CharacterCardRow: View {
     var onJump: ((String) -> Void)?
     let onDelete: () -> Void
     @State private var deleteHovered = false
+    @State private var narrativeArcExpanded = false
     @State private var chronicleExpanded = false
     @State private var knowledgeExpanded = false
     @State private var relationsExpanded = false
@@ -412,6 +413,65 @@ struct CharacterCardRow: View {
                         if !traitsFocused { traitsDraft = (value ?? []).joined(separator: ", ") }
                     }.accessibilityIdentifier("purlory.writer.character.traits.\(card.id)")
             }.textFieldStyle(.roundedBorder).purloryUIFont(11)
+            Button {
+                narrativeArcExpanded.toggle()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: narrativeArcExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 8, weight: .semibold))
+                    Text("서사 동학 (동기·목표·갈등)")
+                        .purloryUIFont(10.5, .medium)
+                    if card.hasNarrativeArc {
+                        Circle()
+                            .fill(theme.novelC)
+                            .frame(width: 5, height: 5)
+                    }
+                    Spacer()
+                }
+                .foregroundStyle(card.hasNarrativeArc ? theme.ink2C : theme.ink3C)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("purlory.writer.character.arc.toggle.\(card.id)")
+            if narrativeArcExpanded {
+                VStack(spacing: 5) {
+                    TextField(
+                        "동기 — 왜 움직이는가 (추상적 욕망)",
+                        text: Binding(
+                            get: { card.motivation ?? "" },
+                            set: { card.motivation = $0.isEmpty ? nil : $0 }
+                        )
+                    )
+                    .accessibilityIdentifier("purlory.writer.character.motivation.\(card.id)")
+                    TextField(
+                        "목표 — 무엇을 얻으려 하는가 (구체적 목표)",
+                        text: Binding(
+                            get: { card.goal ?? "" },
+                            set: { card.goal = $0.isEmpty ? nil : $0 }
+                        )
+                    )
+                    .accessibilityIdentifier("purlory.writer.character.goal.\(card.id)")
+                    TextField(
+                        "갈등 — 무엇이 가로막는가 (장애물)",
+                        text: Binding(
+                            get: { card.conflict ?? "" },
+                            set: { card.conflict = $0.isEmpty ? nil : $0 }
+                        )
+                    )
+                    .accessibilityIdentifier("purlory.writer.character.conflict.\(card.id)")
+                    TextField(
+                        "깨달음·변화 — 결말에서 어떻게 달라지는가",
+                        text: Binding(
+                            get: { card.epiphany ?? "" },
+                            set: { card.epiphany = $0.isEmpty ? nil : $0 }
+                        )
+                    )
+                    .accessibilityIdentifier("purlory.writer.character.epiphany.\(card.id)")
+                }
+                .textFieldStyle(.roundedBorder)
+                .purloryUIFont(11)
+                .padding(.leading, 4)
+            }
             // 자동 이해 — 예측 카드 줄과 같은 질의 결과의 열람 (CLAUDE.md §1-5).
             // 편집은 원문·카드에서 한다 — 파생 지식을 직접 고치게 하면 원문과
             // 어긋난 채 다음 패스가 도로 덮는다 (원문이 유일한 진실, §2-1).

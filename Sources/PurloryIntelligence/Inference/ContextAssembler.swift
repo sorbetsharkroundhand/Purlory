@@ -768,11 +768,28 @@ public enum ContextAssembler {
             let name =
                 aliases.isEmpty
                 ? card.name : "\(card.name)(\(aliases.joined(separator: "·")))"
-            let note = String(
-                card.note
+            var rawNoteParts: [String] = []
+            let trimmedNote = card.note
+                .replacingOccurrences(of: "\n", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedNote.isEmpty {
+                rawNoteParts.append(trimmedNote)
+            }
+            let arcParts: [(String, String?)] = [
+                ("동기", card.motivation),
+                ("목표", card.goal),
+                ("갈등", card.conflict),
+                ("변화", card.epiphany),
+            ]
+            for (label, raw) in arcParts {
+                guard let value = raw?
                     .replacingOccurrences(of: "\n", with: " ")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                    .prefix(maxCardNoteCharacters))
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                    !value.isEmpty
+                else { continue }
+                rawNoteParts.append("\(label): \(value)")
+            }
+            let note = String(rawNoteParts.joined(separator: " · ").prefix(maxCardNoteCharacters))
             // 산문형 카드 — "등장인물 N: 소개 · 필드=값" 레코드 대신 이름으로
             // 시작하는 짧은 문장들. 소설 코퍼스에 맞춰진 모델(Qwen3 계열 포함)은
             // 서술형을 레코드보다 어투 누수 없이 흡수한다 (NovelAI lorebook

@@ -1,5 +1,6 @@
 @testable import PurloryIntelligence
 @testable import PurloryDocumentEngine
+@testable import PurloryStorage
 import XCTest
 
 @testable import PurloryCore
@@ -181,5 +182,75 @@ final class DocumentOutlineTests: XCTestCase {
         XCTAssertEqual(hash, hash.lowercased())
         XCTAssertNotEqual(hash, DocumentOutline.stableHash("다른 본문"))
         XCTAssertEqual(hash, DocumentOutline.stableHash("어떤 본문"))
+    }
+
+    // MARK: - Scene section drag reordering, safety snapshot, and Undo verification
+
+    @MainActor
+    func testSceneSectionMoveReordersThreeScenesCreatesSafetyVersionAndSupportsUndo() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("purlory-outline-move-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = ProjectStore(root: root)
+        let defaults = UserDefaults(suiteName: "purlory.outline-move.\(UUID())")!
+        let session = ProjectSession(store: store, defaults: defaults)
+        let originalBody = """
+        # 1장
+        첫 번째 장면의 본문이다. 다음 문장이 이어진다.
+        # 2장
+        두 번째 장면의 본문이다.
+        # 3장
+        세 번째 장면의 본문이다. 마지막 문장.
+        """
+        let docID = WritingDocumentID()
+        let project = WritingProject(
+            id: WritingProjectID(),
+            title: "장면 이동 테스트",
+            mode: .fiction,
+            documents: [WritingDocument(id: docID, title: "본문", body: originalBody, kind: .manuscript)]
+        )
+        try await session.saveAndActivate(project)
+
+        let projection = try await DocumentOutlineProjection.build(originalBody)
+        XCTAssertEqual(projection.headings.map(\.title), ["1장", "2장", "3장"])
+        XCTAssertEqual(projection.headings[0].synopsisPreview, "첫 번째 장면의 본문이다.")
+        XCTAssertEqual(projection.headings[1].synopsisPreview, "두 번째 장면의 본문이다.")
+        XCTAssertEqual(projection.headings[2].synopsisPreview, "세 번째 장면의 본문이다.")
+
+        let key = ProjectDocumentKey(projectID: project.id, documentID: docID)
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        let requests = ProjectEditorRequests()
+
+        try WorkspaceParagraphTransfer.moveSceneSection(
+            source: projection.headings[2],
+            target: projection.headings[0],
+            after: true,
+            key: key,
+            in: session,
+            requests: requests,
+            undoManager: undo
+        )
+
+        let expectedMovedBody = """
+        # 1장
+        첫 번째 장면의 본문이다. 다음 문장이 이어진다.
+        # 3장
+        세 번째 장면의 본문이다. 마지막 문장.
+        # 2장
+        두 번째 장면의 본문이다.
+        """
+        XCTAssertEqual(session.document(docID)?.body, expectedMovedBody)
+
+        let activeProject = try XCTUnwrap(session.activeProject)
+        let versions = try ManuscriptVersion.list(in: activeProject.userData, documentID: docID)
+        XCTAssertEqual(versions.last?.label, "장면 순서 변경 전 자동 보관")
+        XCTAssertEqual(versions.last?.text, originalBody)
+
+        XCTAssertTrue(undo.canUndo)
+        undo.undo()
+        XCTAssertEqual(session.document(docID)?.body, originalBody)
+
+        undo.redo()
+        XCTAssertEqual(session.document(docID)?.body, expectedMovedBody)
     }
 }

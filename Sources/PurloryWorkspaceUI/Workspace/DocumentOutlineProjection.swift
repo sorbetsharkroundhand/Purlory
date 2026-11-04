@@ -7,6 +7,26 @@ struct DocumentOutlineProjection: Equatable, Sendable {
         let title: String
         let quote: String
         let sourceRange: Range<Int>
+        let sectionRange: Range<Int>
+        let synopsisPreview: String
+
+        init(
+            id: Int,
+            level: Int,
+            title: String,
+            quote: String,
+            sourceRange: Range<Int>,
+            sectionRange: Range<Int>? = nil,
+            synopsisPreview: String = ""
+        ) {
+            self.id = id
+            self.level = level
+            self.title = title
+            self.quote = quote
+            self.sourceRange = sourceRange
+            self.sectionRange = sectionRange ?? sourceRange
+            self.synopsisPreview = synopsisPreview
+        }
     }
     let revision: String
     let headings: [Heading]
@@ -47,12 +67,31 @@ struct DocumentOutlineProjection: Equatable, Sendable {
                 return
             }
             let quote = boundedPrefix(line)
-            guard let (level, _) = DocumentOutline.headingLine(quote[...]) else { return }
-            let titleStart = line.index(line.startIndex, offsetBy: level + 1)
-            let title = boundedPrefix(try await trimWhitespace(line[titleStart...]))
-            guard !title.isEmpty else { return }
-            headings.append(Heading(id: lineOffset, level: level, title: title,
-                quote: quote, sourceRange: lineOffset..<endOffset))
+            if let (level, _) = DocumentOutline.headingLine(quote[...]) {
+                let titleStart = line.index(line.startIndex, offsetBy: level + 1)
+                let title = boundedPrefix(try await trimWhitespace(line[titleStart...]))
+                guard !title.isEmpty else { return }
+                headings.append(Heading(id: lineOffset, level: level, title: title,
+                    quote: quote, sourceRange: lineOffset..<endOffset))
+                return
+            }
+            if let lastIndex = headings.indices.last,
+               headings[lastIndex].synopsisPreview.isEmpty,
+               !trimmed.isEmpty {
+                let preview = DocumentOutline.synopsisPreview(of: boundedPrefix(trimmed)[...])
+                if !preview.isEmpty {
+                    let current = headings[lastIndex]
+                    headings[lastIndex] = Heading(
+                        id: current.id,
+                        level: current.level,
+                        title: current.title,
+                        quote: current.quote,
+                        sourceRange: current.sourceRange,
+                        sectionRange: current.sectionRange,
+                        synopsisPreview: preview
+                    )
+                }
+            }
         }
         let scalars = source.unicodeScalars
         var index = scalars.startIndex
@@ -70,6 +109,28 @@ struct DocumentOutlineProjection: Equatable, Sendable {
         }
         try await finishLine(at: source.endIndex, offset: offset)
         try Task.checkCancellation()
+        if !headings.isEmpty {
+            let totalUTF16 = offset
+            for i in headings.indices {
+                let current = headings[i]
+                var sectionEnd = totalUTF16
+                for j in (i + 1)..<headings.count {
+                    if headings[j].level <= current.level {
+                        sectionEnd = headings[j].sourceRange.lowerBound
+                        break
+                    }
+                }
+                headings[i] = Heading(
+                    id: current.id,
+                    level: current.level,
+                    title: current.title,
+                    quote: current.quote,
+                    sourceRange: current.sourceRange,
+                    sectionRange: current.sourceRange.lowerBound..<max(current.sourceRange.upperBound, sectionEnd),
+                    synopsisPreview: current.synopsisPreview
+                )
+            }
+        }
         return Self(revision: revision ?? DocumentOutline.stableHash(source), headings: headings)
     }
     /// Keep the original slice and yield even for a giant run of heading/fence whitespace.

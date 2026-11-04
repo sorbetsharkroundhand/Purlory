@@ -24,13 +24,14 @@ struct WorkspaceEntityEvent: Equatable {
     private let _isDraggingEvents = CurrentValueSubject<Bool, Never>(false)
     var isDraggingChanges: AnyPublisher<Bool, Never> { _isDraggingEvents.eraseToAnyPublisher() }
     let presentationWillChange = PassthroughSubject<Void, Never>()
+    let presentationDidChange = PassthroughSubject<Void, Never>()
 
-    private(set) var layout = SpatialWorkspaceLayout(documents: [], selected: nil) { willSet { presentationWillChange.send() } }
+    private(set) var layout = SpatialWorkspaceLayout(documents: [], selected: nil) { willSet { presentationWillChange.send() } didSet { presentationDidChange.send() } }
     private(set) var previewTarget: SpatialDropTarget? { willSet { presentationWillChange.send() } }
     private(set) var pointer = CGPoint.zero
     private(set) var isDragging = false { willSet { presentationWillChange.send(); _isDraggingEvents.send(newValue) } }
-    var typewriter = false { willSet { presentationWillChange.send() } didSet { persist() } }
-    var focusDimming = false { willSet { presentationWillChange.send() } didSet { persist() } }
+    var typewriter = false { willSet { presentationWillChange.send() } didSet { persist(); presentationDidChange.send() } }
+    var focusDimming = false { willSet { presentationWillChange.send() } didSet { persist(); presentationDidChange.send() } }
     var whisperTyping = false { willSet { presentationWillChange.send(); _whisperTypingEvents.send(newValue) } }
     var expandedItem: String? { willSet { presentationWillChange.send() } }
     private(set) var selectedTile: WorkspaceTileID? { willSet { presentationWillChange.send() } }

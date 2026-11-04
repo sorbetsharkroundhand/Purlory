@@ -45,6 +45,23 @@ struct WorkspaceCharacterCards: View {
                             detail: card.note, term: card.name, theme: theme, initial: String(card.name.prefix(1)),
                             role: card.role ?? "", sourceDocumentID: record.documentID) {
                             Text(card.note.isEmpty ? "아직 적은 소개가 없어요." : card.note).lineSpacing(5).fixedSize(horizontal: false, vertical: true)
+                            if card.hasNarrativeArc {
+                                DisclosureGroup("서사 동학 (동기·목표·갈등)") {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        ForEach(narrativeArcRows(for: card), id: \.label) { row in
+                                            HStack(alignment: .top, spacing: 4) {
+                                                Text(row.label)
+                                                    .purloryUIFont(9.5, .semibold)
+                                                    .foregroundStyle(theme.novelC)
+                                                Text(row.value)
+                                                    .purloryUIFont(10)
+                                                    .foregroundStyle(theme.ink2C)
+                                                    .fixedSize(horizontal: false, vertical: true)
+                                            }
+                                        }
+                                    }.padding(.top, 2)
+                                }.purloryUIFont(10, .medium).foregroundStyle(theme.ink2C)
+                            }
                             if !understanding.isEmpty {
                                 VStack(alignment: .leading, spacing: 3) {
                                     ForEach(understanding, id: \.self) { line in
@@ -117,6 +134,20 @@ struct WorkspaceCharacterCards: View {
             .padding(.vertical, 6)
         }
         .contextMenu { Button("작품 정보 편집…") { model.selectTile(.characters); model.pouchSection = .object } }
+    }
+    private func narrativeArcRows(for card: CharacterCard) -> [(label: String, value: String)] {
+        let candidates: [(String, String?)] = [
+            ("동기", card.motivation),
+            ("목표", card.goal),
+            ("갈등", card.conflict),
+            ("변화", card.epiphany),
+        ]
+        return candidates.compactMap { label, raw in
+            guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+                return nil
+            }
+            return (label: label, value: trimmed)
+        }
     }
     private func jumpableSection(_ title: String, items: [(text: String, jump: String?)], documentID: WritingDocumentID) -> some View {
         DisclosureGroup(title) {

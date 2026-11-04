@@ -282,6 +282,7 @@ struct WorkspaceSurface: View {
         spatial.configure(project: project, selected: projectSession.selectedDocumentID,
             defaults: projectSession.presentationPreferences)
         editorRequests.spatialWorkspace = spatial
+        writingDiagnostics?.configurePresentation(spatial: spatial, settings: completion.settings)
         if assistance == nil { assistance = completion.makeWorkspaceAssistance(session: projectSession, requests: editorRequests, margin: livingMargin) }
         if entities == nil { entities = WorkspaceEntityController(session: projectSession, requests: editorRequests) }
         editorRequests.workspaceHover = { [weak entities] editor, key, offset in entities?.hover(editor: editor, key: key, nativeOffset: offset) }

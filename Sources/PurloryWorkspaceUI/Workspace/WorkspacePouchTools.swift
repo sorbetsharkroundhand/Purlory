@@ -102,6 +102,23 @@ struct WorkspacePouchTools: View {
                     focusButton("문단 집중", "viewfinder", value: $model.focusDimming, id: "purlory.workspace.pouch.focus")
                     focusButton("타자기 스크롤", "text.line.first.and.arrowtriangle.forward", value: $model.typewriter, id: "purlory.workspace.pouch.typewriter")
                 }
+                HStack(spacing: 8) {
+                    Toggle("교정 밑줄 표시", isOn: $settings.showsWritingDiagnosticsInEditor)
+                        .toggleStyle(.switch).controlSize(.mini).tint(theme.novelC)
+                        .fixedSize()
+                        .accessibilityIdentifier("purlory.workspace.pouch.diagnostics-underlines")
+                        .background(WorkspaceAccessibilityProbe(
+                            identifier: "purlory.workspace.pouch.diagnostics-underlines",
+                            label: "교정 밑줄 표시",
+                            value: settings.showsWritingDiagnosticsInEditor ? "켜짐" : "꺼짐",
+                            role: .checkBox))
+                    Spacer(minLength: 4)
+                    if model.focusDimming && !model.layout.contains(.margin) {
+                        Text("집중 중 숨김")
+                            .purloryUIFont(10)
+                            .foregroundStyle(theme.workspaceMutedC)
+                    }
+                }
                 stepper("글자 크기", value: $settings.editorFontSize,
                     range: CompletionSettings.minFontSize...CompletionSettings.maxFontSize, id: "font-size")
                 stepper("줄 간격", value: $settings.lineSpacing, range: 0...20, id: "line-spacing")

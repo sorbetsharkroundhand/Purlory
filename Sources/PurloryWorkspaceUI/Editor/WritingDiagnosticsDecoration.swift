@@ -110,6 +110,7 @@ extension BlockTextView {
         needsDisplay = true
     }
     func writingDecorationRanges(visible: NSRange) -> [NSRange] {
+        guard !isWritingDiagnosticsSuppressedByWorkspace else { return [] }
         let length = textStorage?.length ?? 0
         guard visible.location >= 0, visible.location <= length, visible.length >= 0, visible.length <= length - visible.location else { return [] }
         return writingDecorations.visible(visible, revision: writingNativeRevision, identity: writingRuntimeIdentityProvider?(),

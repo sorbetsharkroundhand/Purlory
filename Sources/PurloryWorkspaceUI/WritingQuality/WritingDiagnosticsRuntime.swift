@@ -39,15 +39,24 @@ public final class WritingDiagnosticsRuntime: ObservableObject {
         }
     }
     func configure(currentSnapshot: @escaping @MainActor () -> ProjectDocumentSnapshot?) { reader.provider = currentSnapshot }
-    func connect(session: ProjectSession, editorBridge: ProjectEditorBridge, livingMargin: LivingMarginModel) {
+    func connect(session: ProjectSession, editorBridge: ProjectEditorBridge, livingMargin: LivingMarginModel,
+                 spatial: SpatialWorkspaceController? = nil, settings: CompletionSettings? = nil) {
         guard !terminated else { return }
         configure(currentSnapshot: { [weak session] in session?.selectedDocumentSnapshot })
         if let workspaceBinding, workspaceBinding.matches(session: session, bridge: editorBridge, margin: livingMargin) {
+            workspaceBinding.configurePresentation(spatial: spatial, settings: settings)
             workspaceBinding.refresh(); return
         }
         workspaceBinding?.stop()
-        let binding = WritingDiagnosticsWorkspaceBinding(controller: controller, session: session, bridge: editorBridge, margin: livingMargin)
+        let binding = WritingDiagnosticsWorkspaceBinding(controller: controller, session: session, bridge: editorBridge, margin: livingMargin,
+            spatial: spatial, settings: settings)
         workspaceBinding = binding; binding.connect()
+    }
+    func configurePresentation(spatial: SpatialWorkspaceController? = nil, settings: CompletionSettings? = nil) {
+        workspaceBinding?.configurePresentation(spatial: spatial, settings: settings)
+    }
+    func flushActiveParagraphQuietWindow() {
+        workspaceBinding?.flushActiveParagraphQuietWindow()
     }
     func waitForPresentation() async { await workspaceBinding?.waitForPublication() }
     func navigateMarginEvidence(insightID: String, evidence: EvidenceAnchor, requests: ProjectEditorRequests) -> Bool {

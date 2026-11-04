@@ -26,7 +26,14 @@ public enum ProjectWriterEditing {
         case .character(var card):
             if let index = writer.characters.firstIndex(where: { $0.id == card.id }) {
                 let existing = writer.characters[index]
-                if card.note != existing.note { card.locked = true }
+                if card.note != existing.note
+                    || card.motivation != existing.motivation
+                    || card.goal != existing.goal
+                    || card.conflict != existing.conflict
+                    || card.epiphany != existing.epiphany
+                {
+                    card.locked = true
+                }
                 if card != existing { card.autoRegistered = nil }
                 writer.characters[index] = card
             } else { writer.characters.append(card) }

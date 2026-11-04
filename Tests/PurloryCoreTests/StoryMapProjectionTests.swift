@@ -133,4 +133,44 @@ final class StoryMapProjectionTests: XCTestCase {
         let noteMap = try await StoryMapProjection.build(note)
         XCTAssertTrue(noteMap.rows.isEmpty)
     }
+
+    func testSceneProgressRatioLengthRatioAndEventCountMatchUTF16AndIndexedEvents() async throws {
+        let source = "# 1장\n민준은 문을 열었다. 민준은 걸어갔다.\n# 2장\n민준은 잠시 멈춰 서서 하늘을 보았다.\n# 3장\n민준은 떠났다.\n"
+        let identity = ProjectRuntimeIdentity(key: .init(projectID: WritingProjectID(), documentID: WritingDocumentID()), generation: 1)
+        let document = ProjectDocumentSnapshot(identity: identity, title: "Novel", body: source, kind: .manuscript, mode: .fiction, userData: [:])
+        let scope = StoryMemoryScope.project(projectID: identity.key.projectID, documentID: identity.key.documentID)
+        let outline = DocumentOutline.parse(source)
+        XCTAssertEqual(outline.scenes.count, 3)
+
+        let scene0Events = [
+            StoryEvent(sceneHash: outline.scenes[0].contentHash, participants: [person.id], summary: "개문", importance: 2, quote: "민준은 문을 열었다."),
+            StoryEvent(sceneHash: outline.scenes[0].contentHash, participants: [person.id], summary: "이동", importance: 1, quote: "민준은 걸어갔다.")
+        ]
+        let scene2Events = [
+            StoryEvent(sceneHash: outline.scenes[2].contentHash, participants: [person.id], summary: "출발", importance: 2, quote: "민준은 떠났다.")
+        ]
+        let knowledge = KnowledgeSnapshot(
+            entryID: identity.key.documentID.rawValue,
+            outline: outline,
+            summariesByHash: [:],
+            storyKnowledge: .init(scope: scope, source: source, facts: [], entities: .init(characters: [person])),
+            events: [
+                outline.scenes[0].contentHash: scene0Events,
+                outline.scenes[2].contentHash: scene2Events
+            ],
+            characters: [person]
+        )
+
+        let projection = try await StoryMapProjection.build(document, knowledge: knowledge, knowledgeOrigin: document.identity)
+        XCTAssertEqual(projection.scenes.count, 3)
+        let totalLength = Double(source.utf16.count)
+        for (index, sceneRow) in projection.scenes.enumerated() {
+            let expectedRange = outline.scenes[index].utf16Range
+            XCTAssertEqual(sceneRow.progressRatio, Double(expectedRange.lowerBound) / totalLength, accuracy: 0.0001)
+            XCTAssertEqual(sceneRow.lengthRatio, Double(expectedRange.count) / totalLength, accuracy: 0.0001)
+        }
+        XCTAssertEqual(projection.scenes.map(\.eventCount), [2, 0, 1])
+        let rowSceneEventCounts = projection.rows.filter { $0.kind == .scene }.map(\.eventCount)
+        XCTAssertEqual(rowSceneEventCounts, [2, 0, 1])
+    }
 }

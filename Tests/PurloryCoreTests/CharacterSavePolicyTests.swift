@@ -82,4 +82,60 @@ final class CharacterSavePolicyTests: XCTestCase {
         store.removeCharacter(try XCTUnwrap(cardID), from: id)
         XCTAssertGreaterThan(store.immediateSaveCount, before + 1)
     }
+
+    func testLegacyCharacterCardJSONDecodesWithoutNarrativeArcFields() throws {
+        let cardID = UUID()
+        let legacyJSON = """
+        {
+          "id": "\(cardID.uuidString)",
+          "name": "한도경",
+          "aliases": "도경, 등대지기",
+          "note": "과묵하고 손놀림이 정확하다."
+        }
+        """
+        let decoded = try JSONDecoder().decode(CharacterCard.self, from: Data(legacyJSON.utf8))
+        XCTAssertEqual(decoded.id, cardID)
+        XCTAssertEqual(decoded.name, "한도경")
+        XCTAssertNil(decoded.motivation)
+        XCTAssertNil(decoded.goal)
+        XCTAssertNil(decoded.conflict)
+        XCTAssertNil(decoded.epiphany)
+        XCTAssertFalse(decoded.hasNarrativeArc)
+    }
+
+    @MainActor
+    func testNarrativeArcEditsLockCharacterCardAndIncludeInContextHeader() throws {
+        let id = store.newEntry()
+        let base = CharacterCard(name: "한도경", note: "과묵한 등대지기", autoRegistered: true)
+        store.upsertCharacter(base, in: id)
+
+        var editing = base
+        editing.motivation = "동생에 대한 부채감을 씻고 싶다"
+        editing.goal = "폭풍이 오기 전에 등대 렌즈를 수리한다"
+        editing.conflict = "부식된 회전축과 고립된 섬"
+        editing.epiphany = "혼자 짊어지는 것이 속죄가 아님을 깨닫는다"
+        store.upsertCharacter(editing, in: id)
+        store.flush()
+
+        let saved = try XCTUnwrap(
+            store.entries.first { $0.id == id }?.characters?.first { $0.id == base.id }
+        )
+        XCTAssertEqual(saved.locked, true, "서사 동학 필드 수정 시 카드 잠금 보호 규칙이 유지되어야 한다")
+        XCTAssertNil(saved.autoRegistered, "서사 동학 필드 수정 시 자동 등록 표식이 해제되어야 한다")
+        XCTAssertTrue(saved.hasNarrativeArc)
+
+        var report: [ContextReport.Item] = []
+        let header = ContextAssembler.headerText(
+            document: DocumentContext(
+                title: "등대",
+                kind: .novel,
+                genre: nil,
+                characters: [saved]
+            ),
+            window: "한도경은 렌즈를 닦았다.",
+            report: &report
+        )
+        XCTAssertTrue(header.contains("동기: 동생에 대한 부채감을 씻고 싶다"))
+        XCTAssertTrue(header.contains("목표: 폭풍이 오기 전에 등대 렌즈를 수리한다"))
+    }
 }

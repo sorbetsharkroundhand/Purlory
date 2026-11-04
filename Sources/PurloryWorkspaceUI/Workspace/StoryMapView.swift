@@ -108,7 +108,9 @@ struct StoryMapView: View {
         }
     }
     private func sourceRow(_ row: StoryMapProjection.Row, prepared: PreparedStoryMap) -> some View {
-        StoryMapActionButton(identifier: "purlory.story-map.row.\(row.id)", title: row.title, theme: theme,
+        let isSlowScene = row.kind == .scene && row.eventCount == 0 && (row.sourceRange.count >= 400 || row.lengthRatio >= 0.35)
+        let percentText = "\(Int((row.progressRatio * 100).rounded()))%"
+        return StoryMapActionButton(identifier: "purlory.story-map.row.\(row.id)", title: row.title, theme: theme,
             detail: row.kind == .event ? row.evidence.quote : nil, help: "원문: " + row.evidence.quote,
             label: "\(row.kind == .scene ? "장면" : "사건"), \(row.title)",
             marker: row.kind == .event ? String(repeating: "● ", count: max(1, min(3, row.laneSlots.count))) : "",
@@ -116,6 +118,31 @@ struct StoryMapView: View {
                 requests.jump(to: row, prepared: prepared, in: session)
             }
             .frame(maxWidth: .infinity).frame(height: row.kind == .scene ? 38 : 64)
+            .overlay(alignment: .trailing) {
+                if row.kind == .scene {
+                    HStack(spacing: 4) {
+                        if isSlowScene {
+                            Text("호흡 점검")
+                                .font(PurloryFonts.monoUI(9))
+                                .foregroundStyle(theme.ink3C)
+                                .padding(.horizontal, 5).padding(.vertical, 2)
+                                .background(theme.hoverC, in: Capsule())
+                        }
+                        Text("사건 \(row.eventCount)")
+                            .font(PurloryFonts.monoUI(9.5))
+                            .foregroundStyle(row.eventCount > 0 ? theme.ink2C : theme.ink3C)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(theme.hoverC, in: Capsule())
+                        Text(percentText)
+                            .font(PurloryFonts.monoUI(9.5))
+                            .foregroundStyle(theme.ink2C)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(theme.hoverC, in: Capsule())
+                    }
+                    .padding(.trailing, 8)
+                    .allowsHitTesting(false)
+                }
+            }
     }
     private var statusText: String {
         switch controller.status {

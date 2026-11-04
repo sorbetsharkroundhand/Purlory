@@ -654,6 +654,26 @@ extension BlockTextView {
               (storage.string as NSString).substring(with: mapped.range).utf16.elementsEqual(mapped.original.utf16) else { return nil }
         return WritingDiagnosticRange(mapped.range)
     }
+
+    func activeEditingSourceParagraphRange(revision: UInt64) -> WritingDiagnosticRange? {
+        guard revision == writingNativeRevision, !hasMarkedText(),
+              writingProjectionCapture.compositionDepth == 0,
+              writingProjectionCapture.mappedRevision == revision,
+              writingProjectionCapture.mappedIdentity == writingProjectionCapture.runtimeIdentity?() else { return nil }
+        let ns = string as NSString
+        guard ns.length > 0 else { return nil }
+        let selected = selectedRange()
+        let clamped = min(max(0, selected.location), ns.length)
+        let paragraph = ns.paragraphRange(for: NSRange(location: clamped, length: 0))
+        guard paragraph.length > 0,
+              let coverage = writingProjectionCapture.nativeRows.sourceCoverage(of: paragraph) else { return nil }
+        return WritingDiagnosticRange(coverage)
+    }
+
+    var isWritingDiagnosticsSuppressedByWorkspace: Bool {
+        guard let interaction = workspaceInteraction as? WorkspaceEditorInteraction else { return false }
+        return interaction.suppressesEditorWritingDiagnostics
+    }
 }
 
 
