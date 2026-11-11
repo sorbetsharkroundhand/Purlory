@@ -125,10 +125,14 @@ public enum EpubExporter {
     /// PurloryImageStore 접근은 여기서 끝난다. 이후 단계는 격리 없이 순수하다 (#33).
     @MainActor
     static func resolveAssetURLs(in body: String) -> [String: URL] {
+        let definitions = ImageReferenceParser.collectDefinitions(in: body)
         var map: [String: URL] = [:]
+        var fence = MarkdownFenceTracker()
         for rawLine in body.components(separatedBy: "\n") {
+            if fence.consumeLine(rawLine) { continue }
             guard let attrs = BlockTextView.imageAttrs(
-                from: rawLine.trimmingCharacters(in: .whitespaces))
+                from: rawLine.trimmingCharacters(in: .whitespaces),
+                definitions: definitions)
             else { continue }
             switch ImageReferenceParser.classify(attrs.src) {
             case .managedRelative, .externalFile:
@@ -229,14 +233,24 @@ public enum EpubExporter {
         var chapters: [Chapter] = []
         var title = plainTitle(entry.title)
         var html = ""
+        let definitions = ImageReferenceParser.collectDefinitions(in: entry.body)
         // 첫 h1 앞에 본문이 없으면 그 "빈 서문 챕터"는 만들지 않는다.
         var started = false
         var inCode = false
-        var listTag: String?
+        var fenceTracker = MarkdownFenceTracker()
+        struct OpenList {
+            var tag: String
+            var indent: Int
+            var nextNumber: Int
+            var hasOpenItem: Bool
+        }
+        var listStack: [OpenList] = []
         func closeList() {
-            if let tag = listTag {
-                html += "</\(tag)>\n"
-                listTag = nil
+            while let last = listStack.popLast() {
+                if last.hasOpenItem {
+                    html += "</li>\n"
+                }
+                html += "</\(last.tag)>\n"
             }
         }
         // 다중 행 display 수식 그룹 — 에디터 로드와 같은 상태기계 (이슈 #20).
@@ -255,12 +269,50 @@ public enum EpubExporter {
             mathLines = []
             progress?(0.1)
         }
-        func openList(_ tag: String) {
-            if listTag != tag {
-                closeList()
-                html += "<\(tag)>\n"
-                listTag = tag
+        func beginListItem(tag: String, indent: Int, markerNumber: Int? = nil) -> String {
+            while let last = listStack.last, last.indent > indent {
+                _ = listStack.popLast()
+                if last.hasOpenItem {
+                    html += "</li>\n"
+                }
+                html += "</\(last.tag)>\n"
             }
+            if let last = listStack.last, last.indent == indent, last.tag != tag {
+                _ = listStack.popLast()
+                if last.hasOpenItem {
+                    html += "</li>\n"
+                }
+                html += "</\(last.tag)>\n"
+            }
+            if listStack.last?.indent != indent {
+                if !listStack.isEmpty {
+                    if !listStack[listStack.count - 1].hasOpenItem {
+                        html += "<li>"
+                        listStack[listStack.count - 1].hasOpenItem = true
+                    }
+                    html += "\n"
+                }
+                let startNum = markerNumber ?? 1
+                let startAttr = (tag == "ol" && startNum != 1) ? " start=\"\(startNum)\"" : ""
+                html += "<\(tag)\(startAttr)>\n"
+                listStack.append(OpenList(tag: tag, indent: indent, nextNumber: startNum + 1, hasOpenItem: true))
+                return "<li>"
+            }
+            // Same indent and tag already open:
+            if listStack[listStack.count - 1].hasOpenItem {
+                html += "</li>\n"
+            }
+            listStack[listStack.count - 1].hasOpenItem = true
+            if tag == "ol", let n = markerNumber {
+                let expected = listStack[listStack.count - 1].nextNumber
+                listStack[listStack.count - 1].nextNumber = n + 1
+                if n != expected {
+                    return "<li value=\"\(n)\">"
+                }
+            } else if tag == "ol" {
+                listStack[listStack.count - 1].nextNumber += 1
+            }
+            return "<li>"
         }
 
         for rawLine in entry.body.components(separatedBy: "\n") {
@@ -280,21 +332,25 @@ public enum EpubExporter {
                 }
                 continue
             }
-            let trimmedFence = line.trimmingCharacters(in: .whitespaces)
-            if !inCode, trimmedFence.hasPrefix("```"), !trimmedFence.dropFirst(3).contains("`") {
+            let wasInFence = fenceTracker.isInsideFence
+            let isFenceOrInterior = fenceTracker.consumeLine(line)
+            let isInFenceNow = fenceTracker.isInsideFence
+            if !wasInFence && isInFenceNow {
                 closeList()
                 inCode = true
-                let lang = String(trimmedFence.dropFirst(3)).trimmingCharacters(in: .whitespaces)
+                let trimmedFence = line.trimmingCharacters(in: .whitespaces)
+                let markerChar = trimmedFence.first ?? "`"
+                let lang = String(trimmedFence.drop(while: { $0 == markerChar })).trimmingCharacters(in: .whitespaces)
                 let classAttr = lang.isEmpty ? "" : " class=\"language-\(attrEscape(lang))\""
                 html += "<pre><code\(classAttr)>"
                 continue
-            } else if inCode, trimmedFence == "```" {
+            } else if wasInFence && !isInFenceNow {
                 closeList()
                 inCode = false
                 html += "</code></pre>\n"
                 continue
             }
-            if inCode {
+            if isFenceOrInterior || inCode {
                 html += escape(line).replacingOccurrences(of: "\u{2028}", with: "\n") + "\n"
                 continue
             }
@@ -335,15 +391,18 @@ public enum EpubExporter {
             } else if let listMatch = BlockTextView.parseListPrefix(line) {
                 switch listMatch.block {
                 case .todo:
-                    openList("ul")
+                    let liOpen = beginListItem(tag: "ul", indent: listMatch.indent)
                     let mark = listMatch.checked ? "☑" : "☐"
-                    html += "<li>\(mark) \(inline(listMatch.body))</li>\n"
+                    html += "\(liOpen)\(mark) \(inline(listMatch.body))"
                 case .bullet:
-                    openList("ul")
-                    html += "<li>\(inline(listMatch.body))</li>\n"
+                    let liOpen = beginListItem(tag: "ul", indent: listMatch.indent)
+                    html += "\(liOpen)\(inline(listMatch.body))"
                 case .number:
-                    openList("ol")
-                    html += "<li>\(inline(listMatch.body))</li>\n"
+                    let markerNum = listMatch.marker.flatMap {
+                        Int($0.trimmingCharacters(in: CharacterSet(charactersIn: ".")))
+                    }
+                    let liOpen = beginListItem(tag: "ol", indent: listMatch.indent, markerNumber: markerNum)
+                    html += "\(liOpen)\(inline(listMatch.body))"
                 default:
                     break
                 }
@@ -368,7 +427,8 @@ public enum EpubExporter {
                     mathLines.append(rest)
                 }
             } else if let attrs = BlockTextView.imageAttrs(
-                from: line.trimmingCharacters(in: .whitespaces)) {
+                from: line.trimmingCharacters(in: .whitespaces),
+                definitions: definitions) {
                 closeList()
                 if let relative = copyImage(
                     attrs.src, into: oebps, missing: &missing, assetURLs: assetURLs, assets: assets)
@@ -379,7 +439,9 @@ public enum EpubExporter {
                 // 누락 로컬 파일은 missing에 기록됐고 exportWithPanel이 계속
                 // 여부를 물었다. 차단 소스는 에디터에서도 렌더 대상이 아니므로
                 // 사라진 것이 아니다.
-            } else if let ref = ImageReferenceParser.parse(line.trimmingCharacters(in: .whitespaces)),
+            } else if let ref = ImageReferenceParser.parse(
+                line.trimmingCharacters(in: .whitespaces),
+                definitions: definitions),
                 case .remote(let url) = ref.destinationKind {
                 // 원격 이미지는 로컬 복사 대상이 아니지만 주소 그대로 남긴다 —
                 // 콘텐츠가 경고 없이 사라지지 않게 (#12·#15).
@@ -388,6 +450,8 @@ public enum EpubExporter {
                 attrs.alt = ref.alt
                 attrs.title = ref.title
                 html += imageTag(src: attrs.src, attrs: attrs)
+            } else if isReferenceDefinitionLine(line.trimmingCharacters(in: .whitespaces), in: definitions) {
+                closeList()
             } else if line.trimmingCharacters(in: .whitespaces).isEmpty {
                 closeList()
             } else {
@@ -608,23 +672,13 @@ public enum EpubExporter {
                 if !missing.contains(src) { missing.append(src) }
                 return nil
             }
-            do {
-                let dir = oebps.appendingPathComponent("images", isDirectory: true)
-                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-                let source = URL(fileURLWithPath: src)
-                var name = source.lastPathComponent
-                var suffix = 1
-                while FileManager.default.fileExists(atPath: dir.appendingPathComponent(name).path) {
-                    if try Data(contentsOf: dir.appendingPathComponent(name)) == bytes { return "images/\(name)" }
-                    name = "\(source.deletingPathExtension().lastPathComponent)-\(suffix).\(source.pathExtension)"
-                    suffix += 1
-                }
-                try bytes.write(to: ProjectPaths.checked(name, under: dir), options: .atomic)
-                return "images/\(name)"
-            } catch {
-                if !missing.contains(src) { missing.append(src) }
-                return nil
-            }
+            return writeExportedImageBytes(
+                bytes,
+                preferredName: URL(fileURLWithPath: src).lastPathComponent,
+                originalSrc: src,
+                into: oebps,
+                missing: &missing
+            )
         }
         guard let sourceURL = assetURLs[src] else {
             if !missing.contains(src) { missing.append(src) }
@@ -648,17 +702,91 @@ public enum EpubExporter {
     private static func copyFile(
         _ sourceURL: URL, src: String, into oebps: URL, missing: inout [String]
     ) -> String? {
-        let dir = oebps.appendingPathComponent("images", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let name = sourceURL.lastPathComponent
-        let dest = dir.appendingPathComponent(name)
-        if !FileManager.default.fileExists(atPath: dest.path) {
-            guard (try? FileManager.default.copyItem(at: sourceURL, to: dest)) != nil else {
-                if !missing.contains(src) { missing.append(src) }
+        guard let bytes = try? Data(contentsOf: sourceURL) else {
+            if !missing.contains(src) { missing.append(src) }
+            return nil
+        }
+        return writeExportedImageBytes(
+            bytes,
+            preferredName: sourceURL.lastPathComponent,
+            originalSrc: src,
+            into: oebps,
+            missing: &missing
+        )
+    }
+
+    private static func writeExportedImageBytes(
+        _ rawBytes: Data,
+        preferredName: String,
+        originalSrc: String,
+        into oebps: URL,
+        missing: inout [String]
+    ) -> String? {
+        let sourceURL = URL(fileURLWithPath: preferredName)
+        let rawExt = sourceURL.pathExtension.lowercased()
+        let stem = sourceURL.deletingPathExtension().lastPathComponent
+        let finalBytes: Data
+        let finalExt: String
+        if rawExt == "heic" || rawExt == "heif" {
+            guard let pngBytes = transcodeToPNG(rawBytes) else {
+                if !missing.contains(originalSrc) { missing.append(originalSrc) }
                 return nil
             }
+            finalBytes = pngBytes
+            finalExt = "png"
+        } else {
+            finalBytes = rawBytes
+            finalExt = sourceURL.pathExtension
         }
-        return "images/\(name)"
+
+        do {
+            let dir = oebps.appendingPathComponent("images", isDirectory: true)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let extWithDot = finalExt.isEmpty ? "" : ".\(finalExt)"
+            var name = "\(stem)\(extWithDot)"
+            var suffix = 1
+            while FileManager.default.fileExists(atPath: dir.appendingPathComponent(name).path) {
+                let existingURL = dir.appendingPathComponent(name)
+                if (try? Data(contentsOf: existingURL)) == finalBytes {
+                    return "images/\(name)"
+                }
+                name = "\(stem)-\(suffix)\(extWithDot)"
+                suffix += 1
+            }
+            try finalBytes.write(to: ProjectPaths.checked(name, under: dir), options: .atomic)
+            return "images/\(name)"
+        } catch {
+            if !missing.contains(originalSrc) { missing.append(originalSrc) }
+            return nil
+        }
+    }
+
+    private static func transcodeToPNG(_ data: Data) -> Data? {
+        if let rep = NSBitmapImageRep(data: data),
+           let png = rep.representation(using: .png, properties: [:]) {
+            return png
+        }
+        if let image = NSImage(data: data),
+           let tiff = image.tiffRepresentation,
+           let rep = NSBitmapImageRep(data: tiff),
+           let png = rep.representation(using: .png, properties: [:]) {
+            return png
+        }
+        return nil
+    }
+
+    private static func isReferenceDefinitionLine(
+        _ trimmedLine: String,
+        in definitions: [String: ImageReferenceParser.Definition]
+    ) -> Bool {
+        guard trimmedLine.hasPrefix("["),
+              let close = trimmedLine.firstIndex(of: "]"),
+              trimmedLine.index(after: close) < trimmedLine.endIndex,
+              trimmedLine[trimmedLine.index(after: close)] == ":"
+        else { return false }
+        let label = ImageReferenceParser.normalizeLabel(
+            String(trimmedLine[trimmedLine.index(after: trimmedLine.startIndex)..<close]))
+        return definitions[label] != nil
     }
 
     /// `<img>` 한 줄 — alt는 리더·VoiceOver의 유일한 이미지 설명이고 title도
@@ -921,7 +1049,7 @@ public enum EpubExporter {
         }
         for (index, image) in images.enumerated() {
             manifest.append(
-                "<item id=\"img\(index)\" href=\"\(image)\" media-type=\"\(mediaType(of: image))\"/>")
+                "<item id=\"img\(index)\" href=\"\(attrEscape(image))\" media-type=\"\(mediaType(of: image))\"/>")
         }
         return """
             <?xml version="1.0" encoding="UTF-8"?>

@@ -66,13 +66,11 @@ public enum MarkdownExporter {
         // asset이 하나의 파일로 모인다.
         var newPaths: [String: String] = [:]
         var report = Report()
-        var inFence = false
+        var fence = MarkdownFenceTracker()
         for rawLine in body.split(separator: "\n", omittingEmptySubsequences: false) {
-            if rawLine.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
-                inFence.toggle()
+            if fence.consumeLine(rawLine) {
                 continue
             }
-            guard !inFence else { continue }
             let line = rawLine.trimmingCharacters(in: .whitespaces)
 
             if let ref = ImageReferenceParser.parse(line, definitions: definitions) {
@@ -100,15 +98,9 @@ public enum MarkdownExporter {
         // 2단계 — 경로 재작성 출력. 계획 단계에서 바뀐 소스만 스플라이스한다.
         var out: [String] = []
         out.reserveCapacity(body.split(separator: "\n", omittingEmptySubsequences: false).count)
-        inFence = false
+        fence = MarkdownFenceTracker()
         for rawLine in body.split(separator: "\n", omittingEmptySubsequences: false) {
-            let trimmedLine = rawLine.trimmingCharacters(in: .whitespaces)
-            if trimmedLine.hasPrefix("```") {
-                inFence.toggle()
-                out.append(String(rawLine))
-                continue
-            }
-            guard !inFence else {
+            if fence.consumeLine(rawLine) {
                 out.append(String(rawLine))
                 continue
             }

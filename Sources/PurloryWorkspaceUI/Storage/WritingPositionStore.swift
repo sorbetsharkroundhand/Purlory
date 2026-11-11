@@ -104,6 +104,22 @@ public final class WritingPositionStore {
         schedulePersist()
     }
 
+    /// 프로젝트/문서 복합 키로 이미 추출된 주변 문맥 조각을 사용해 선택 위치를 기록한다.
+    func record(
+        location: Int, selectionLength: Int, before: String, after: String,
+        for key: ProjectDocumentKey, marked: Bool = false
+    ) {
+        guard !marked else { return }
+        trimIfNeeded(isNew: projectPositions[key] == nil)
+        projectPositions[key] = Position(
+            location: max(0, location),
+            selectionLength: max(0, selectionLength),
+            before: String(before.suffix(24)),
+            after: String(after.prefix(24)))
+        needsPersistence = true
+        schedulePersist()
+    }
+
     /// 프로젝트/문서 복합 키로 현재 선택 위치를 기록한다.
     func record(
         location: Int, selectionLength: Int, body: String, for key: ProjectDocumentKey,

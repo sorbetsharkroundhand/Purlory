@@ -61,9 +61,11 @@ import Combine
     }
     init(session: ProjectSession, requests: ProjectEditorRequests, margin: LivingMarginModel, generate: @escaping Generator) {
         self.session = session; self.requests = requests; self.margin = margin; generator = generate
+        if let key = session.runtimeIdentity?.key { margin.scope(to: key) }
         session.runtimeIdentityChanges.dropFirst().sink { [weak self] identity in
-            guard let self, let capture = self.capture else { return }
-            if identity != capture.identity { self.invalidateCapture() }
+            guard let self else { return }
+            self.margin.scope(to: identity?.key)
+            if let capture = self.capture, identity != capture.identity { self.invalidateCapture() }
         }.store(in: &subscriptions)
         session.isTransitioningChanges.dropFirst().sink { [weak self] value in if value { self?.invalidateCapture() } }.store(in: &subscriptions)
     }
@@ -214,7 +216,7 @@ import Combine
                 let insight = MarginInsight(id: "workspace.\(UUID())", kind: .suggestion, title: title, message: message,
                     evidence: [.init(documentID: capture.key.documentID, quote: ns.substring(with: range), utf16Hint: range.location)],
                     actions: [.init(id: "source", kind: .jumpToEvidence, title: "원문 보기"), .init(id: "dismiss", kind: .dismiss, title: "닫기")])
-                margin.replace(with: [insight] + margin.insights)
+                margin.prepend(insight, for: capture.key)
                 if requests.spatialWorkspace?.layout.contains(.margin) == false { requests.spatialWorkspace?.toggle(.margin) }
                 requests.spatialWorkspace?.expandedItem = "margin.\(insight.id)"
             } else {

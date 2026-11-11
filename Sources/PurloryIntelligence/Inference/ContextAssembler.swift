@@ -247,9 +247,11 @@ public enum ContextAssembler {
             // 단어 중간 절단은 KV 재사용 모델의 LCP와 문장 품질을 함께 깬다.
             let trimmed = Self.wordBoundaryTrimmed(window, keepingFraction: 0.8)
             if trimmed != window { window = trimmed }
+            let windowStartUTF16 =
+                max(0, prefixStartUTF16) + max(0, prefix.utf16.count - window.utf16.count)
             outcome = assembleCore(
                 prefix: window, document: document, knowledge: knowledge,
-                prefixStartUTF16: max(0, prefixStartUTF16 - ((prefix.count) - (window.count))),
+                prefixStartUTF16: windowStartUTF16,
                 style: style,
                 knobs: BudgetKnobs.ladder[index], counter: counter, tokenBudget: budget)
         }
@@ -257,12 +259,17 @@ public enum ContextAssembler {
         // 이미 최소라 A 헤더와 남은 C 중에서는 C가 늘 희생이다. 무한 루프 가드.
         var safety = 0
         while (outcome.totalTokens ?? .max) > budget, !window.isEmpty, safety < 48 {
-            let trimmed = Self.wordBoundaryTrimmed(window, keepingFraction: 0.7)
+            var trimmed = Self.wordBoundaryTrimmed(window, keepingFraction: 0.7)
+            if trimmed == window {
+                trimmed = Self.rawSuffixTrimmed(window)
+            }
             if trimmed == window { break }  // 더는 못 자른다 — 안전망(엔진 클램프)으로.
             window = trimmed
+            let windowStartUTF16 =
+                max(0, prefixStartUTF16) + max(0, prefix.utf16.count - window.utf16.count)
             outcome = assembleCore(
                 prefix: window, document: document, knowledge: knowledge,
-                prefixStartUTF16: max(0, prefixStartUTF16 - ((prefix.count) - (window.count))),
+                prefixStartUTF16: windowStartUTF16,
                 style: style,
                 knobs: BudgetKnobs.ladder.last!, counter: counter, tokenBudget: budget)
             safety += 1
@@ -274,22 +281,18 @@ public enum ContextAssembler {
     /// 한 번에 keepingFraction만큼 남긴다. 자를 게 없으면 원문을 돌려준다.
     package static func wordBoundaryTrimmed(_ text: String, keepingFraction: Double) -> String {
         guard keepingFraction < 1, !text.isEmpty else { return text }
-        var starts: [Int] = []
+        var starts: [String.Index] = []
         var previousWasBoundary = true
-        var offset = 0
-        for scalar in text.unicodeScalars {
-            let isSpace = scalar == " " || scalar.properties.isWhitespace
-            if previousWasBoundary, !isSpace { starts.append(offset) }
+        for index in text.indices {
+            let isSpace = text[index].isWhitespace
+            if previousWasBoundary, !isSpace { starts.append(index) }
             previousWasBoundary = isSpace
-            offset += 1
         }
         let keepCount = max(1, Int(Double(starts.count) * keepingFraction))
         guard keepCount < starts.count else { return text }
-        let cutOffset = starts[starts.count - keepCount]
-        guard cutOffset > 0 else { return text }
-        let ns = text as NSString
-        guard cutOffset < ns.length else { return text }
-        return ns.substring(from: cutOffset)
+        let cutIndex = starts[starts.count - keepCount]
+        guard cutIndex > text.startIndex, cutIndex < text.endIndex else { return text }
+        return String(text[cutIndex...])
     }
 
     /// 조립 본체 — 문자/토큰 두 예산 단위를 knobs·counter로 갈라 낸다.
@@ -319,8 +322,8 @@ public enum ContextAssembler {
         if document?.kind == .novel,
             let knowledge,
             case let block = knowledgeText(
-                knowledge, before: prefixStartUTF16, position: position,
-                controls: controls, report: &items,
+                knowledge, before: prefixStartUTF16, cursor: cursor, window: prefix,
+                position: position, controls: controls, report: &items,
                 knobs: knobs, counter: counter),
             !block.isEmpty
         {
@@ -332,8 +335,8 @@ public enum ContextAssembler {
         // 블록과 같은 "맨 뒤" 자리다 (KV 프리픽스 보호).
         if document?.kind == .novel, let knowledge {
             let block = currentSceneText(
-                knowledge, document: document, cursor: cursor, position: position,
-                controls: controls, report: &items)
+                knowledge, document: document, cursor: cursor, window: prefix,
+                position: position, controls: controls, report: &items)
             if !block.isEmpty {
                 header = header.isEmpty ? block : header + "\n" + block
             }
@@ -350,7 +353,10 @@ public enum ContextAssembler {
                 header = header.isEmpty ? block : header + "\n" + block
             }
         }
-        var report = ContextReport(items: items)
+        let startUTF16 = max(0, prefixStartUTF16)
+        var report = ContextReport(
+            items: items,
+            rawUTF16Range: startUTF16..<max(startUTF16, cursor))
         let assembled: AssembledPrompt
         switch style {
         case .continuation:
@@ -366,8 +372,8 @@ public enum ContextAssembler {
             assembled = .instruct(system: system, user: instructUser(prefix: prefix))
         }
         // 총량 보고 — 토큰 경로에서만 (사다리 판정용, #43).
-        if let counter, case .continuation(let text) = assembled {
-            return ((assembled, report), counter.count(text))
+        if let counter {
+            return ((assembled, report), counter.count(assembled))
         }
         return (((assembled, report)), nil)
     }
@@ -378,25 +384,61 @@ public enum ContextAssembler {
     /// (요구사항 §30 "지금 어떤 이야기 흐름에 있는가" + 그라운딩 계층).
     package static func currentSceneText(
         _ knowledge: KnowledgeSnapshot, document: DocumentContext?, cursor: Int,
+        window: String? = nil,
         position: KnowledgeSnapshot.NarrativePosition? = nil,
         controls: Controls = Controls(nil),
         report: inout [ContextReport.Item]
     ) -> String {
         guard let index = knowledge.outline.sceneIndex(at: cursor) else { return "" }
         let scene = knowledge.outline.scenes[index]
+        let isAtOrAfterSceneEnd = cursor >= scene.utf16Range.upperBound
+        let headingContext = scene.headingPath.joined(separator: " ")
+        func isGroundedBeforeCursor(_ candidate: String) -> Bool {
+            if isAtOrAfterSceneEnd || controls.pinned("current") { return true }
+            let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return false }
+            let sources = [window, headingContext.isEmpty ? nil : headingContext].compactMap { $0 }
+            guard !sources.isEmpty else { return false }
+            if sources.contains(where: { $0.contains(trimmed) }) { return true }
+            let tokens = trimmed.split(whereSeparator: { $0.isWhitespace || $0 == "·" || $0 == "," })
+            for token in tokens {
+                let stem = String(token.prefix(2))
+                if stem.count >= 2, sources.contains(where: { $0.contains(stem) }) {
+                    return true
+                }
+            }
+            return false
+        }
         var lines: [String] = []
         if let meta = knowledge.sceneMetaByHash[scene.contentHash],
             controls.allows("current")
         {
             var pieces: [String] = []
-            if let title = meta.title, !title.isEmpty { pieces.append(title) }
-            if meta.type != .present { pieces.append("(\(meta.type.rawValue) 장면)") }
-            if let location = meta.location, !location.isEmpty {
+            if let title = meta.title, !title.isEmpty,
+                meta.titleUserEdited || isGroundedBeforeCursor(title)
+            {
+                pieces.append(title)
+            }
+            if meta.type != .present,
+                meta.typeUserEdited || isAtOrAfterSceneEnd || position?.layer.isTemporalShift == true
+            {
+                pieces.append("(\(meta.type.rawValue) 장면)")
+            }
+            if let location = meta.location, !location.isEmpty,
+                isGroundedBeforeCursor(location)
+            {
                 pieces.append("· 장소: \(location)")
             }
             // 시점 명시 — 1인칭/제한 삼인칭은 서술 어투와 앎 범위를 결정하는
             // 소설의 핵심 신호다. 구간 시점(회상 속 시점)이 씬 시점보다 이긴다.
-            let pov = position?.pov ?? meta.pov
+            let pov: String?
+            if let segmentID = position?.segmentID, !segmentID.isEmpty, let segPOV = position?.pov {
+                pov = segPOV
+            } else if let rawPOV = position?.pov ?? meta.pov, isGroundedBeforeCursor(rawPOV) {
+                pov = rawPOV
+            } else {
+                pov = nil
+            }
             if let pov, !pov.isEmpty { pieces.append("· 시점: \(pov)") }
             if !pieces.isEmpty {
                 let line = "지금 장면: " + pieces.joined(separator: " ")
@@ -413,7 +455,7 @@ public enum ContextAssembler {
         // 오류 최다 분포가 factual — 로컬 사실 그라운딩이 실탄).
         // 대화 모드에서는 화자·청자를 이미 지목하므로 중복 없이 서술용으로만.
         if controls.allows("cohort") {
-            let names = knowledge.sceneCohabitants(at: cursor).compactMap { id in
+            let names = knowledge.sceneCohabitants(at: cursor, in: window).compactMap { id in
                 document?.characters.first(where: { $0.id == id })?.name
             }
             if !names.isEmpty {
@@ -457,6 +499,7 @@ public enum ContextAssembler {
 
     package static func knowledgeText(
         _ knowledge: KnowledgeSnapshot, before windowStart: Int,
+        cursor: Int? = nil, window: String? = nil,
         position: KnowledgeSnapshot.NarrativePosition? = nil,
         controls: Controls = Controls(nil),
         report: inout [ContextReport.Item],
@@ -464,8 +507,9 @@ public enum ContextAssembler {
         counter: TokenCounter? = nil
     ) -> String {
         let scenes = knowledge.outline.scenes
+        let effectiveCursor = max(windowStart, cursor ?? windowStart)
         // C 창 이전에 완전히 끝난 씬들 — 창과 겹치는 씬은 원문이 이미 C에 있다.
-        var outside = scenes.filter { $0.utf16Range.upperBound <= windowStart }
+        var outside = scenes.enumerated().filter { $0.element.utf16Range.upperBound <= windowStart }
         guard !outside.isEmpty else { return "" }
 
         // 과거 층 집필 중의 시간 차단 (요구사항 §30) — 회상을 쓰는 중에는 그
@@ -473,6 +517,7 @@ public enum ContextAssembler {
         // 미래 사건이 회상 안으로 새는 것을 막는다. 사용자가 Pin한 씬은 예외
         // (고정은 명시적 사용자 결정, §31).
         let writingInPast = position?.chrono == .before && position?.layer.isTemporalShift == true
+        var allowedChronoIndices: Set<Int>?
         if writingInPast,
             let currentScene = position?.sceneIndex
                 ?? knowledge.outline.sceneIndex(at: max(windowStart, 0))
@@ -480,13 +525,9 @@ public enum ContextAssembler {
             let chronoOrder = knowledge.chronologicalSceneOrder()
             if let currentRank = chronoOrder.firstIndex(of: currentScene) {
                 let allowed = Set(chronoOrder.prefix(currentRank + 1))
-                let indexByHash = Dictionary(
-                    uniqueKeysWithValues: scenes.enumerated().map {
-                        ($0.element.contentHash, $0.offset)
-                    })
-                outside = outside.filter { scene in
-                    guard let index = indexByHash[scene.contentHash] else { return false }
-                    return allowed.contains(index)
+                allowedChronoIndices = allowed
+                outside = outside.filter { index, scene in
+                    allowed.contains(index)
                         || controls.pinned("scene|\(scene.contentHash)")
                 }
             }
@@ -508,7 +549,27 @@ public enum ContextAssembler {
         // 사건을 우선 주입한다: "이 회상의 주인이 겪어온 일"이 가장 진한 신호다.
         // 삭감 사다리 1단 — 예산 초과 시 이 블록부터 빠진다 (#43).
         if knobs.includeFlowEvents, writingInPast, let flowID = position?.flowID {
-            let flowEvents = knowledge.flowEvents(of: flowID)
+            let outsideHashes = Set(outside.map(\.element.contentHash))
+            let currentSceneHashes = Set(
+                scenes.enumerated().compactMap { index, scene -> String? in
+                    guard scene.utf16Range.lowerBound <= effectiveCursor,
+                        scene.utf16Range.upperBound > windowStart,
+                        allowedChronoIndices?.contains(index) ?? true
+                    else { return nil }
+                    return scene.contentHash
+                })
+            let flowEvents = knowledge.flowEvents(of: flowID).filter { event in
+                let key = "flow|\(event.canonicalKey)"
+                if controls.pinned(key) { return true }
+                if outsideHashes.contains(event.sceneHash) { return true }
+                guard currentSceneHashes.contains(event.sceneHash) else { return false }
+                if let quote = event.quote?.trimmingCharacters(in: .whitespacesAndNewlines),
+                    !quote.isEmpty
+                {
+                    return window?.contains(quote) == true
+                }
+                return window == nil
+            }
             for event in flowEvents.suffix(2) {
                 // stableKey에 정본 사건 키를 넣는다 — 두 사건이 "flow" 하나를
                 // 같이 쓰면 Pin/Exclude 오버라이드가 서로를 덮어 인스펙터(거울)와
@@ -531,35 +592,39 @@ public enum ContextAssembler {
         // 인과 선행·같은 장소·동석 인물이 담화 거리보다 이긴다. 같은 점수면
         // 담화상 가까운 쪽 — 결정적 타이브레이크라 출력이 요동치지 않는다.
         // 실제 줄 순서는 아래에서 문서 순서로 복원한다 (KV 프리픽스 보호).
-        let indexByHash = Dictionary(
-            uniqueKeysWithValues: scenes.enumerated().map { ($0.element.contentHash, $0.offset) })
-        let scores = knowledge.sceneSalienceScores(at: windowStart, candidates: outside)
+        let scores = knowledge.sceneSalienceScores(
+            at: windowStart, candidates: outside.map(\.element))
         let pinnedScenes = outside
-            .filter { controls.pinned("scene|\($0.contentHash)") }
-            .sorted { indexByHash[$0.contentHash] ?? 0 < indexByHash[$1.contentHash] ?? 0 }
+            .filter { controls.pinned("scene|\($0.element.contentHash)") }
+            .sorted { $0.offset < $1.offset }
         let rankedScenes = outside
-            .filter { !controls.pinned("scene|\($0.contentHash)") }
+            .filter { !controls.pinned("scene|\($0.element.contentHash)") }
             .sorted { lhs, rhs in
-                let ls = scores[lhs.contentHash] ?? 0
-                let rs = scores[rhs.contentHash] ?? 0
+                let ls = scores[lhs.element.contentHash] ?? 0
+                let rs = scores[rhs.element.contentHash] ?? 0
                 if ls != rs { return ls > rs }
-                return indexByHash[lhs.contentHash] ?? 0 > indexByHash[rhs.contentHash] ?? 0
+                return lhs.offset > rhs.offset
             }
 
+        let outsideIndices = Set(outside.map(\.offset))
         // 담고 나서(예산 소진 시 밀린 것이 자연히 빠진다) 문서 순서로 뒤집는다.
         var picked: [(line: String, item: ContextReport.Item)] = []
         var coveredChapters: Set<String> = []
-        var coveredScenes: Set<String> = []
-        for scene in pinnedScenes + rankedScenes {
+        var coveredScenes: Set<Int> = []
+        for (sceneIndex, scene) in pinnedScenes + rankedScenes {
             let sceneKey = "scene|\(scene.contentHash)"
-            guard controls.allows(sceneKey), coveredScenes.insert(scene.contentHash).inserted
+            guard controls.allows(sceneKey), coveredScenes.insert(sceneIndex).inserted
             else { continue }
             let chapter = Array(scene.headingPath.prefix(2))
             let chapterKey = chapter.joined(separator: " > ")
+            let chapterFullyBeforeCursor = scenes.enumerated().allSatisfy { idx, candidate in
+                Array(candidate.headingPath.prefix(2)) != chapter || outsideIndices.contains(idx)
+            }
             let line: String
             let kind: ContextReport.Item.Kind
             var stableKey = sceneKey
             if chapter == cursorChapter || knowledge.chapterSummariesByPath[chapterKey] == nil
+                || (!chapterFullyBeforeCursor && !controls.pinned("chapter|\(chapterKey)"))
                 || controls.pinned(sceneKey)
             {
                 // 같은 장(또는 장 요약이 아직 없는 장, 또는 Pin)은 씬 해상도로.
@@ -601,8 +666,10 @@ public enum ContextAssembler {
         // 보험이다 (ConStory-Bench 2026: 오류 최다 분포가 factual·temporal —
         // state·장면 지식이 요약보다 먼저다). 회상 집필 중엔 여전히 아예
         // 빠진다 — 미래가 새는 것을 막는다 (Pin이 있으면 사용자 결정).
+        let workEvidenceComplete =
+            !scenes.isEmpty && scenes.allSatisfy { $0.utf16Range.upperBound <= effectiveCursor }
         if let work = knowledge.workSummary, controls.allows("work"),
-            !writingInPast || controls.pinned("work")
+            (workEvidenceComplete && !writingInPast) || controls.pinned("work")
         {
             let line = "지난 줄거리: \(work)"
             if cost(line) + 1 <= budget {

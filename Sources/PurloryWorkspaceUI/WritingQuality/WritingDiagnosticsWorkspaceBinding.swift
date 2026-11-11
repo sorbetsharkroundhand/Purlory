@@ -74,6 +74,7 @@ final class WritingDiagnosticsWorkspaceBinding {
             }
         bridge.snapshotDidChange = { [weak self, weak controller] snapshot in
             self?.clearQuietWindow()
+            self?.margin?.scope(to: snapshot.identity.key)
             controller?.noteSnapshot(snapshot)
         }
         bridge.commitDidChange = { [weak self, weak controller] commit, snapshot in
@@ -96,6 +97,7 @@ final class WritingDiagnosticsWorkspaceBinding {
     func refresh() {
         attachEditorInteraction()
         if let snapshot = session?.selectedDocumentSnapshot {
+            margin?.scope(to: snapshot.identity.key)
             controller.noteSnapshot(snapshot)
             if let editor = bridge?.editor, !controller.isNativeBound(to: snapshot.identity, revision: editor.writingNativeRevision) {
                 bridge?.replayPreparedAuthority(baseIdentity: controller.nativeAuthorityBase)
@@ -176,8 +178,10 @@ final class WritingDiagnosticsWorkspaceBinding {
         attachEditorInteraction()
         guard let snapshot = session?.selectedDocumentSnapshot, let editor = bridge?.editor,
               editor.writingRuntimeIdentityProvider?() == snapshot.identity else {
+            if let session { margin?.scope(to: session.runtimeIdentity?.key) }
             findingIDs.removeAll(); insightCache.removeAll(); margin?.replace(writingQuality: []); return
         }
+        margin?.scope(to: snapshot.identity.key)
         var prepared = controller.state
         prepared.findings = prepared.findings.filter { controller.isCurrent($0.stamp) && $0.stamp.runtime == snapshot.identity }
         var nextCache: [String: (stamp: WritingDiagnosticsStamp, insight: MarginInsight?)] = [:]

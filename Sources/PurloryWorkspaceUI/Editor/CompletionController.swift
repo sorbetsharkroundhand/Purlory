@@ -77,14 +77,14 @@ public final class CompletionController {
             dismissedConversationHashes.removeAll()
         }
         runtimeIdentity = identity
-        lastContextReport = nil
+        if lastContextReport != nil { lastContextReport = nil }
         invalidate()
     }
 
     public func noteDocumentChange(_ snapshot: ProjectDocumentSnapshot) {
         if runtimeIdentity?.key == snapshot.identity.key, retainSuggestionOnNextEdit {
             runtimeIdentity = snapshot.identity
-            lastContextReport = nil
+            if lastContextReport != nil { lastContextReport = nil }
             invalidate(preservingSuggestion: true)
             return
         }

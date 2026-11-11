@@ -169,11 +169,16 @@ public enum ImageReferenceParser {
             explicitLabel = labelText
             cursor = close
         }
-        // 전체/축약 모두 줄 끝까지 깨끗해야 한다 — 뒤에 텍스트가 남으면 그냥 문장.
+        // 전체/축약/접힘 모두 줄 끝까지 깨끗해야 한다 — 뒤에 텍스트가 남으면 그냥 문장.
         guard body[cursor...].trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
 
-        // 축약 `[alt]`는 라벨=alt. 정의가 없으면 이미지가 아니다 (CommonMark).
-        let rawLabel = explicitLabel ?? altText
+        // 축약 `![alt]` 및 접힘 `![alt][]`는 라벨=alt. 정의가 없으면 이미지가 아니다 (CommonMark).
+        let rawLabel: String
+        if let explicitLabel, !explicitLabel.isEmpty {
+            rawLabel = explicitLabel
+        } else {
+            rawLabel = altText
+        }
         guard let def = definitions[normalizeLabel(rawLabel)] else { return nil }
         return ImageReference(
             alt: unescape(altText),
@@ -188,10 +193,13 @@ public enum ImageReferenceParser {
     // MARK: - 참조 정의 수집
 
     /// `[label]: dest "title"` 정의를 문서에서 모은다. 라벨은 CommonMark 규칙대로
-    /// 대소문자·공백을 정규화해 비교한다.
+    /// 대소문자·공백을 정규화해 비교하며, 코드 블록 내부는 건너뛰고 중복 라벨은 첫 정의가 우선한다.
     public static func collectDefinitions(in document: String) -> [String: Definition] {
         var result: [String: Definition] = [:]
+        var fence = MarkdownFenceTracker()
         for rawLine in document.split(separator: "\n", omittingEmptySubsequences: false) {
+            if fence.consumeLine(rawLine) { continue }
+            if hasIndentedCodePrefix(rawLine) { continue }
             let line = rawLine.trimmingCharacters(in: .whitespaces)
             guard line.hasPrefix("["),
                 let close = line.firstIndex(of: "]"),
@@ -199,6 +207,7 @@ public enum ImageReferenceParser {
                 line[line.index(after: close)] == ":"
             else { continue }
             let label = normalizeLabel(String(line[line.index(after: line.startIndex)..<close]))
+            guard !label.isEmpty else { continue }
             var rest = line[line.index(close, offsetBy: 2)...]
             rest = rest.drop(while: { $0 == " " || $0 == "\t" })
             guard !rest.isEmpty else { continue }
@@ -226,9 +235,25 @@ public enum ImageReferenceParser {
             } else {
                 title = nil
             }
-            result[label] = Definition(destinationRaw: dest, title: title)
+            if result[label] == nil {
+                result[label] = Definition(destinationRaw: dest, title: title)
+            }
         }
         return result
+    }
+
+    private static func hasIndentedCodePrefix(_ rawLine: Substring) -> Bool {
+        if rawLine.first == "\t" { return true }
+        var spaces = 0
+        for ch in rawLine {
+            if ch == " " {
+                spaces += 1
+                if spaces >= 4 { return true }
+            } else {
+                break
+            }
+        }
+        return false
     }
 
     // MARK: - source 유형 분류 (이슈 #12 핵심)
@@ -407,5 +432,64 @@ public enum ImageReferenceParser {
         }
         if escaped { out.append("\\") }
         return out
+    }
+}
+
+/// Tracks CommonMark fenced code blocks (backtick `` ` `` and tilde `~` runs of length >= 3)
+/// across line-by-line scans so headings, scene breaks, image references, and link definitions
+/// inside fenced code blocks are not misinterpreted as top-level document syntax.
+public struct MarkdownFenceTracker: Sendable, Equatable {
+    private var openMarker: Character?
+    private var openLength: Int = 0
+
+    public init() {}
+
+    public var isInsideFence: Bool {
+        openMarker != nil
+    }
+
+    /// Processes a single line and returns `true` if the line is an opening fence, inside an open fence,
+    /// or a closing fence line. Returns `false` for normal top-level markdown lines.
+    @discardableResult
+    public mutating func consumeLine(_ rawLine: Substring) -> Bool {
+        let trimmed = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let first = trimmed.first, first == "`" || first == "~" else {
+            return openMarker != nil
+        }
+
+        var count = 0
+        var idx = trimmed.startIndex
+        while idx < trimmed.endIndex, trimmed[idx] == first {
+            count += 1
+            idx = trimmed.index(after: idx)
+        }
+        guard count >= 3 else {
+            return openMarker != nil
+        }
+
+        let remainder = trimmed[idx...]
+        if let currentMarker = openMarker {
+            if first == currentMarker,
+               count >= openLength,
+               remainder.trimmingCharacters(in: .whitespaces).isEmpty
+            {
+                openMarker = nil
+                openLength = 0
+            }
+            return true
+        } else {
+            // Backtick fence info strings cannot contain backticks (e.g. inline ```code``` on one line).
+            if first == "`", remainder.contains("`") {
+                return false
+            }
+            openMarker = first
+            openLength = count
+            return true
+        }
+    }
+
+    @discardableResult
+    public mutating func consumeLine(_ rawLine: String) -> Bool {
+        consumeLine(rawLine[...])
     }
 }

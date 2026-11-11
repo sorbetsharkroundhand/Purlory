@@ -140,6 +140,7 @@ public enum LivingMarginPolicy {
 public final class LivingMarginModel: ObservableObject {
     @Published public private(set) var insights: [MarginInsight]
     @Published public private(set) var dismissedIDs: Set<String>
+    public private(set) var activeDocumentKey: ProjectDocumentKey?
     private var otherProducerInsights: [MarginInsight]
     private var writingQualityInsights: [MarginInsight] = []
 
@@ -150,15 +151,73 @@ public final class LivingMarginModel: ObservableObject {
         self.insights = insights
         self.otherProducerInsights = insights
         self.dismissedIDs = dismissedIDs
+        self.activeDocumentKey = nil
+    }
+
+    public init(
+        insights: [MarginInsight] = [],
+        dismissedIDs: Set<String> = [],
+        activeDocumentKey: ProjectDocumentKey?
+    ) {
+        self.insights = insights
+        self.otherProducerInsights = insights
+        self.dismissedIDs = dismissedIDs
+        self.activeDocumentKey = activeDocumentKey
+    }
+
+    public func scope(to documentKey: ProjectDocumentKey?) {
+        guard activeDocumentKey != documentKey else { return }
+        let previousKey = activeDocumentKey
+        activeDocumentKey = documentKey
+        guard let documentKey else {
+            otherProducerInsights.removeAll()
+            writingQualityInsights.removeAll()
+            self.insights = []
+            return
+        }
+        if previousKey != nil {
+            otherProducerInsights.removeAll()
+            writingQualityInsights.removeAll()
+        } else {
+            otherProducerInsights.removeAll { insight in
+                guard let docID = insight.evidence.first?.documentID else { return false }
+                return docID != documentKey.documentID
+            }
+            writingQualityInsights.removeAll { insight in
+                guard let docID = insight.evidence.first?.documentID else { return false }
+                return docID != documentKey.documentID
+            }
+        }
+        self.insights = otherProducerInsights + writingQualityInsights
+    }
+
+    public func prepend(_ insight: MarginInsight, for documentKey: ProjectDocumentKey? = nil) {
+        if let documentKey {
+            scope(to: documentKey)
+        }
+        let qualityIDs = Set(writingQualityInsights.map(\.id))
+        guard !qualityIDs.contains(insight.id) else { return }
+        otherProducerInsights.removeAll { $0.id == insight.id }
+        otherProducerInsights.insert(insight, at: 0)
+        self.insights = otherProducerInsights + writingQualityInsights
+    }
+
+    public func insert(_ insight: MarginInsight, for documentKey: ProjectDocumentKey? = nil) {
+        prepend(insight, for: documentKey)
     }
 
     public func replace(with insights: [MarginInsight]) {
-        otherProducerInsights = insights
+        let qualityIDs = Set(writingQualityInsights.map(\.id))
+        otherProducerInsights = insights.filter { !qualityIDs.contains($0.id) }
         self.insights = otherProducerInsights + writingQualityInsights
     }
 
     public func replace(writingQuality insights: [MarginInsight]) {
         writingQualityInsights = insights
+        let qualityIDs = Set(insights.map(\.id))
+        if !qualityIDs.isEmpty {
+            otherProducerInsights.removeAll { qualityIDs.contains($0.id) }
+        }
         self.insights = otherProducerInsights + writingQualityInsights
     }
 

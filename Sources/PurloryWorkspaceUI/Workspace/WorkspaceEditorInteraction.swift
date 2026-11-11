@@ -306,11 +306,16 @@ import Combine
         if let editor, session?.selectedDocumentID == key.documentID, !editor.hasMarkedText() {
             let range = nativeParagraph(at: editor.selectedRange().location)
             if previousSelection != range.location {
-                if let previousSelection { invalidateParagraph(at: previousSelection) }
-                invalidateParagraph(at: range.location)
+                if model?.focusDimming == true || !fades.isEmpty || !renderedOpacity.isEmpty {
+                    if let previousSelection { invalidateParagraph(at: previousSelection) }
+                    invalidateParagraph(at: range.location)
+                }
                 previousSelection = range.location
             }
-            model?.activeParagraph = (editor.string as NSString).substring(with: range)
+            let nextParagraph = (editor.string as NSString).substring(with: range)
+            if model?.activeParagraph != nextParagraph {
+                model?.activeParagraph = nextParagraph
+            }
         }
     }
     func layoutDidChange() {
@@ -379,23 +384,29 @@ import Combine
     }
     func draw(_ dirtyRect: CGRect) {
         guard let editor else { return }
-        for range in visibleParagraphs(in: dirtyRect) {
-            guard let rect = paragraphRect(at: range.location), let damage = paragraphDamage(at: range.location), damage.intersects(dirtyRect) else { continue }
-            let opacity = presentedOpacity(at: range.location)
-            if opacity < 1 {
-                editor.palette.editorSurface.withAlphaComponent(1 - opacity).setFill()
-                rect.insetBy(dx: -12, dy: -3).fill()
-            }
-            if optionHeld, model?.whisperTyping != true, hovered.map({ nativeParagraph(at: $0).location == range.location }) == true,
-               let grip = paragraphGrip(at: range.location) {
-                let overGrip = grip.contains(pointerInEditor)
-                if overGrip { editor.palette.hover.setFill(); NSBezierPath(roundedRect: grip, xRadius: 5, yRadius: 5).fill() }
-                (overGrip ? editor.palette.ink : editor.palette.ink2.withAlphaComponent(0.65)).setFill()
-                for row in 0..<3 { for column in 0..<2 {
-                    NSBezierPath(ovalIn: CGRect(x: grip.midX - 4 + CGFloat(column) * 5,
-                        y: grip.midY - 5 + CGFloat(row) * 4, width: 1.7, height: 1.7)).fill()
-                } }
-                drawEntityUnderlines(in: range, editor: editor)
+        let needsParagraphPass = model?.focusDimming == true
+            || !fades.isEmpty
+            || !renderedOpacity.isEmpty
+            || (optionHeld && model?.whisperTyping != true && hovered != nil)
+        if needsParagraphPass {
+            for range in visibleParagraphs(in: dirtyRect) {
+                guard let rect = paragraphRect(at: range.location), let damage = paragraphDamage(at: range.location), damage.intersects(dirtyRect) else { continue }
+                let opacity = presentedOpacity(at: range.location)
+                if opacity < 1 {
+                    editor.palette.editorSurface.withAlphaComponent(1 - opacity).setFill()
+                    rect.insetBy(dx: -12, dy: -3).fill()
+                }
+                if optionHeld, model?.whisperTyping != true, hovered.map({ nativeParagraph(at: $0).location == range.location }) == true,
+                   let grip = paragraphGrip(at: range.location) {
+                    let overGrip = grip.contains(pointerInEditor)
+                    if overGrip { editor.palette.hover.setFill(); NSBezierPath(roundedRect: grip, xRadius: 5, yRadius: 5).fill() }
+                    (overGrip ? editor.palette.ink : editor.palette.ink2.withAlphaComponent(0.65)).setFill()
+                    for row in 0..<3 { for column in 0..<2 {
+                        NSBezierPath(ovalIn: CGRect(x: grip.midX - 4 + CGFloat(column) * 5,
+                            y: grip.midY - 5 + CGFloat(row) * 4, width: 1.7, height: 1.7)).fill()
+                    } }
+                    drawEntityUnderlines(in: range, editor: editor)
+                }
             }
         }
         if let preview, let rect = paragraphRect(at: preview.range.location) {

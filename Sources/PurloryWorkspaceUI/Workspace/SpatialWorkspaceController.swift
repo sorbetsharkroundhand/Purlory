@@ -69,9 +69,9 @@ struct WorkspaceEntityEvent: Equatable {
         whisperTyping = false
         pouchSection = .overview
     }
-    var navigatorDrop: SpatialNavigatorDrop? { willSet { presentationWillChange.send() } }
-    var resonatingTerm: String? { willSet { presentationWillChange.send() } }
-    var activeParagraph = "" { willSet { presentationWillChange.send() } }
+    var navigatorDrop: SpatialNavigatorDrop? { willSet { if navigatorDrop != newValue { presentationWillChange.send() } } }
+    var resonatingTerm: String? { willSet { if resonatingTerm != newValue { presentationWillChange.send() } } }
+    var activeParagraph = ""
     var entityTerms: [String] = []
     var entityEvents: [WorkspaceEntityEvent] = [] { willSet { presentationWillChange.send(); _entityEventsEvents.send(newValue) } }
     private(set) var toast: String? { willSet { presentationWillChange.send() } }

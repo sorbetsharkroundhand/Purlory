@@ -13,6 +13,8 @@ import Combine
     private var items: [WorkspaceCommandItem] = []
     private var monitors: [Any] = []
     private var subscriptions: Set<AnyCancellable> = []
+    private var searchTask: Task<Void, Never>?
+    private var searchGeneration: UInt64 = 0
     private var closing = false
     private let theme: PurloryTheme
     private let backdrop = WorkspaceModalBackdrop()
@@ -98,9 +100,56 @@ import Combine
     }
     required init?(coder: NSCoder) { nil }
     private func reload() {
+        searchTask?.cancel()
+        searchTask = nil
+        searchGeneration &+= 1
+        let generation = searchGeneration
         guard let project = session.activeProject else { return }
-        items = WorkspaceCommandSearch.items(in: project, query: searchField.stringValue,
-            typewriter: requests.spatialWorkspace?.typewriter == true, focus: requests.spatialWorkspace?.focusDimming == true)
+        let query = searchField.stringValue
+        let typewriter = requests.spatialWorkspace?.typewriter == true
+        let focus = requests.spatialWorkspace?.focusDimming == true
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let totalUTF16 = project.documents.reduce(0) { $0 + $1.source.utf16Length }
+
+        if trimmed.isEmpty || totalUTF16 <= 32_768 {
+            applyItems(WorkspaceCommandSearch.items(
+                in: project,
+                query: query,
+                typewriter: typewriter,
+                focus: focus
+            ))
+            return
+        }
+
+        let immediate = WorkspaceCommandSearch.items(
+            in: project,
+            query: query,
+            typewriter: typewriter,
+            focus: focus,
+            includeSources: false
+        )
+        applyItems(immediate)
+
+        searchTask = Task.detached(priority: .userInitiated) { [weak self] in
+            let resolved = WorkspaceCommandSearch.items(
+                in: project,
+                query: query,
+                typewriter: typewriter,
+                focus: focus,
+                includeSources: true,
+                allowCancellation: true
+            )
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard let self, !self.closing, self.searchGeneration == generation,
+                      self.inspection.isCurrent(self.token, in: self.session) else { return }
+                self.searchTask = nil
+                self.applyItems(resolved)
+            }
+        }
+    }
+    private func applyItems(_ newItems: [WorkspaceCommandItem]) {
+        items = newItems
         table.reloadData(); emptyLabel.isHidden = !items.isEmpty
         if !items.isEmpty { table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false) }
     }
@@ -121,6 +170,19 @@ import Combine
         }
     }
     @objc private func activateSelected() {
+        if let pending = searchTask {
+            pending.cancel()
+            searchTask = nil
+            searchGeneration &+= 1
+            if let project = session.activeProject {
+                applyItems(WorkspaceCommandSearch.items(
+                    in: project,
+                    query: searchField.stringValue,
+                    typewriter: requests.spatialWorkspace?.typewriter == true,
+                    focus: requests.spatialWorkspace?.focusDimming == true
+                ))
+            }
+        }
         guard inspection.isCurrent(token, in: session), items.indices.contains(table.selectedRow),
             (searchField.currentEditor() as? NSTextView)?.hasMarkedText() != true else { return }
         let action = items[table.selectedRow].action
@@ -184,6 +246,8 @@ import Combine
     override func close() { if !closing { window?.close() } }
     func windowWillClose(_ notification: Notification) {
         guard !closing else { return }; closing = true
+        searchGeneration &+= 1
+        searchTask?.cancel(); searchTask = nil
         monitors.forEach(NSEvent.removeMonitor); monitors.removeAll(); subscriptions.removeAll()
         backdrop.close()
         if let window { window.parent?.removeChildWindow(window) }

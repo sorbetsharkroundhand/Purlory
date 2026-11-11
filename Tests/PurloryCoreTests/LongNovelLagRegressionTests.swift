@@ -56,13 +56,26 @@ final class LongNovelLagRegressionTests: XCTestCase {
         _ = view.serialize()
         let initialRebuilds = view.serialCacheRebuildCount
 
-        // Move caret across distant paragraphs and type in each paragraph.
+        // Move caret across distant paragraphs and type in each paragraph (both at end and at paragraph start).
         for marker in ["제100문단", "제1500문단", "제3000문단", "제500문단"] {
             let range = (view.string as NSString).range(of: marker)
             XCTAssertNotEqual(range.location, NSNotFound)
             view.setSelectedRange(NSRange(location: range.upperBound, length: 0))
             view.insertText(" 추가", replacementRange: view.selectedRange())
-            _ = view.serialize()
+            _ = view.serializedSource()
+
+            let startRange = (view.string as NSString).range(of: marker)
+            XCTAssertNotEqual(startRange.location, NSNotFound)
+            view.setSelectedRange(NSRange(location: startRange.location, length: 0))
+            // Simulate Hangul IME jamo composition at the very start of the paragraph.
+            view.setMarkedText("ㅎ", selectedRange: NSRange(location: 1, length: 0), replacementRange: view.selectedRange())
+            _ = view.serializedSource()
+            view.setMarkedText("하", selectedRange: NSRange(location: 1, length: 0), replacementRange: view.markedRange())
+            _ = view.serializedSource()
+            view.setMarkedText("한", selectedRange: NSRange(location: 1, length: 0), replacementRange: view.markedRange())
+            _ = view.serializedSource()
+            view.insertText("한 ", replacementRange: view.markedRange())
+            _ = view.serializedSource()
         }
 
         // Split a paragraph with newline and merge it back.
@@ -84,7 +97,7 @@ final class LongNovelLagRegressionTests: XCTestCase {
         XCTAssertEqual(fresh.serialize(), incremental)
     }
 
-    func testWorkspaceWritingStatisticsMemoizesRepeatedReadsAndMatchesCounts() {
+    func testWorkspaceWritingStatisticsMemoizesRepeatedReadsAndMatchesCounts() throws {
         let novel = makeSyntheticNovel(paragraphPairs: 3_300)
         let expectedLines = novel.components(separatedBy: "\n")
         let expectedCharacters = expectedLines.reduce(0) { $0 + $1.utf16.count }
@@ -102,6 +115,61 @@ final class LongNovelLagRegressionTests: XCTestCase {
         XCTAssertEqual(
             afterScans - beforeScans, 1,
             "Repeated reads of the same manuscript text in SwiftUI chrome must not rescan 240k characters"
+        )
+
+        // O(1) DocumentSource and BlockTextView statistics must not scan UTF-16 or materialize strings.
+        let chunkedSource = try DocumentSource(novel).replacing(NSRange(location: 0, length: 0), with: "서문 ")
+        XCTAssertEqual(chunkedSource.materializationCount, 0)
+        let scansBeforeSource = WorkspaceWritingStatistics.scanCount
+        let sourceStats = WorkspaceWritingStatistics(source: chunkedSource, goal: 500)
+        XCTAssertEqual(WorkspaceWritingStatistics.scanCount, scansBeforeSource)
+        XCTAssertEqual(chunkedSource.materializationCount, 0)
+        XCTAssertEqual(sourceStats.characters, expectedCharacters + 3)
+        XCTAssertEqual(sourceStats.paragraphs, expectedParagraphs)
+    }
+
+    func testLiveHangulTypingInWorkspaceDoesNotScanManuscriptStatsOrRebuildSerialCache() async throws {
+        let h = try await FramedWorkspaceHarness(mode: .fiction)
+        defer { h.close() }
+        let session = h.fixture.session
+        let novel = makeSyntheticNovel(paragraphPairs: 3_300)
+        session.updateSelectedDocumentBody(novel)
+        await h.layout()
+
+        let editor = try await h.editor()
+        let initialRebuilds = editor.serialCacheRebuildCount
+        let initialScans = WorkspaceWritingStatistics.scanCount
+
+        let target = (editor.string as NSString).range(of: "제1200문단")
+        XCTAssertNotEqual(target.location, NSNotFound)
+        editor.setSelectedRange(NSRange(location: target.location, length: 0))
+        await h.layout()
+
+        // Simulate Hangul IME composition at paragraph start inside the full SpatialWorkspaceCanvas.
+        for jamo in ["ㅎ", "하", "한", "한ㄱ", "한그", "한글"] {
+            let replacement = editor.hasMarkedText() ? editor.markedRange() : editor.selectedRange()
+            editor.setMarkedText(
+                jamo,
+                selectedRange: NSRange(location: (jamo as NSString).length, length: 0),
+                replacementRange: replacement
+            )
+            await h.layout()
+        }
+        editor.insertText("한글 ", replacementRange: editor.markedRange())
+        await h.layout()
+
+        XCTAssertEqual(
+            WorkspaceWritingStatistics.scanCount, initialScans,
+            "Live typing in SpatialDocumentTile must read O(1) index statistics without scanning 240k UTF-16 units per jamo"
+        )
+        XCTAssertEqual(
+            editor.serialCacheRebuildCount, initialRebuilds,
+            "Live Hangul IME typing at paragraph start must not rebuild the 6,600-line serialization cache"
+        )
+        let docSource = try XCTUnwrap(session.selectedDocument?.source)
+        XCTAssertEqual(
+            docSource.materializationCount, 0,
+            "Ordinary typing in a long novel must keep DocumentSource unmaterialized on the keystroke path"
         )
     }
 
@@ -168,6 +236,97 @@ final class LongNovelLagRegressionTests: XCTestCase {
         XCTAssertEqual(
             totalLookups, 100,
             "Incremental window publications at the same nativeRevision must resolve each finding once (100), not O(W*F) (550)"
+        )
+    }
+
+    func testRapidHangulBurstTypingWithVersionsAndCharacterCardsNeverMaterializesLongNovel() async throws {
+        let h = try await FramedWorkspaceHarness(mode: .fiction)
+        defer { h.close() }
+        let session = h.fixture.session
+        let novel = makeSyntheticNovel(paragraphPairs: 3_300)
+        session.updateSelectedDocumentBody(novel)
+        await h.layout()
+
+        // Attach a saved version and character cards so WorkspacePouchTools and WorkspaceCharacterCards are active.
+        let snapshot = try XCTUnwrap(session.selectedDocumentSnapshot)
+        let savedVersion = try ManuscriptVersion.capture(snapshot, label: "초고")
+        try session.updateUserData(
+            JSONEncoder().encode(savedVersion),
+            for: savedVersion.userDataKey,
+            identity: snapshot.identity
+        )
+        let identity = try XCTUnwrap(session.runtimeIdentity)
+        try ProjectWriterEditing.perform(
+            .character(CharacterCard(name: "선비", aliases: "첫째", note: "인간문제 인물", role: "주인공")),
+            in: session,
+            identity: identity
+        )
+        h.requests.spatialWorkspace?.toggle(.characters)
+        await h.layout()
+
+        let editor = try await h.editor()
+        let initialRebuilds = editor.serialCacheRebuildCount
+        let initialScans = WorkspaceWritingStatistics.scanCount
+
+        let target = (editor.string as NSString).range(of: "제1800문단")
+        XCTAssertNotEqual(target.location, NSNotFound)
+        editor.setSelectedRange(NSRange(location: target.upperBound, length: 0))
+        await h.layout()
+
+        let syllables: [(jamos: [String], committed: String)] = [
+            (["ㅎ", "하", "한", "한ㄱ", "한그", "한글"], "한글 "),
+            (["ㅂ", "바", "방", "방ㅇ", "방우", "방울"], "방울 "),
+            (["ㅅ", "소", "솔", "소리"], "소리가 "),
+            (["ㄷ", "드", "들", "들ㄹ", "들리", "들린"], "들린다. ")
+        ]
+
+        var stepDurationsMs: [Double] = []
+        for syllable in syllables {
+            for jamo in syllable.jamos {
+                let start = DispatchTime.now().uptimeNanoseconds
+                let replacement = editor.hasMarkedText() ? editor.markedRange() : editor.selectedRange()
+                editor.setMarkedText(
+                    jamo,
+                    selectedRange: NSRange(location: (jamo as NSString).length, length: 0),
+                    replacementRange: replacement
+                )
+                editor.layoutManager?.ensureLayout(forCharacterRange: NSRange(location: max(0, replacement.location - 32), length: 64))
+                let elapsedMs = Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000.0
+                stepDurationsMs.append(elapsedMs)
+            }
+            let start = DispatchTime.now().uptimeNanoseconds
+            editor.insertText(syllable.committed, replacementRange: editor.markedRange())
+            editor.layoutManager?.ensureLayout(forCharacterRange: NSRange(location: max(0, editor.selectedRange().location - 32), length: 64))
+            let elapsedMs = Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000.0
+            stepDurationsMs.append(elapsedMs)
+        }
+        await h.layout()
+
+        let sortedDurations = stepDurationsMs.sorted()
+        let p95Ms = sortedDurations[min(sortedDurations.count - 1, Int(Double(sortedDurations.count) * 0.95))]
+        XCTAssertLessThan(
+            p95Ms, 8.0,
+            "Rapid 200+ CPM Hangul jamo typing p95 (\(String(format: "%.2f", p95Ms))ms) must stay under 8ms frame budget"
+        )
+        XCTAssertEqual(editor.serialCacheRebuildCount, initialRebuilds)
+        XCTAssertEqual(WorkspaceWritingStatistics.scanCount, initialScans)
+
+        let docSource = try XCTUnwrap(session.selectedDocument?.source)
+        XCTAssertEqual(
+            docSource.materializationCount, 0,
+            "WorkspacePouchTools and WorkspaceCharacterCards must not materialize 240k-char DocumentSource during rapid typing"
+        )
+
+        // Verify ManuscriptResumeBrief.build itself also operates on DocumentSource without materializing body.
+        let project = try XCTUnwrap(session.activeProject)
+        let docID = try XCTUnwrap(session.selectedDocumentID)
+        let brief = try XCTUnwrap(ManuscriptResumeBrief.build(for: docID, in: project, cursorOffset: target.upperBound))
+        XCTAssertEqual(brief.currentSceneHeading, "합성 장편 소설")
+        XCTAssertTrue(brief.hasUnsavedVersionChanges)
+        XCTAssertFalse(brief.trailingExcerpt.isEmpty)
+        XCTAssertEqual(
+            docSource.materializationCount, 0,
+            "ManuscriptResumeBrief.build must resolve heading and paragraph excerpt via DocumentSource line index without materializing 240k chars"
         )
     }
 }

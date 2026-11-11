@@ -51,23 +51,33 @@ public enum AssetJanitor {
     /// 유예가 지났고 어디에도 참조되지 않는 후보를 지우고 목록을 돌려준다.
     /// - Parameters:
     ///   - isReferenced: 전체 문서 파싱으로 만든 참조 집합 조회.
-    ///   - performDelete: 실제 삭제 (호출자가 실패 정책 소유).
+    ///   - performDelete: 실제 삭제 (던지면 삭제 실패로 간주해 장부에 후보를 유지).
     @discardableResult
     public static func sweep(
         now: Date = .now,
         storageLocation: PurloryStorageLocation? = nil,
         isReferenced: (String) -> Bool,
-        performDelete: (String) -> Void
+        performDelete: (String) throws -> Void
     ) -> [String] {
         var ledger = load(storageLocation: storageLocation)
         var removed: [String] = []
         for (path, registeredAt) in ledger.candidates.sorted(by: { $0.value < $1.value }) {
             if Task.isCancelled { break }
-            defer { ledger.candidates.removeValue(forKey: path) }
+            // 아직 유예 기간 안이면 장부에 그대로 남겨 다음 청소 때 다시 검사한다.
             guard now.timeIntervalSince(registeredAt) >= graceInterval else { continue }
-            if isReferenced(path) { continue }  // 살아난 참조 — 장부에서만 내린다
-            performDelete(path)
-            removed.append(path)
+            if isReferenced(path) {
+                // 살아난 참조 — 장부에서만 내린다.
+                ledger.candidates.removeValue(forKey: path)
+                continue
+            }
+            do {
+                try performDelete(path)
+                ledger.candidates.removeValue(forKey: path)
+                removed.append(path)
+            } catch {
+                // 삭제 실패 시 장부에 후보를 유지해 다음 청소에서 재시도한다.
+                continue
+            }
         }
         save(ledger, storageLocation: storageLocation)
         return removed
@@ -88,8 +98,16 @@ public enum AssetJanitor {
             guard path.hasPrefix("images/"),
                 case .managedRelative = ImageReferenceParser.classify(path),
                 let url = url(for: path, storageLocation: storageLocation)
-            else { return }
-            try? FileManager.default.removeItem(at: url)
+            else {
+                throw CocoaError(.fileReadInvalidFileName)
+            }
+            let fm = FileManager.default
+            if fm.fileExists(atPath: url.path) {
+                try fm.removeItem(at: url)
+                if fm.fileExists(atPath: url.path) {
+                    throw CocoaError(.fileWriteNoPermission)
+                }
+            }
         }
     }
 
@@ -98,13 +116,11 @@ public enum AssetJanitor {
         var result = Set<String>()
         for body in bodies {
             let definitions = ImageReferenceParser.collectDefinitions(in: body)
-            var inFence = false
+            var fence = MarkdownFenceTracker()
             for rawLine in body.split(separator: "\n", omittingEmptySubsequences: false) {
-                if rawLine.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
-                    inFence.toggle()
+                if fence.consumeLine(rawLine) {
                     continue
                 }
-                guard !inFence else { continue }
                 let line = rawLine.trimmingCharacters(in: .whitespaces)
                 if let ref = ImageReferenceParser.parse(line, definitions: definitions) {
                     switch ref.destinationKind {

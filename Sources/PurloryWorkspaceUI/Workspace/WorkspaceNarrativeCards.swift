@@ -489,14 +489,23 @@ struct WorkspaceReviewPane: View {
             snapshotGen: indexer.snapshotGeneration,
             candidateCount: indexer.continuityCandidates.count
         )) {
-            guard let document = session.selectedDocumentSnapshot else { projection = nil; return }
+            guard let document = session.selectedDocumentSnapshot else {
+                Self.pruneJudgeControllers(&judgeControllers, origin: nil, activeIssueIDs: [])
+                projection = nil
+                return
+            }
+            Self.pruneJudgeControllers(&judgeControllers, origin: document.identity)
             let snap = indexer.snapshot
             let origin = indexer.snapshotRuntimeIdentity
             let candidates = indexer.continuityCandidates
             let prepared = try? await FictionReviewProjection.prepare(
                 document, snapshot: snap, snapshotOrigin: origin, candidates: candidates
             )
-            if !Task.isCancelled { projection = prepared }
+            if !Task.isCancelled {
+                projection = prepared
+                let validIDs = Set((prepared?.issues ?? []).map(\.id))
+                Self.pruneJudgeControllers(&judgeControllers, origin: document.identity, activeIssueIDs: validIDs)
+            }
         }
         .onDisappear {
             for controller in judgeControllers.values { controller.dismiss() }
@@ -602,18 +611,76 @@ struct WorkspaceReviewPane: View {
     @ViewBuilder
     private func judgeSection(for issueID: String, candidate: ContinuityCandidate, snapshot: ProjectDocumentSnapshot) -> some View {
         if let controller = judgeControllers[issueID] {
-            ContinuityJudgeInlineView(controller: controller, candidate: candidate, theme: theme)
+            ContinuityJudgeInlineView(controller: controller, candidate: candidate, theme: theme) {
+                guard let support = requests.judgeSupport else {
+                    controller.judge(candidate: candidate)
+                    return
+                }
+                let currentOrigin = session.selectedDocumentSnapshot?.identity ?? snapshot.identity
+                _ = Self.requestJudgment(
+                    for: issueID,
+                    candidate: candidate,
+                    origin: currentOrigin,
+                    in: &judgeControllers,
+                    session: session,
+                    support: support
+                )
+            }
         } else if let support = requests.judgeSupport, support.available {
             Button {
-                let controller = support.makeController(session: session, origin: snapshot.identity)
-                judgeControllers[issueID] = controller
-                controller.judge(candidate: candidate)
+                let currentOrigin = session.selectedDocumentSnapshot?.identity ?? snapshot.identity
+                _ = Self.requestJudgment(
+                    for: issueID,
+                    candidate: candidate,
+                    origin: currentOrigin,
+                    in: &judgeControllers,
+                    session: session,
+                    support: support
+                )
             } label: {
                 Label("로컬 AI 판정 요청", systemImage: "sparkles")
                     .purloryUIFont(10, .medium)
             }
             .buttonStyle(.bordered)
             .controlSize(.mini)
+        }
+    }
+
+    @discardableResult
+    static func requestJudgment(
+        for issueID: String,
+        candidate: ContinuityCandidate,
+        origin: ProjectRuntimeIdentity,
+        in controllers: inout [String: ContinuityJudgeController],
+        session: ProjectSession,
+        support: ContinuityJudgeSupport
+    ) -> ContinuityJudgeController {
+        if let existing = controllers[issueID] {
+            if existing.matches(origin) {
+                existing.judge(candidate: candidate)
+                return existing
+            }
+            existing.dismiss()
+            controllers.removeValue(forKey: issueID)
+        }
+        let controller = support.makeController(session: session, origin: origin)
+        controllers[issueID] = controller
+        controller.judge(candidate: candidate)
+        return controller
+    }
+
+    static func pruneJudgeControllers(
+        _ controllers: inout [String: ContinuityJudgeController],
+        origin: ProjectRuntimeIdentity?,
+        activeIssueIDs: Set<String>? = nil
+    ) {
+        for (issueID, controller) in Array(controllers) {
+            let validOrigin = origin.map { controller.matches($0) } ?? false
+            let validIssue = activeIssueIDs?.contains(issueID) ?? true
+            if !validOrigin || !validIssue {
+                controller.dismiss()
+                controllers.removeValue(forKey: issueID)
+            }
         }
     }
 
@@ -641,6 +708,7 @@ private struct ContinuityJudgeInlineView: View {
     @ObservedObject var controller: ContinuityJudgeController
     let candidate: ContinuityCandidate
     let theme: PurloryTheme
+    var onRetry: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -657,8 +725,14 @@ private struct ContinuityJudgeInlineView: View {
                     Image(systemName: "checkmark.circle.fill").font(.system(size: 10)).foregroundStyle(theme.blueC)
                     Text("문맥상 자연스러운 서술로 보입니다.").purloryUIFont(10).foregroundStyle(theme.ink2C)
                 default:
-                    Button("다시 판정") { controller.judge(candidate: candidate) }
-                        .buttonStyle(.bordered).controlSize(.mini).purloryUIFont(10)
+                    Button("다시 판정") {
+                        if let onRetry {
+                            onRetry()
+                        } else {
+                            controller.judge(candidate: candidate)
+                        }
+                    }
+                    .buttonStyle(.bordered).controlSize(.mini).purloryUIFont(10)
                 }
             }
         }

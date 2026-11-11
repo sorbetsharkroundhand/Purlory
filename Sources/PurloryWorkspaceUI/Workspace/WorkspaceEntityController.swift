@@ -148,9 +148,18 @@ import SwiftUI
         }
     }
     func hide() {
-        keepAlive(); peek = nil; clearHighlight()
-        if let panel { panel.parent?.removeChildWindow(panel); panel.orderOut(nil); panel.close() }
-        panel = nil; requests?.spatialWorkspace?.resonatingTerm = nil
+        keepAlive()
+        if peek != nil { peek = nil }
+        clearHighlight()
+        if let panel {
+            panel.parent?.removeChildWindow(panel)
+            panel.orderOut(nil)
+            panel.close()
+            self.panel = nil
+        }
+        if requests?.spatialWorkspace?.resonatingTerm != nil {
+            requests?.spatialWorkspace?.resonatingTerm = nil
+        }
     }
     private func clearHighlight() {
         if let editor = highlightedEditor, let range = highlightedRange, range.upperBound <= editor.string.utf16.count {

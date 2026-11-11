@@ -830,6 +830,7 @@ struct SpatialDocumentTile: View {
             EditorPane(projectSession: session, editorRequests: requests, completion: completion,
                 settings: completion.settings, theme: theme, editorBridge: editorBridge,
                 positionStore: positionStore, documentID: documentID, showsChrome: false)
+            let stats = statistics
             HStack(spacing: 8) {
                 if active && completion.longParagraph.count > 0 {
                     Button { longParagraphOpen.toggle() } label: {
@@ -878,7 +879,6 @@ struct SpatialDocumentTile: View {
                     .help(msg)
                 }
                 Spacer(minLength: 8)
-                let stats = statistics
                 if hoveringStats { Text(stats.detail).font(PurloryFonts.monoUI(9)).fixedSize() }
                 Circle().stroke(theme.sepC, lineWidth: 1.5).overlay {
                     Circle().trim(from: 0, to: stats.progress).stroke(theme.blueC, style: StrokeStyle(lineWidth: 1.5, lineCap: .round)).rotationEffect(.degrees(-90))
@@ -886,7 +886,7 @@ struct SpatialDocumentTile: View {
                 Text("\(stats.characters.formatted())자").font(PurloryFonts.monoUI(10)).fixedSize()
             }.foregroundStyle(theme.workspaceMutedC).padding(.horizontal, 14).frame(height: 26).opacity(quietChrome ? 0 : (hoveringStats ? 1 : 0.65))
                 .allowsHitTesting(!quietChrome)
-                .onHover { hoveringStats = $0 }.help(statistics.detail)
+                .onHover { hoveringStats = $0 }.help(stats.detail)
                 .animation(WorkspaceHTMLStyle.animation(0.24), value: hoveringStats)
         }
         .background(WorkspacePaperSurface(theme: theme, surface: theme.editorSurface,
@@ -901,12 +901,19 @@ struct SpatialDocumentTile: View {
             .frame(height: SpatialManilaTabBarView.height)
     }
 
-    private var document: WritingDocument? { session.document(documentID) }
+    private var document: WritingDocument? { session.documentPresentation(documentID) }
     private var active: Bool { session.selectedDocumentID == documentID }
     private var statistics: WorkspaceWritingStatistics {
         _ = statsRevision
-        let key = session.activeProject.map { ProjectDocumentKey(projectID: $0.id, documentID: documentID) }
-        let text = key.flatMap { requests.editor(for: $0)?.string } ?? document?.body ?? ""
-        return WorkspaceWritingStatistics(text: text, goal: session.presentationPreferences.integer(forKey: "purlory.writing-goal.\(documentID.rawValue.uuidString)"))
+        let goal = session.presentationPreferences.integer(forKey: "purlory.writing-goal.\(documentID.rawValue.uuidString)")
+        let key = session.projectPresentation.map { ProjectDocumentKey(projectID: $0.id, documentID: documentID) }
+        if !quietChrome { _ = session.activeProject }
+        if let editor = key.flatMap({ requests.editor(for: $0) }) {
+            return editor.writingStatistics(goal: goal)
+        }
+        if let source = (quietChrome ? session.documentPresentation(documentID) : session.document(documentID))?.source {
+            return WorkspaceWritingStatistics(source: source, goal: goal)
+        }
+        return WorkspaceWritingStatistics(characters: 0, paragraphs: 1, goal: goal)
     }
 }

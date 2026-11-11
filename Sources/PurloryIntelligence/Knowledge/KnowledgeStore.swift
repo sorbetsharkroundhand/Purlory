@@ -350,8 +350,10 @@ public struct KnowledgeSnapshot: Sendable, Equatable {
         // 갱신해도 오버라이드는 entries.json에 있어 항상 다시 이긴다 (§1-5).
         var ends: [String: Int] = [:]
         var ordered: [StoryEvent] = []
+        var seenEventSceneHashes: Set<String> = []
         for scene in outline.scenes {
             ends[scene.contentHash] = scene.utf16Range.upperBound
+            guard seenEventSceneHashes.insert(scene.contentHash).inserted else { continue }
             // 같은 씬 안에서는 중요도 높은 사건이 먼저 — 예산 삭감이 뒤에서
             // 잘리므로 중요한 것이 살아남는다 (PLAN §11).
             let sceneEvents = (events[scene.contentHash] ?? [])
@@ -419,7 +421,9 @@ public struct KnowledgeSnapshot: Sendable, Equatable {
 
         // 씬 시작 위치 맵 — 구간(씬-로컬 좌표)의 절대 좌표 환산용.
         var starts: [String: Int] = [:]
-        for scene in outline.scenes { starts[scene.contentHash] = scene.utf16Range.lowerBound }
+        for scene in outline.scenes {
+            starts[scene.contentHash] = min(starts[scene.contentHash] ?? .max, scene.utf16Range.lowerBound)
+        }
         self.sceneStartByHash = starts
 
         // 서사 구간 — 사이드카 값 위에 사용자 오버라이드를 얹는다 (요구사항 §15).
@@ -714,18 +718,57 @@ public struct KnowledgeSnapshot: Sendable, Equatable {
     /// 씬 해시 단위로 합친다 — 사건은 씬 내 세부 위치가 없어 그렇게밖에 안 된다.
     /// 순서는 첫 등장 순(발화 → 사건)으로 고정 — KV 프리픽스 보호 (PLAN §12).
     public func sceneCohabitants(at utf16Offset: Int) -> [UUID] {
+        sceneCohabitants(at: utf16Offset, in: nil)
+    }
+
+    public func sceneCohabitants(at utf16Offset: Int, in window: String?) -> [UUID] {
         guard let index = outline.sceneIndex(at: utf16Offset) else { return [] }
-        let hash = outline.scenes[index].contentHash
+        let scene = outline.scenes[index]
+        let hash = scene.contentHash
         var order: [UUID] = []
         var seen: Set<UUID> = []
         func add(_ ids: [UUID]) {
             for id in ids where seen.insert(id).inserted { order.append(id) }
         }
+        let priorSceneUtterances = utterances.filter {
+            scene.utf16Range.contains($0.utf16Start) && $0.utf16Start < utf16Offset
+        }
         for conversation in conversations
         where conversation.sceneHash == hash && conversation.utf16Start < utf16Offset {
-            add(conversation.participants)
+            if conversation.recordedID != nil {
+                if conversation.utf16End <= utf16Offset {
+                    add(conversation.participants)
+                }
+            } else {
+                add(conversation.participants.filter { id in
+                    priorSceneUtterances.contains { $0.speakerID == id || $0.listenerID == id }
+                })
+            }
         }
-        for event in events where event.sceneHash == hash { add(event.participants) }
+        for utterance in priorSceneUtterances {
+            add([utterance.speakerID])
+            if let listener = utterance.listenerID { add([listener]) }
+        }
+        let isAtOrAfterSceneEnd = utf16Offset >= scene.utf16Range.upperBound
+        for event in events where event.sceneHash == hash {
+            if isAtOrAfterSceneEnd {
+                add(event.participants)
+            } else if let window {
+                if let quote = event.quote?.trimmingCharacters(in: .whitespacesAndNewlines),
+                    !quote.isEmpty, window.contains(quote)
+                {
+                    add(event.participants)
+                }
+            } else if let quote = event.quote?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !quote.isEmpty
+            {
+                if priorSceneUtterances.contains(where: { $0.text.contains(quote) }) {
+                    add(event.participants)
+                }
+            } else if characters.isEmpty {
+                add(event.participants)
+            }
+        }
         return order
     }
 

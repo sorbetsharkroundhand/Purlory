@@ -132,12 +132,60 @@ public struct ManuscriptVersion: Codable, Equatable, Identifiable, Sendable {
         )
     }
 
+    private struct DocumentOwnershipProbe: Decodable {
+        let documentID: WritingDocumentID
+
+        private enum CodingKeys: String, CodingKey {
+            case documentID
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            if let id = try? container.decode(WritingDocumentID.self, forKey: .documentID) {
+                self.documentID = id
+            } else {
+                let raw = try container.decode(UUID.self, forKey: .documentID)
+                self.documentID = WritingDocumentID(rawValue: raw)
+            }
+        }
+    }
+
     public static func list(in data: [String: Data], documentID: WritingDocumentID) throws -> [Self] {
-        try data.filter { $0.key.hasPrefix(keyPrefix) }.map { key, bytes in
-            let record = try JSONDecoder().decode(Self.self, from: bytes)
-            guard record.valid, record.userDataKey == key else { throw ManuscriptVersionError.invalidRecord }
-            return record
-        }.filter { $0.documentID == documentID }.sorted {
+        let ownBranchKey = ManuscriptBranchState.userDataKey(for: documentID)
+        var ownBranchVersionIDs = Set<UUID>()
+        var foreignBranchVersionIDs = Set<UUID>()
+        for (key, bytes) in data where key.hasPrefix("manuscript-branches-") {
+            guard let state = try? JSONDecoder().decode(ManuscriptBranchState.self, from: bytes) else { continue }
+            if key == ownBranchKey || state.documentID == documentID {
+                ownBranchVersionIDs.formUnion(state.branches.map(\.headVersionID))
+            } else {
+                foreignBranchVersionIDs.formUnion(state.branches.map(\.headVersionID))
+            }
+        }
+
+        var results: [Self] = []
+        for (key, bytes) in data where key.hasPrefix(keyPrefix) {
+            if let probe = try? JSONDecoder().decode(DocumentOwnershipProbe.self, from: bytes) {
+                guard probe.documentID == documentID else { continue }
+            } else {
+                let suffix = String(key.dropFirst(keyPrefix.count))
+                if let versionUUID = UUID(uuidString: suffix),
+                   foreignBranchVersionIDs.contains(versionUUID),
+                   !ownBranchVersionIDs.contains(versionUUID) {
+                    continue
+                }
+                throw ManuscriptVersionError.invalidRecord
+            }
+            guard let record = try? JSONDecoder().decode(Self.self, from: bytes),
+                  record.valid,
+                  record.userDataKey == key,
+                  record.documentID == documentID
+            else {
+                throw ManuscriptVersionError.invalidRecord
+            }
+            results.append(record)
+        }
+        return results.sorted {
             $0.createdAt == $1.createdAt ? $0.id.uuidString < $1.id.uuidString : $0.createdAt > $1.createdAt
         }
     }
@@ -163,7 +211,10 @@ public struct ManuscriptVersion: Codable, Equatable, Identifiable, Sendable {
         while !rhsQueue.isEmpty {
             let (current, depth) = rhsQueue.removeFirst()
             guard visited.insert(current).inserted else { continue }
-            if let lhsDepth = lhsDistances[current], lhsDepth + depth < bestScore {
+            if let lhsDepth = lhsDistances[current],
+               let candidate = byID[current],
+               candidate.scope == .document,
+               lhsDepth + depth < bestScore {
                 bestScore = lhsDepth + depth
                 bestID = current
             }
@@ -217,6 +268,8 @@ public struct ManuscriptVersion: Codable, Equatable, Identifiable, Sendable {
 }
 
 public struct ManuscriptBranchState: Codable, Equatable, Sendable {
+    public static let currentFormatVersion = 1
+
     public struct BranchHead: Codable, Equatable, Identifiable, Sendable {
         public var id: String { name }
         public let name: String
@@ -230,36 +283,63 @@ public struct ManuscriptBranchState: Codable, Equatable, Sendable {
         }
     }
 
+    public let formatVersion: Int
     public let documentID: WritingDocumentID
     public var activeBranch: String
     public var branches: [BranchHead]
 
     public init(
+        formatVersion: Int = Self.currentFormatVersion,
         documentID: WritingDocumentID,
         activeBranch: String = ManuscriptVersion.defaultBranchName,
         branches: [BranchHead] = []
     ) {
+        self.formatVersion = formatVersion
         self.documentID = documentID
         self.activeBranch = activeBranch
         self.branches = branches
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case formatVersion, documentID, activeBranch, branches
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        formatVersion = try container.decodeIfPresent(Int.self, forKey: .formatVersion) ?? 1
+        documentID = try container.decode(WritingDocumentID.self, forKey: .documentID)
+        activeBranch = try container.decode(String.self, forKey: .activeBranch)
+        branches = try container.decode([BranchHead].self, forKey: .branches)
     }
 
     public static func userDataKey(for documentID: WritingDocumentID) -> String {
         "manuscript-branches-" + documentID.rawValue.uuidString.lowercased()
     }
 
-    public static func load(in userData: [String: Data], documentID: WritingDocumentID) -> Self {
+    public static func loadValid(in userData: [String: Data], documentID: WritingDocumentID) throws -> Self {
         let key = userDataKey(for: documentID)
-        if let bytes = userData[key],
-           let decoded = try? JSONDecoder().decode(Self.self, from: bytes),
-           decoded.documentID == documentID {
-            return decoded
+        guard let bytes = userData[key] else {
+            return Self(documentID: documentID)
         }
-        return Self(documentID: documentID)
+        guard let decoded = try? JSONDecoder().decode(Self.self, from: bytes),
+              decoded.formatVersion >= 1,
+              decoded.formatVersion <= Self.currentFormatVersion,
+              decoded.documentID == documentID,
+              !decoded.activeBranch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              Set(decoded.branches.map(\.name)).count == decoded.branches.count
+        else {
+            throw ManuscriptVersionError.invalidRecord
+        }
+        return decoded
+    }
+
+    public static func load(in userData: [String: Data], documentID: WritingDocumentID) -> Self {
+        (try? loadValid(in: userData, documentID: documentID)) ?? Self(documentID: documentID)
     }
 
     public mutating func recordCommit(_ version: ManuscriptVersion) {
         activeBranch = version.branchName
+        guard version.scope == .document else { return }
         if let index = branches.firstIndex(where: { $0.name == version.branchName }) {
             branches[index].headVersionID = version.id
             branches[index].updatedAt = version.createdAt
@@ -270,6 +350,41 @@ public struct ManuscriptBranchState: Codable, Equatable, Sendable {
 
     public func headVersionID(for branch: String) -> UUID? {
         branches.first(where: { $0.name == branch })?.headVersionID
+    }
+
+    public func resolveDocumentHead(for branch: String, in versions: [ManuscriptVersion]) -> ManuscriptVersion? {
+        let byID = Dictionary(uniqueKeysWithValues: versions.map { ($0.id, $0) })
+        if let headID = headVersionID(for: branch), let head = byID[headID] {
+            if head.scope == .document {
+                return head
+            }
+            var visited: Set<UUID> = [headID]
+            var queue = head.parentIDs
+            var candidates: [ManuscriptVersion] = []
+            while !queue.isEmpty {
+                let currentBatch = queue
+                queue = []
+                for parentID in currentBatch where visited.insert(parentID).inserted {
+                    guard let parent = byID[parentID] else { continue }
+                    if parent.scope == .document {
+                        candidates.append(parent)
+                    } else {
+                        queue.append(contentsOf: parent.parentIDs)
+                    }
+                }
+                if !candidates.isEmpty {
+                    return candidates.sorted {
+                        $0.createdAt == $1.createdAt ? $0.id.uuidString < $1.id.uuidString : $0.createdAt > $1.createdAt
+                    }.first
+                }
+            }
+        }
+        return versions
+            .filter { $0.branchName == branch && $0.scope == .document }
+            .sorted {
+                $0.createdAt == $1.createdAt ? $0.id.uuidString < $1.id.uuidString : $0.createdAt > $1.createdAt
+            }
+            .first
     }
 }
 
@@ -319,11 +434,12 @@ public struct ManuscriptComparison: Sendable {
         return (expectedBody as NSString).replacingCharacters(in: currentRange, with: version.text)
     }
 
+    private static let paragraphSeparatorRegex = try! NSRegularExpression(pattern: "\\n[\\t ]*\\n")
+
     fileprivate static func paragraphs(_ text: String) -> [(text: String, start: Int)] {
         let ns = text as NSString
-        let separators = try! NSRegularExpression(pattern: "\\n[\\t ]*\\n")
         var cursor = 0, result: [(String, Int)] = []
-        for match in separators.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+        for match in paragraphSeparatorRegex.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
             let end = match.range.upperBound
             result.append((ns.substring(with: NSRange(location: cursor, length: end - cursor)), cursor)); cursor = end
         }
@@ -378,10 +494,31 @@ public struct ManuscriptThreeWayMerge: Equatable, Sendable {
         public let theirs: String
     }
 
-    fileprivate enum Segment: Equatable, Sendable {
-        case clean(String)
-        case conflict(Conflict)
+    fileprivate struct BlockPiece: Equatable, Sendable {
+        let content: String
+        let nonFinalSeparator: String
+        let finalSeparator: String
     }
+
+    fileprivate enum Segment: Equatable, Sendable {
+        case raw(String)
+        case clean(BlockPiece)
+        case conflict(Conflict, oursSeparator: BlockPiece, theirsSeparator: BlockPiece)
+    }
+
+    private struct ParagraphUnit: Equatable, Sendable {
+        let content: String
+        let trailingSeparator: String
+    }
+
+    private struct EditHunk: Equatable, Sendable {
+        let baseRange: Range<Int>
+        let targetRange: Range<Int>
+    }
+
+    private static let blankLineSeparatorRegex = try! NSRegularExpression(
+        pattern: "\\r?\\n[\\t ]*\\r?\\n(?:[\\t ]*\\r?\\n)*"
+    )
 
     public let conflicts: [Conflict]
     private let segments: [Segment]
@@ -389,72 +526,515 @@ public struct ManuscriptThreeWayMerge: Equatable, Sendable {
     public var hasConflicts: Bool { !conflicts.isEmpty }
 
     public func resolvedText(using resolutions: [Int: Resolution] = [:]) -> String {
-        var blocks: [String] = []
+        if segments.count == 1, case .raw(let text) = segments[0] {
+            return text
+        }
+        var pieces: [BlockPiece] = []
         for segment in segments {
             switch segment {
-            case .clean(let text):
-                if !text.isEmpty { blocks.append(text) }
-            case .conflict(let conflict):
+            case .raw(let text):
+                if !text.isEmpty {
+                    pieces.append(BlockPiece(content: text, nonFinalSeparator: "\n\n", finalSeparator: ""))
+                }
+            case .clean(let piece):
+                if !piece.content.isEmpty {
+                    pieces.append(piece)
+                }
+            case .conflict(let conflict, let oursSep, let theirsSep):
                 let choice = resolutions[conflict.id] ?? .ours
                 switch choice {
                 case .ours:
-                    if !conflict.ours.isEmpty { blocks.append(conflict.ours) }
+                    if !conflict.ours.isEmpty {
+                        pieces.append(BlockPiece(
+                            content: conflict.ours,
+                            nonFinalSeparator: oursSep.nonFinalSeparator,
+                            finalSeparator: oursSep.finalSeparator
+                        ))
+                    }
                 case .theirs:
-                    if !conflict.theirs.isEmpty { blocks.append(conflict.theirs) }
+                    if !conflict.theirs.isEmpty {
+                        pieces.append(BlockPiece(
+                            content: conflict.theirs,
+                            nonFinalSeparator: theirsSep.nonFinalSeparator,
+                            finalSeparator: theirsSep.finalSeparator
+                        ))
+                    }
                 case .both:
-                    let a = conflict.ours.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let b = conflict.theirs.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let combined = [a, b].filter { !$0.isEmpty }.joined(separator: "\n\n")
-                    if !combined.isEmpty { blocks.append(combined) }
+                    let a = conflict.ours
+                    let b = conflict.theirs
+                    if !a.isEmpty && !b.isEmpty {
+                        let sep = Self.isBlankLineSeparator(oursSep.nonFinalSeparator) ? oursSep.nonFinalSeparator : "\n\n"
+                        pieces.append(BlockPiece(
+                            content: a + sep + b,
+                            nonFinalSeparator: theirsSep.nonFinalSeparator,
+                            finalSeparator: theirsSep.finalSeparator
+                        ))
+                    } else if !a.isEmpty {
+                        pieces.append(BlockPiece(
+                            content: a,
+                            nonFinalSeparator: oursSep.nonFinalSeparator,
+                            finalSeparator: oursSep.finalSeparator
+                        ))
+                    } else if !b.isEmpty {
+                        pieces.append(BlockPiece(
+                            content: b,
+                            nonFinalSeparator: theirsSep.nonFinalSeparator,
+                            finalSeparator: theirsSep.finalSeparator
+                        ))
+                    }
                 }
             }
         }
-        return blocks.joined(separator: "\n\n") + (blocks.isEmpty ? "" : "\n")
+        guard !pieces.isEmpty else { return "" }
+        var output = ""
+        for (index, piece) in pieces.enumerated() {
+            output += piece.content
+            if index < pieces.count - 1 {
+                output += piece.nonFinalSeparator
+            } else {
+                output += piece.finalSeparator
+            }
+        }
+        return output
     }
 
     public static func merge(base: String?, ours: String, theirs: String) -> Self {
-        let splitBlocks: (String) -> [String] = { text in
-            ManuscriptComparison.paragraphs(text)
-                .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
+        if ours.utf8.elementsEqual(theirs.utf8) {
+            return Self(conflicts: [], segments: ours.isEmpty ? [] : [.raw(ours)])
         }
-        let oursBlocks = splitBlocks(ours)
-        let theirsBlocks = splitBlocks(theirs)
-        guard let base else {
-            if oursBlocks == theirsBlocks {
-                return Self(conflicts: [], segments: oursBlocks.map(Segment.clean))
+        if let base {
+            if ours.utf8.elementsEqual(base.utf8) {
+                return Self(conflicts: [], segments: theirs.isEmpty ? [] : [.raw(theirs)])
             }
-            let conflict = Conflict(id: 0, base: "", ours: oursBlocks.joined(separator: "\n\n"), theirs: theirsBlocks.joined(separator: "\n\n"))
-            return Self(conflicts: [conflict], segments: [.conflict(conflict)])
+            if theirs.utf8.elementsEqual(base.utf8) {
+                return Self(conflicts: [], segments: ours.isEmpty ? [] : [.raw(ours)])
+            }
         }
-        let baseBlocks = splitBlocks(base)
-        let maxCount = max(baseBlocks.count, max(oursBlocks.count, theirsBlocks.count))
+
+        let oursUnits = splitUnits(ours)
+        let theirsUnits = splitUnits(theirs)
+        let defaultEOF = resolveEOF(base: base.map(splitUnits), ours: oursUnits, theirs: theirsUnits)
+
+        guard let base else {
+            return mergeTwoWay(oursUnits: oursUnits, theirsUnits: theirsUnits, defaultEOF: defaultEOF)
+        }
+
+        let baseUnits = splitUnits(base)
+        let oursHunks = computeEditHunks(base: baseUnits, target: oursUnits)
+        let theirsHunks = computeEditHunks(base: baseUnits, target: theirsUnits)
+
         var segments: [Segment] = []
         var conflicts: [Conflict] = []
+        var bCursor = 0
+        var oCursor = 0
+        var tCursor = 0
+        var i = 0
+        var j = 0
 
-        for index in 0..<maxCount {
-            let b = index < baseBlocks.count ? baseBlocks[index] : nil
-            let o = index < oursBlocks.count ? oursBlocks[index] : nil
-            let t = index < theirsBlocks.count ? theirsBlocks[index] : nil
+        func emitUnchangedAnchor(baseIndex: Int, oursIndex: Int, theirsIndex: Int) {
+            let bUnit = baseUnits[baseIndex]
+            let oUnit = oursUnits[oursIndex]
+            let tUnit = theirsUnits[theirsIndex]
+            let nonFinal = resolveNonFinalSeparator(base: bUnit, ours: oUnit, theirs: tUnit)
+            let finalSep = resolveAnchorFinalSeparator(base: bUnit, ours: oUnit, theirs: tUnit, defaultEOF: defaultEOF)
+            segments.append(.clean(BlockPiece(
+                content: oUnit.content,
+                nonFinalSeparator: nonFinal,
+                finalSeparator: finalSep
+            )))
+        }
 
-            if o == t {
-                if let o { segments.append(.clean(o)) }
-            } else if o == b {
-                if let t { segments.append(.clean(t)) }
-            } else if t == b {
-                if let o { segments.append(.clean(o)) }
-            } else {
-                let conflict = Conflict(
-                    id: conflicts.count,
-                    base: b ?? "",
-                    ours: o ?? "",
-                    theirs: t ?? ""
-                )
-                conflicts.append(conflict)
-                segments.append(.conflict(conflict))
+        func emitCleanSlice(_ slice: ArraySlice<ParagraphUnit>) {
+            for unit in slice where !unit.content.isEmpty {
+                let nonFinal = isBlankLineSeparator(unit.trailingSeparator) ? unit.trailingSeparator : "\n\n"
+                let finalSep = isBlankLineSeparator(unit.trailingSeparator) ? defaultEOF : unit.trailingSeparator
+                segments.append(.clean(BlockPiece(
+                    content: unit.content,
+                    nonFinalSeparator: nonFinal,
+                    finalSeparator: finalSep
+                )))
             }
         }
+
+        while i < oursHunks.count || j < theirsHunks.count {
+            let nextO = i < oursHunks.count ? oursHunks[i] : nil
+            let nextT = j < theirsHunks.count ? theirsHunks[j] : nil
+
+            let hunkBaseStart: Int
+            if let nextO, let nextT {
+                hunkBaseStart = min(nextO.baseRange.lowerBound, nextT.baseRange.lowerBound)
+            } else if let nextO {
+                hunkBaseStart = nextO.baseRange.lowerBound
+            } else {
+                hunkBaseStart = nextT!.baseRange.lowerBound
+            }
+
+            while bCursor < hunkBaseStart {
+                emitUnchangedAnchor(baseIndex: bCursor, oursIndex: oCursor, theirsIndex: tCursor)
+                bCursor += 1
+                oCursor += 1
+                tCursor += 1
+            }
+
+            if let nextO, let nextT, hunksConflict(nextO, nextT) {
+                var groupO = [nextO]
+                var groupT = [nextT]
+                i += 1
+                j += 1
+                var bEnd = max(nextO.baseRange.upperBound, nextT.baseRange.upperBound)
+
+                while true {
+                    if i < oursHunks.count,
+                       oursHunks[i].baseRange.lowerBound < bEnd
+                        || groupT.contains(where: { hunksConflict(oursHunks[i], $0) }) {
+                        bEnd = max(bEnd, oursHunks[i].baseRange.upperBound)
+                        groupO.append(oursHunks[i])
+                        i += 1
+                        continue
+                    }
+                    if j < theirsHunks.count,
+                       theirsHunks[j].baseRange.lowerBound < bEnd
+                        || groupO.contains(where: { hunksConflict($0, theirsHunks[j]) }) {
+                        bEnd = max(bEnd, theirsHunks[j].baseRange.upperBound)
+                        groupT.append(theirsHunks[j])
+                        j += 1
+                        continue
+                    }
+                    break
+                }
+
+                let bStart = bCursor
+                let oStart = oCursor
+                let lastO = groupO.last!
+                let oEnd = lastO.targetRange.upperBound + (bEnd - lastO.baseRange.upperBound)
+                let tStart = tCursor
+                let lastT = groupT.last!
+                let tEnd = lastT.targetRange.upperBound + (bEnd - lastT.baseRange.upperBound)
+
+                let baseSlice = baseUnits[bStart..<bEnd]
+                let oursSlice = oursUnits[oStart..<oEnd]
+                let theirsSlice = theirsUnits[tStart..<tEnd]
+
+                bCursor = bEnd
+                oCursor = oEnd
+                tCursor = tEnd
+
+                if oursSlice.map(\.content) == theirsSlice.map(\.content) {
+                    emitCleanSlice(oursSlice)
+                } else {
+                    let conflict = Conflict(
+                        id: conflicts.count,
+                        base: joinUnitContents(baseSlice),
+                        ours: joinUnitContents(oursSlice),
+                        theirs: joinUnitContents(theirsSlice)
+                    )
+                    conflicts.append(conflict)
+                    segments.append(.conflict(
+                        conflict,
+                        oursSeparator: sliceSeparatorPiece(oursSlice, defaultEOF: defaultEOF),
+                        theirsSeparator: sliceSeparatorPiece(theirsSlice, defaultEOF: defaultEOF)
+                    ))
+                }
+            } else {
+                let takeOurs: Bool
+                if let nextO, let nextT {
+                    if nextO.baseRange.lowerBound != nextT.baseRange.lowerBound {
+                        takeOurs = nextO.baseRange.lowerBound < nextT.baseRange.lowerBound
+                    } else {
+                        takeOurs = nextO.baseRange.isEmpty
+                    }
+                } else {
+                    takeOurs = nextO != nil
+                }
+
+                if takeOurs, let hunk = nextO {
+                    emitCleanSlice(oursUnits[hunk.targetRange])
+                    let count = hunk.baseRange.count
+                    bCursor = hunk.baseRange.upperBound
+                    oCursor = hunk.targetRange.upperBound
+                    tCursor += count
+                    i += 1
+                } else if let hunk = nextT {
+                    emitCleanSlice(theirsUnits[hunk.targetRange])
+                    let count = hunk.baseRange.count
+                    bCursor = hunk.baseRange.upperBound
+                    oCursor += count
+                    tCursor = hunk.targetRange.upperBound
+                    j += 1
+                }
+            }
+        }
+
+        while bCursor < baseUnits.count {
+            emitUnchangedAnchor(baseIndex: bCursor, oursIndex: oCursor, theirsIndex: tCursor)
+            bCursor += 1
+            oCursor += 1
+            tCursor += 1
+        }
+
         return Self(conflicts: conflicts, segments: segments)
+    }
+
+    private static func mergeTwoWay(
+        oursUnits: [ParagraphUnit],
+        theirsUnits: [ParagraphUnit],
+        defaultEOF: String
+    ) -> Self {
+        let diff = theirsUnits.map(\.content).difference(from: oursUnits.map(\.content))
+        var removed = Set<Int>()
+        var inserted = Set<Int>()
+        for change in diff {
+            switch change {
+            case .remove(let idx, _, _): removed.insert(idx)
+            case .insert(let idx, _, _): inserted.insert(idx)
+            }
+        }
+        let unremovedO = (0..<oursUnits.count).filter { !removed.contains($0) }
+        let uninsertedT = (0..<theirsUnits.count).filter { !inserted.contains($0) }
+        guard !unremovedO.isEmpty else {
+            let conflict = Conflict(
+                id: 0,
+                base: "",
+                ours: joinUnitContents(oursUnits[...]),
+                theirs: joinUnitContents(theirsUnits[...])
+            )
+            return Self(
+                conflicts: [conflict],
+                segments: [.conflict(
+                    conflict,
+                    oursSeparator: sliceSeparatorPiece(oursUnits[...], defaultEOF: defaultEOF),
+                    theirsSeparator: sliceSeparatorPiece(theirsUnits[...], defaultEOF: defaultEOF)
+                )]
+            )
+        }
+
+        var segments: [Segment] = []
+        var conflicts: [Conflict] = []
+        var oCursor = 0
+        var tCursor = 0
+
+        for (oAnchor, tAnchor) in zip(unremovedO, uninsertedT) {
+            if oCursor < oAnchor || tCursor < tAnchor {
+                let oSlice = oursUnits[oCursor..<oAnchor]
+                let tSlice = theirsUnits[tCursor..<tAnchor]
+                let conflict = Conflict(
+                    id: conflicts.count,
+                    base: "",
+                    ours: joinUnitContents(oSlice),
+                    theirs: joinUnitContents(tSlice)
+                )
+                conflicts.append(conflict)
+                segments.append(.conflict(
+                    conflict,
+                    oursSeparator: sliceSeparatorPiece(oSlice, defaultEOF: defaultEOF),
+                    theirsSeparator: sliceSeparatorPiece(tSlice, defaultEOF: defaultEOF)
+                ))
+            }
+            let oUnit = oursUnits[oAnchor]
+            let nonFinal = isBlankLineSeparator(oUnit.trailingSeparator) ? oUnit.trailingSeparator : "\n\n"
+            let finalSep = isBlankLineSeparator(oUnit.trailingSeparator) ? defaultEOF : oUnit.trailingSeparator
+            segments.append(.clean(BlockPiece(
+                content: oUnit.content,
+                nonFinalSeparator: nonFinal,
+                finalSeparator: finalSep
+            )))
+            oCursor = oAnchor + 1
+            tCursor = tAnchor + 1
+        }
+
+        if oCursor < oursUnits.count || tCursor < theirsUnits.count {
+            let oSlice = oursUnits[oCursor..<oursUnits.count]
+            let tSlice = theirsUnits[tCursor..<theirsUnits.count]
+            let conflict = Conflict(
+                id: conflicts.count,
+                base: "",
+                ours: joinUnitContents(oSlice),
+                theirs: joinUnitContents(tSlice)
+            )
+            conflicts.append(conflict)
+            segments.append(.conflict(
+                conflict,
+                oursSeparator: sliceSeparatorPiece(oSlice, defaultEOF: defaultEOF),
+                theirsSeparator: sliceSeparatorPiece(tSlice, defaultEOF: defaultEOF)
+            ))
+        }
+
+        return Self(conflicts: conflicts, segments: segments)
+    }
+
+    private static func splitUnits(_ text: String) -> [ParagraphUnit] {
+        let ns = text as NSString
+        guard ns.length > 0 else { return [] }
+        let matches = blankLineSeparatorRegex.matches(in: text, range: NSRange(location: 0, length: ns.length))
+        var cursor = 0
+        var units: [ParagraphUnit] = []
+
+        for match in matches {
+            if match.range.location == 0 {
+                if match.range.upperBound == ns.length {
+                    return [ParagraphUnit(content: "", trailingSeparator: text)]
+                }
+                continue
+            }
+            guard match.range.location > cursor else { continue }
+            let content = ns.substring(with: NSRange(location: cursor, length: match.range.location - cursor))
+            let sep = ns.substring(with: match.range)
+            units.append(ParagraphUnit(content: content, trailingSeparator: sep))
+            cursor = match.range.upperBound
+        }
+
+        if cursor < ns.length {
+            let remainder = ns.substring(from: cursor)
+            if remainder.hasSuffix("\r\n") {
+                units.append(ParagraphUnit(content: String(remainder.dropLast(2)), trailingSeparator: "\r\n"))
+            } else if remainder.hasSuffix("\n") {
+                units.append(ParagraphUnit(content: String(remainder.dropLast(1)), trailingSeparator: "\n"))
+            } else {
+                units.append(ParagraphUnit(content: remainder, trailingSeparator: ""))
+            }
+        }
+        return units
+    }
+
+    private static func computeEditHunks(
+        base: [ParagraphUnit],
+        target: [ParagraphUnit]
+    ) -> [EditHunk] {
+        let diff = target.map(\.content).difference(from: base.map(\.content))
+        var removed = Set<Int>()
+        var inserted = Set<Int>()
+        for change in diff {
+            switch change {
+            case .remove(let idx, _, _): removed.insert(idx)
+            case .insert(let idx, _, _): inserted.insert(idx)
+            }
+        }
+        let unremovedBase = (0..<base.count).filter { !removed.contains($0) }
+        let uninsertedTarget = (0..<target.count).filter { !inserted.contains($0) }
+        let baseToTarget = Dictionary(uniqueKeysWithValues: zip(unremovedBase, uninsertedTarget))
+
+        var hunks: [EditHunk] = []
+        var b = 0
+        var t = 0
+        while b < base.count || t < target.count {
+            if b < base.count, let matchedT = baseToTarget[b] {
+                if matchedT == t {
+                    b += 1
+                    t += 1
+                } else {
+                    hunks.append(EditHunk(baseRange: b..<b, targetRange: t..<matchedT))
+                    t = matchedT
+                }
+            } else if b < base.count {
+                var bNext = b + 1
+                while bNext < base.count && baseToTarget[bNext] == nil {
+                    bNext += 1
+                }
+                let tNext = bNext < base.count ? baseToTarget[bNext]! : target.count
+                hunks.append(EditHunk(baseRange: b..<bNext, targetRange: t..<tNext))
+                b = bNext
+                t = tNext
+            } else {
+                hunks.append(EditHunk(baseRange: base.count..<base.count, targetRange: t..<target.count))
+                t = target.count
+            }
+        }
+        return hunks
+    }
+
+    private static func hunksConflict(_ hO: EditHunk, _ hT: EditHunk) -> Bool {
+        if max(hO.baseRange.lowerBound, hT.baseRange.lowerBound) < min(hO.baseRange.upperBound, hT.baseRange.upperBound) {
+            return true
+        }
+        if hO.baseRange.isEmpty && hT.baseRange.isEmpty && hO.baseRange.lowerBound == hT.baseRange.lowerBound {
+            return true
+        }
+        if hO.targetRange.isEmpty && hT.targetRange.isEmpty
+            && (hO.baseRange.upperBound == hT.baseRange.lowerBound || hT.baseRange.upperBound == hO.baseRange.lowerBound) {
+            return true
+        }
+        return false
+    }
+
+    private static func isBlankLineSeparator(_ separator: String) -> Bool {
+        var newlineCount = 0
+        for scalar in separator.unicodeScalars where scalar == "\n" {
+            newlineCount += 1
+            if newlineCount >= 2 { return true }
+        }
+        return false
+    }
+
+    private static func resolveEOF(
+        base: [ParagraphUnit]?,
+        ours: [ParagraphUnit],
+        theirs: [ParagraphUnit]
+    ) -> String {
+        let oEOF = ours.last?.trailingSeparator ?? ""
+        let tEOF = theirs.last?.trailingSeparator ?? ""
+        if oEOF == tEOF { return oEOF }
+        if let bEOF = base?.last?.trailingSeparator {
+            if oEOF == bEOF { return tEOF }
+            if tEOF == bEOF { return oEOF }
+        }
+        return oEOF
+    }
+
+    private static func resolveNonFinalSeparator(
+        base: ParagraphUnit,
+        ours: ParagraphUnit,
+        theirs: ParagraphUnit
+    ) -> String {
+        let bSep = isBlankLineSeparator(base.trailingSeparator) ? base.trailingSeparator : "\n\n"
+        let oSep = isBlankLineSeparator(ours.trailingSeparator) ? ours.trailingSeparator : nil
+        let tSep = isBlankLineSeparator(theirs.trailingSeparator) ? theirs.trailingSeparator : nil
+        if let oSep, let tSep {
+            if oSep == tSep { return oSep }
+            if oSep == bSep { return tSep }
+            return oSep
+        }
+        return oSep ?? tSep ?? bSep
+    }
+
+    private static func resolveAnchorFinalSeparator(
+        base: ParagraphUnit,
+        ours: ParagraphUnit,
+        theirs: ParagraphUnit,
+        defaultEOF: String
+    ) -> String {
+        let oFinal = isBlankLineSeparator(ours.trailingSeparator) ? nil : ours.trailingSeparator
+        let tFinal = isBlankLineSeparator(theirs.trailingSeparator) ? nil : theirs.trailingSeparator
+        let bFinal = isBlankLineSeparator(base.trailingSeparator) ? nil : base.trailingSeparator
+        if let oFinal, let tFinal {
+            if oFinal == tFinal { return oFinal }
+            if let bFinal, oFinal == bFinal { return tFinal }
+            return oFinal
+        }
+        return oFinal ?? tFinal ?? defaultEOF
+    }
+
+    private static func joinUnitContents(_ slice: ArraySlice<ParagraphUnit>) -> String {
+        guard !slice.isEmpty else { return "" }
+        var output = ""
+        for (offset, unit) in slice.enumerated() {
+            output += unit.content
+            if offset < slice.count - 1 {
+                output += isBlankLineSeparator(unit.trailingSeparator) ? unit.trailingSeparator : "\n\n"
+            }
+        }
+        return output
+    }
+
+    private static func sliceSeparatorPiece(
+        _ slice: ArraySlice<ParagraphUnit>,
+        defaultEOF: String
+    ) -> BlockPiece {
+        guard let last = slice.last else {
+            return BlockPiece(content: "", nonFinalSeparator: "\n\n", finalSeparator: defaultEOF)
+        }
+        let nonFinal = isBlankLineSeparator(last.trailingSeparator) ? last.trailingSeparator : "\n\n"
+        let finalSep = isBlankLineSeparator(last.trailingSeparator) ? defaultEOF : last.trailingSeparator
+        return BlockPiece(content: "", nonFinalSeparator: nonFinal, finalSeparator: finalSep)
     }
 }
 
@@ -507,29 +1087,24 @@ public struct ManuscriptResumeBrief: Equatable, Sendable {
         for v in versions where !branchNames.contains(v.branchName) { branchNames.append(v.branchName) }
         if branchNames.isEmpty { branchNames.append(ManuscriptVersion.defaultBranchName) }
 
-        let activeHead = versions.first(where: { $0.id == branchState.headVersionID(for: branchState.activeBranch) })
-            ?? versions.first(where: { $0.branchName == branchState.activeBranch })
-        let hasUnsaved = activeHead.map { !$0.text.utf8.elementsEqual(document.body.utf8) }
-            ?? !document.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-
-        let outline = DocumentOutline.parse(document.body)
-        let nsBody = document.body as NSString
-        let clampedOffset = cursorOffset.map { max(0, min($0, nsBody.length)) }
-        let targetScene = clampedOffset.flatMap { offset in
-            outline.scenes.last(where: { $0.utf16Range.lowerBound <= offset })
-        } ?? outline.scenes.last(where: { !$0.headingPath.isEmpty }) ?? outline.scenes.last
-        let currentHeading = targetScene?.headingPath.last
-
-        let paragraphs = ManuscriptComparison.paragraphs(document.body)
-            .map { (text: $0.text.trimmingCharacters(in: .whitespacesAndNewlines), start: $0.start) }
-            .filter { !$0.text.isEmpty && !$0.text.hasPrefix("#") }
-        let relevantParagraph: String
-        if let clampedOffset,
-           let beforeCursor = paragraphs.last(where: { $0.start <= clampedOffset }) {
-            relevantParagraph = beforeCursor.text
+        let source = document.source
+        let activeHead = branchState.resolveDocumentHead(for: branchState.activeBranch, in: versions)
+        let hasUnsaved: Bool
+        if let activeHead {
+            if (activeHead.text as NSString).length != source.utf16Length {
+                hasUnsaved = true
+            } else {
+                hasUnsaved = !activeHead.text.utf8.elementsEqual(document.body.utf8)
+            }
         } else {
-            relevantParagraph = paragraphs.last?.text ?? ""
+            hasUnsaved = Self.containsNonWhitespace(in: source)
         }
+
+        let clampedOffset = cursorOffset.map { max(0, min($0, source.utf16Length)) }
+        let currentHeading = Self.resolveCurrentHeading(in: source, clampedOffset: clampedOffset)
+        let relevantParagraph = clampedOffset.flatMap {
+            Self.lastRelevantParagraph(in: source, maxStartOffset: $0)
+        } ?? Self.lastRelevantParagraph(in: source, maxStartOffset: nil) ?? ""
         let singleLine = relevantParagraph
             .replacingOccurrences(of: "\n", with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -563,5 +1138,98 @@ public struct ManuscriptResumeBrief: Equatable, Sendable {
             latestVersionLabel: activeHead?.label,
             hasUnsavedVersionChanges: hasUnsaved
         )
+    }
+
+    private static func containsNonWhitespace(in source: DocumentSource) -> Bool {
+        source.containsNonWhitespace()
+    }
+
+    private static func resolveCurrentHeading(in source: DocumentSource, clampedOffset: Int?) -> String? {
+        guard source.utf16Length > 0 else { return nil }
+        if let clampedOffset {
+            if let before = scanHeadingBackward(in: source, maxStartOffset: clampedOffset) {
+                return before
+            }
+            let prefix = source.clampedSlice(in: NSRange(location: 0, length: min(source.utf16Length, 8_192)))
+            var lineStart = prefix.startIndex
+            var hasNonWhitespaceBeforeFirstHeading = false
+            while lineStart < prefix.endIndex {
+                let lineEnd = prefix[lineStart...].firstIndex(of: "\n").map { prefix.index(after: $0) } ?? prefix.endIndex
+                let line = prefix[lineStart..<lineEnd]
+                if DocumentOutline.headingLine(line) != nil { break }
+                if !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    hasNonWhitespaceBeforeFirstHeading = true
+                    break
+                }
+                lineStart = lineEnd
+            }
+            if hasNonWhitespaceBeforeFirstHeading {
+                return nil
+            }
+        }
+        return scanHeadingBackward(in: source, maxStartOffset: nil)
+    }
+
+    private static func scanHeadingBackward(in source: DocumentSource, maxStartOffset: Int?) -> String? {
+        let total = source.utf16Length
+        guard total > 0 else { return nil }
+        let step = 16_384
+        let overlap = 512
+        var windowEnd = min(total, (maxStartOffset ?? total) + overlap)
+        while windowEnd > 0 {
+            let rawStart = max(0, windowEnd - step)
+            let slice = source.clampedSlice(in: NSRange(location: rawStart, length: windowEnd - rawStart))
+            var lineStart = slice.startIndex
+            var utf16Pos = rawStart
+            if rawStart > 0, let firstNewline = slice.firstIndex(of: "\n") {
+                let nextStart = slice.index(after: firstNewline)
+                utf16Pos += slice[..<nextStart].utf16.count
+                lineStart = nextStart
+            }
+            var found: String?
+            while lineStart < slice.endIndex {
+                let lineEnd = slice[lineStart...].firstIndex(of: "\n").map { slice.index(after: $0) } ?? slice.endIndex
+                if let maxStartOffset, utf16Pos > maxStartOffset { break }
+                let line = slice[lineStart..<lineEnd]
+                if let (_, title) = DocumentOutline.headingLine(line) {
+                    found = title
+                }
+                utf16Pos += line.utf16.count
+                lineStart = lineEnd
+            }
+            if let found { return found }
+            if rawStart == 0 { break }
+            windowEnd = min(windowEnd - 1, rawStart + overlap)
+        }
+        return nil
+    }
+
+    private static func lastRelevantParagraph(in source: DocumentSource, maxStartOffset: Int?) -> String? {
+        let total = source.utf16Length
+        guard total > 0 else { return nil }
+        let step = 16_384
+        let overlap = 2_048
+        var windowEnd = min(total, (maxStartOffset ?? total) + overlap)
+        while windowEnd > 0 {
+            let rawStart = max(0, windowEnd - step)
+            let slice = source.clampedSlice(in: NSRange(location: rawStart, length: windowEnd - rawStart))
+            let paragraphs = ManuscriptComparison.paragraphs(slice)
+            let usable = rawStart > 0 && paragraphs.count > 1 ? Array(paragraphs.dropFirst()) : paragraphs
+            let candidates = usable.compactMap { item -> (text: String, start: Int)? in
+                let trimmed = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty, !trimmed.hasPrefix("#") else { return nil }
+                return (text: trimmed, start: rawStart + item.start)
+            }
+            if let maxStartOffset {
+                if let match = candidates.last(where: { $0.start <= maxStartOffset }) {
+                    return match.text
+                }
+            } else if let match = candidates.last {
+                return match.text
+            }
+            if rawStart == 0 { break }
+            windowEnd = min(windowEnd - 1, rawStart + overlap)
+        }
+        return nil
     }
 }

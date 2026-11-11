@@ -338,11 +338,27 @@ public final class EntryStore: ObservableObject {
 
     /// 휴지통 항목을 문서 구조로 되살린다 — 폴더 묶음이면 폴더와 저널 전체.
     public func restoreFromTrash(itemID: UUID) {
-        guard let item = trash.take(id: itemID) else { return }
+        guard let item = trash.peek(id: itemID) else { return }
+        let previousEntries = entries
+        let previousFolders = folders
+        let previousActiveID = activeID
+        let previousExpanded = expandedFolderIDs
         restoreFolders(item.folders)
         restoreEntries(item.entries)
         fixActiveAfterStructureChange(prefer: nil)
         saveNow()
+        if case .failed = savePhase {
+            entries = previousEntries
+            folders = previousFolders
+            activeID = previousActiveID
+            expandedFolderIDs = previousExpanded
+            showNotice("복원 내용을 저장하지 못해 휴지통에 그대로 두었어요")
+            return
+        }
+        guard trash.take(id: itemID) != nil else {
+            showNotice("휴지통에서 ‘\(item.title)’을(를) 복원했어요")
+            return
+        }
         showNotice("휴지통에서 ‘\(item.title)’을(를) 복원했어요")
     }
 
@@ -441,15 +457,72 @@ public final class EntryStore: ObservableObject {
         Self.current = self
         // 고아 asset 청소 — 장부에 유예 중인 후보가 있을 때만 실제로 돈다.
         // 시작 직후 한 번, 메인 액터 상속 Task라 편집 경로와 겹치지 않는다 (이슈 #17).
-        let bodies = entries.map(\.body)
+        // 활성 엔트리뿐 아니라 휴지통·백업·복구 파일의 본문도 함께 보호한다 (F07).
         let storageLocation = PurloryStorageLocation(rootDirectory: directory)
         if !AssetJanitor.hasPendingCandidates(storageLocation: storageLocation) {
             // 장부가 비었으면 파일 접근조차 하지 않는다.
-        } else {
-            Task(priority: .utility) { [bodies, storageLocation] in
-                _ = AssetJanitor.sweepAll(bodies: bodies, storageLocation: storageLocation)
+        } else if let protectedBodies = Self.collectSweepProtectedBodies(
+            in: directory, activeEntries: entries, trash: trash
+        ) {
+            Task(priority: .utility) { [protectedBodies, storageLocation] in
+                _ = AssetJanitor.sweepAll(bodies: protectedBodies, storageLocation: storageLocation)
             }
         }
+    }
+
+    /// 활성 저널·휴지통·일일 백업·복구/손상 사본이 참조하는 모든 본문을 수집한다.
+    /// 백업이나 휴지통 파일이 존재하지만 읽거나 해석할 수 없으면 nil을 반환해
+    /// 청소를 건너뛴다(fail-safe).
+    private static func collectSweepProtectedBodies(
+        in directory: URL,
+        activeEntries: [JournalEntry],
+        trash: TrashStore
+    ) -> [String]? {
+        guard !trash.hasUnreadableOrCorruptState else { return nil }
+        var bodies = activeEntries.map(\.body)
+        bodies.append(contentsOf: trash.items.flatMap(\.entries).map(\.body))
+
+        let fm = FileManager.default
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+
+        let rootFiles = (try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+        for fileURL in rootFiles {
+            let name = fileURL.lastPathComponent
+            if name.hasPrefix("entries-recovered-") && name.hasSuffix(".json") {
+                guard let data = try? Data(contentsOf: fileURL),
+                      let snapshot = try? decoder.decode(Snapshot.self, from: data)
+                else { return nil }
+                bodies.append(contentsOf: snapshot.entries.map(\.body))
+            } else if name.contains(".corrupt-") && name.hasSuffix(".json") {
+                if let data = try? Data(contentsOf: fileURL) {
+                    if let snapshot = try? decoder.decode(Snapshot.self, from: data) {
+                        bodies.append(contentsOf: snapshot.entries.map(\.body))
+                    } else if let rawText = String(data: data, encoding: .utf8) {
+                        bodies.append(rawText)
+                    } else {
+                        return nil
+                    }
+                } else {
+                    return nil
+                }
+            }
+        }
+
+        let backupsDir = directory.appendingPathComponent("backups", isDirectory: true)
+        if fm.fileExists(atPath: backupsDir.path) {
+            guard let backupFiles = try? fm.contentsOfDirectory(at: backupsDir, includingPropertiesForKeys: nil) else {
+                return nil
+            }
+            for backupURL in backupFiles where backupURL.pathExtension == "json" {
+                guard let data = try? Data(contentsOf: backupURL),
+                      let snapshot = try? decoder.decode(Snapshot.self, from: data)
+                else { return nil }
+                bodies.append(contentsOf: snapshot.entries.map(\.body))
+            }
+        }
+
+        return bodies
     }
 
     /// `~/Documents/Purlory/` 경로. 디렉터리가 없으면 만든다.
@@ -541,19 +614,48 @@ public final class EntryStore: ObservableObject {
     ) -> (snapshot: Snapshot, sessionTarget: URL?) {
         if let previous = newestRecoveredFile(in: directory),
            case .loaded(let snapshot) = decodeSnapshotFromDisk(previous) {
-            // 손상 원본을 복구 파일로 대체 — 사본은 이미 남아 있어 안전하다.
-            // 승계된 원본은 반드시 제거한다 — 남겨두면 훗날 새 손상 시 이 낡은
-            // 사본이 최신 라이브러리를 덮어버리는 재발 경로가 된다.
-            try? FileManager.default.removeItem(at: originalURL)
-            try? FileManager.default.copyItem(at: previous, to: originalURL)
-            try? FileManager.default.removeItem(at: previous)
-            return (snapshot, nil)
+            // 손상 원본을 복구 파일로 원자적 승계 — 스테이징 복사·검증·교체가 모두
+            // 성공한 뒤에만 이전 복구 파일을 지운다 (F05).
+            if promoteRecoveredFile(from: previous, to: originalURL) {
+                return (snapshot, nil)
+            }
+            // 승계 교체가 실패하면 이전 복구 파일과 스냅샷을 그대로 유지한 채 복구 모드로 진입한다.
+            return (snapshot, previous)
         }
 
         let stamp = corruptStampFormatter.string(from: .now)
         let session = directory.appendingPathComponent(
             "entries-recovered-\(stamp).json", isDirectory: false)
         return (Snapshot(entries: [], activeID: nil), session)
+    }
+
+    /// 복구 세션 파일을 원본 라이브러리 위치로 안전하게 승계한다.
+    /// 임시 파일 복사 및 디코딩 검증 후 원본을 교체하며, 교체가 검증되기 전에는
+    /// 원본이나 복구 파일을 삭제하지 않는다.
+    static func promoteRecoveredFile(from sourceURL: URL, to destinationURL: URL) -> Bool {
+        let fm = FileManager.default
+        guard case .loaded = decodeSnapshotFromDisk(sourceURL) else { return false }
+        let dir = destinationURL.deletingLastPathComponent()
+        let stagingURL = dir.appendingPathComponent(
+            ".entries-promote-\(UUID().uuidString).tmp", isDirectory: false)
+        defer { try? fm.removeItem(at: stagingURL) }
+
+        do {
+            try fm.copyItem(at: sourceURL, to: stagingURL)
+            guard case .loaded = decodeSnapshotFromDisk(stagingURL) else { return false }
+            if fm.fileExists(atPath: destinationURL.path) {
+                _ = try fm.replaceItemAt(destinationURL, withItemAt: stagingURL)
+            } else {
+                try fm.moveItem(at: stagingURL, to: destinationURL)
+            }
+            guard case .loaded = decodeSnapshotFromDisk(destinationURL) else { return false }
+            if sourceURL.standardizedFileURL != destinationURL.standardizedFileURL {
+                try? fm.removeItem(at: sourceURL)
+            }
+            return true
+        } catch {
+            return false
+        }
     }
 
     private static func decodeSnapshotFromDisk(_ url: URL) -> SnapshotLoad {
@@ -747,6 +849,10 @@ public final class EntryStore: ObservableObject {
     public func delete(_ id: UUID) {
         guard let index = entries.firstIndex(where: { $0.id == id }) else { return }
         let snapshot = entries[index]
+        guard trash.add(folders: [], entries: [snapshot]) else {
+            showNotice("휴지통 저장에 실패해 ‘\(snapshot.title)’ 삭제를 취소했어요")
+            return
+        }
         commitStructure("저널 삭제", before: { [weak self] in
             guard let self else { return }
             self.restoreEntries([snapshot])
@@ -759,7 +865,6 @@ public final class EntryStore: ObservableObject {
             self.fixActiveAfterStructureChange(prefer: nil)
             self.saveNow()
         })
-        trash.add(folders: [], entries: [snapshot])
         showNotice("‘\(snapshot.title)’을(를) 휴지통으로 옮겼어요 — ⌘Z로 되돌릴 수 있어요")
     }
 
@@ -993,6 +1098,11 @@ public final class EntryStore: ObservableObject {
         let removedFolders = folders.filter { doomed.contains($0.id) }
         let removedEntries = entries.filter { $0.folderID.map(doomed.contains) ?? false }
         guard !removedFolders.isEmpty || !removedEntries.isEmpty else { return }
+        let name = removedFolders.first(where: { $0.id == id })?.name ?? "폴더"
+        guard trash.add(folders: removedFolders, entries: removedEntries) else {
+            showNotice("휴지통 저장에 실패해 ‘\(name)’ 삭제를 취소했어요")
+            return
+        }
         commitStructure("폴더 삭제", before: { [weak self] in
             guard let self else { return }
             self.restoreFolders(removedFolders)
@@ -1009,8 +1119,6 @@ public final class EntryStore: ObservableObject {
             self.fixActiveAfterStructureChange(prefer: nil)
             self.saveNow()
         })
-        trash.add(folders: removedFolders, entries: removedEntries)
-        let name = removedFolders.first(where: { $0.id == id })?.name ?? "폴더"
         showNotice(
             "‘\(name)’을(를) 휴지통으로 옮겼어요 — 저널 \(removedEntries.count)개가 함께 들어갔어요")
     }
@@ -1376,13 +1484,23 @@ public final class EntryStore: ObservableObject {
     /// 사본으로 남아 있다.
     public func adoptRecoveredAsLibrary() {
         guard pendingRecovery != nil else { return }
-        if let session = recoveredSessionURL,
-            FileManager.default.fileExists(atPath: session.path) {
-            try? FileManager.default.removeItem(at: fileURL)
-            try? FileManager.default.copyItem(at: session, to: fileURL)
-            // 승계 후엔 세션 파일을 치운다 — 낡은 복구 파일이 훗날 최신 라이브러리를
-            // 덮는 재발 경로가 되지 않게 (recoverySetup의 승계와 같은 이유).
-            try? FileManager.default.removeItem(at: session)
+        let fm = FileManager.default
+        if let session = recoveredSessionURL {
+            if !fm.fileExists(atPath: session.path) {
+                if let failure = writeAndWait(currentSnapshot) {
+                    noteOutcome(failure)
+                    return
+                }
+            }
+            guard Self.promoteRecoveredFile(from: session, to: fileURL) else {
+                noteOutcome("복구 파일을 라이브러리로 승계하지 못했습니다")
+                return
+            }
+        } else {
+            if let failure = Self.performWrite(currentSnapshot, to: fileURL) {
+                noteOutcome(failure)
+                return
+            }
         }
         pendingRecovery = nil
         recoveredSessionURL = nil

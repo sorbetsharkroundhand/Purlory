@@ -5,13 +5,14 @@ import Foundation
 /// Text storage remains authoritative; callers rebuild only for load/recovery.
 package final class ParagraphRenderIndex {
     package struct Record: Equatable {
-        package init(length: Int, block: PurloryBlock, open: Bool = false, close: Bool = false) {
-            self.length = length; self.block = block; self.open = open; self.close = close
+        package init(length: Int, block: PurloryBlock, open: Bool = false, close: Bool = false, newlines: Int = 0) {
+            self.length = length; self.block = block; self.open = open; self.close = close; self.newlines = newlines
         }
         package var length: Int
         package var block: PurloryBlock
         package var open = false
         package var close = false
+        package var newlines = 0
     }
     package struct Paragraph: Equatable {
         package let range: NSRange
@@ -21,11 +22,12 @@ package final class ParagraphRenderIndex {
         let record: Record
         let priority: UInt64
         let left: Node?, right: Node?
-        let count: Int, length: Int
+        let count: Int, length: Int, newlines: Int
         init(_ record: Record, priority: UInt64, left: Node? = nil, right: Node? = nil) {
             self.record = record; self.priority = priority; self.left = left; self.right = right
             count = 1 + (left?.count ?? 0) + (right?.count ?? 0)
             length = record.length + (left?.length ?? 0) + (right?.length ?? 0)
+            newlines = record.newlines + (left?.newlines ?? 0) + (right?.newlines ?? 0)
         }
         func copy(left: Node?, right: Node?) -> Node { Node(record, priority: priority, left: left, right: right) }
     }
@@ -35,6 +37,7 @@ package final class ParagraphRenderIndex {
     package private(set) var lastMutationVisits = 0
     package var utf16Length: Int { root?.length ?? 0 }
     package var paragraphCount: Int { root?.count ?? 0 }
+    package var newlineCount: Int { root?.newlines ?? 0 }
 
     package init(records: [Record]) {
         for record in records where record.length > 0 { root = merge(root, makeNode(record)) }

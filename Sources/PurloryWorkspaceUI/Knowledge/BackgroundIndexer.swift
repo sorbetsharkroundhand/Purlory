@@ -287,6 +287,9 @@ public final class BackgroundIndexer {
         manualPhase = phase
     }
 
+    @ObservationIgnored var _testGateStateProvider:
+        (@Sendable () -> (thermalState: ProcessInfo.ThermalState, lowPowerModeEnabled: Bool))?
+
     /// 이 토큰의 패스가 아직 현재 소유자인가 — 작업 종료 시 핸들 정리 가드.
     func finishPass(token: Int) {
         guard passGeneration == token else { return }  // 늦은 이전 작업 — 무시
@@ -819,6 +822,7 @@ public final class BackgroundIndexer {
             scope: scope, generation: token, documentVersion: bodyHash,
             runtimeIdentity: entry.runtimeIdentity)
         let persistence = sidecarPersistence
+        let gateStateProvider = _testGateStateProvider
         // 파싱·디스크 IO·프롬프트 준비를 메인에서 떼어낸다 — 생성 자체는 엔진
         // actor에서 돌므로, 여기서 중요한 건 30만 자 파싱이 메인을 막지 않는 것.
         // self는 앱 수명 객체라 패스 동안의 강참조가 수명을 늘리지 않는다.
@@ -859,13 +863,15 @@ public final class BackgroundIndexer {
             let liveCharacters = await MainActor.run {
                 allowsLegacyMetadataWrites ? (self.currentDocument()?.characters ?? characters) : characters
             }
+            let blockedReasonBox = LockedBlockedReason()
             await Self.runPass(
                 deep: deep, scope: scope, entryID: entryID, body: body,
                 parameters: parameters, engine: engine,
                 persistence: persistence,
                 liveEntryIDs: liveEntryIDs, characters: liveCharacters,
                 overrides: overrides, recordedConversations: recorded,
-                caretUTF16: caret
+                caretUTF16: caret,
+                gateStateProvider: gateStateProvider
             ) { snapshot in
                 // 일관성 검사는 스냅샷과 같은 주기 — 백그라운드에서 계산하고
                 // 결과만 메인으로 (렌더 경로 재계산 금지, docs/editor-perf.md 4차).
@@ -897,9 +903,12 @@ public final class BackgroundIndexer {
                     self.manualPhase = .reading(done: done, total: total)
                 }
             } onBlocked: { reason in
+                blockedReasonBox.store(reason)
                 Task { @MainActor in
                     guard self.manualPassToken == token, self.owns(identity) else { return }
-                    self.manualPhase = .blocked(reason: reason)
+                    if self.manualPhase != .blocked(reason: reason) {
+                        self.manualPhase = .blocked(reason: reason)
+                    }
                 }
             } commit: { candidate, liveHashes in
                 guard await MainActor.run(body: { owned() }) else { return false }
@@ -916,6 +925,12 @@ public final class BackgroundIndexer {
                 }
             }
             await MainActor.run {
+                if let reason = blockedReasonBox.load(),
+                    self.manualPassToken == token, self.owns(identity),
+                    self.manualPhase != .blocked(reason: reason)
+                {
+                    self.manualPhase = .blocked(reason: reason)
+                }
                 self.finishManualPhase(identity: identity)
                 self.finishPass(token: token)
             }
@@ -1123,8 +1138,23 @@ public final class BackgroundIndexer {
         return collapsed.isEmpty ? nil : String(collapsed.prefix(140))
     }
 
+    private final class LockedBlockedReason: @unchecked Sendable {
+        private let lock = NSLock()
+        private var reason: String?
+        func store(_ value: String) {
+            lock.lock()
+            reason = value
+            lock.unlock()
+        }
+        func load() -> String? {
+            lock.lock()
+            defer { lock.unlock() }
+            return reason
+        }
+    }
+
     /// 한 번의 이해 패스 — 값 입력만 받아 detached에서 돈다.
-    nonisolated private static func runPass(
+    nonisolated static func runPass(
         deep: Bool,
         scope: StoryMemoryScope,
         entryID: UUID,
@@ -1137,6 +1167,7 @@ public final class BackgroundIndexer {
         overrides: [NarrativeOverride],
         recordedConversations: [RecordedConversation] = [],
         caretUTF16: Int?,
+        gateStateProvider: (@Sendable () -> (thermalState: ProcessInfo.ThermalState, lowPowerModeEnabled: Bool))? = nil,
         publish: @Sendable @escaping (KnowledgeSnapshot) -> Void,
         publishMetrics: @Sendable @escaping (KnowledgeMetrics) -> Void = { _ in },
         /// 씬 단위 결정적 진행 (처리한 수, 전체 더티 수) — "지금 읽기" 표시용 (#35).
@@ -1147,7 +1178,30 @@ public final class BackgroundIndexer {
         /// and after the write, so cancelled or switched work cannot keep publishing.
         commit: @Sendable @escaping (KnowledgeSidecar, Set<String>?) async -> Bool
     ) async {
-        guard gateAllows(deep: deep) else { return }
+        // 게이트 차단은 조용히 return하지 않고 이유를 남긴다 (#35).
+        func gateOrReport(_ deepFlag: Bool) -> Bool {
+            let state = gateStateProvider?() ?? (
+                thermalState: ProcessInfo.processInfo.thermalState,
+                lowPowerModeEnabled: ProcessInfo.processInfo.isLowPowerModeEnabled
+            )
+            if gateAllows(
+                deep: deepFlag,
+                thermalState: state.thermalState,
+                lowPowerModeEnabled: state.lowPowerModeEnabled)
+            {
+                return true
+            }
+            if let reason = gateBlockReason(
+                deep: deepFlag,
+                thermalState: state.thermalState,
+                lowPowerModeEnabled: state.lowPowerModeEnabled),
+                let onBlocked
+            {
+                onBlocked(reason)
+            }
+            return false
+        }
+        guard gateOrReport(deep) else { return }
 
         let outline = DocumentOutline.parse(body)
         guard !outline.scenes.isEmpty else { return }
@@ -1180,19 +1234,6 @@ public final class BackgroundIndexer {
             progress(dirtyDone, max(dirtyTotal, 1))
         }
         reportProgress()
-        // 게이트 차단은 조용히 return하지 않고 이유를 남긴다 (#35).
-        func gateOrReport(_ deepFlag: Bool) -> Bool {
-            if gateAllows(deep: deepFlag) { return true }
-            if let reason = gateBlockReason(
-                deep: deepFlag,
-                thermalState: ProcessInfo.processInfo.thermalState,
-                lowPowerModeEnabled: ProcessInfo.processInfo.isLowPowerModeEnabled),
-                let onBlocked
-            {
-                onBlocked(reason)
-            }
-            return false
-        }
         // 대화 귀속 (PLAN §7·§6.4) — 결정적·LLM 없음이라 패스마다 재계산.
         // 사이드카에 저장하지 않는 파생 — 스냅샷에만 실린다.
         let utterances = DialogueAttribution.utterances(in: body, cards: characters)

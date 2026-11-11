@@ -397,7 +397,15 @@ struct WorkspaceSurface: View {
                 WorkspacePouchAction(id: "purlory.workspace.autocomplete", label: completion.settings.autocompleteEnabled ? "자동완성 켜짐" : "자동완성 꺼짐", symbol: "sparkles", selected: { completion.settings.autocompleteEnabled }, enabled: { !completion.isManagingModel }) {
                     completion.setAutocompleteEnabled(!completion.settings.autocompleteEnabled)
                 },
-                WorkspacePouchAction(id: "purlory.workspace.settings", label: "설정", symbol: "gearshape") { openSettings() }
+                WorkspacePouchAction(id: "purlory.workspace.diagnostics", label: "문장 진단 상태", symbol: "text.magnifyingglass") { diagnosticsVisible = true },
+                WorkspacePouchAction(id: "purlory.workspace.settings", label: "설정", symbol: "gearshape") { openSettings() },
+                pouchTool(.context, id: "purlory.workspace.context", label: "제안에 쓰인 내용", symbol: "text.alignleft"),
+                WorkspacePouchAction(id: "purlory.workspace.source-search", label: "원문 검색", symbol: "doc.text.magnifyingglass") {
+                    spatial.openSearch()
+                },
+                WorkspacePouchAction(id: "purlory.workspace.source-inspection", label: "원문 확인·질문", symbol: "text.bubble") {
+                    SourceSearchPanel.present(session: projectSession, requests: editorRequests)
+                }
             ] + WorkspaceModePresentation.options(for: activeWritingMode).map { option in
                 WorkspacePouchAction(id: "purlory.workspace.mode.\(option.mode.rawValue)", label: option.label, symbol: option.mode == .write ? "pencil" : "map",
                     selected: { projectSession.workspaceMode == option.mode }) {

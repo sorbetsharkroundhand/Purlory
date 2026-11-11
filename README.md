@@ -147,26 +147,24 @@ Existing foundations and remaining release work are separate. The current issue 
 | Model lifecycle and Store distribution | Required release work: [#152](https://github.com/sorbetsharkroundhand/Purlory/issues/152), [#150](https://github.com/sorbetsharkroundhand/Purlory/issues/150) |
 | General/no-model, native UX and product decisions | Owner verification/decisions: [#116](https://github.com/sorbetsharkroundhand/Purlory/issues/116), [#153](https://github.com/sorbetsharkroundhand/Purlory/issues/153), [#155](https://github.com/sorbetsharkroundhand/Purlory/issues/155) |
 
-> **Reading the code:** the primary editor flow still runs through the legacy `EntryStore`
-> compatibility path while [#118](https://github.com/sorbetsharkroundhand/Purlory/issues/118)
-> completes the project-first runtime handoff. Code or hidden UI is not evidence of a shipping
-> feature. User data must remain accessible when legacy UI is retired.
+> **Reading the code:** the primary workspace runs on `ProjectSession` and `WritingProject`
+> while legacy `EntryStore` compatibility paths remain isolated for non-destructive migration.
+> Code or hidden UI alone is not evidence of a shipping release candidate; user data must
+> remain accessible when legacy UI is retired.
 
 Green unit tests or an ad-hoc developer bundle do not establish Store readiness. Signing,
 sandbox/archive checks, quality evidence and owner/manual checks must all refer to the same
 candidate under [#119](https://github.com/sorbetsharkroundhand/Purlory/issues/119).
 
-### Post-release — not first-release promises
+### Active release & intelligence scope
 
-- Map and Review breadth, including broad story projections and review dashboards.
-- LLM-generated Ask Purlory answers, Living Margin suggestion generation, and Writing Quality UI.
-- Advanced Story Intelligence ([#158](https://github.com/sorbetsharkroundhand/Purlory/issues/158)).
-- Generalized prompt-state reuse beyond the release topology
-  ([#149](https://github.com/sorbetsharkroundhand/Purlory/issues/149)), presentation/motion/state
-  consolidation ([#163](https://github.com/sorbetsharkroundhand/Purlory/issues/163)), and math-atom
-  extraction ([#165](https://github.com/sorbetsharkroundhand/Purlory/issues/165)).
-
-Existing frameworks or experiments for these capabilities do not make them first-release features.
+- Full release scope, sequence, and resumed intelligence/workspace tracks are governed by
+  [Epic #99](https://github.com/sorbetsharkroundhand/Purlory/issues/99) and
+  [Story Intelligence #158](https://github.com/sorbetsharkroundhand/Purlory/issues/158),
+  including generalized prompt-state reuse ([#149](https://github.com/sorbetsharkroundhand/Purlory/issues/149)),
+  presentation/motion/state consolidation ([#163](https://github.com/sorbetsharkroundhand/Purlory/issues/163)),
+  and math-atom extraction ([#165](https://github.com/sorbetsharkroundhand/Purlory/issues/165)).
+- Earlier deferral notes in archived plans under `docs/` are historical context only and do not override current issue contracts.
 
 ---
 
@@ -259,19 +257,27 @@ quality remain owner verification. See the [verification/support contract](docs/
 ```
 Sources/
 ├─ Purlory/                     @main application shell (thin)
-├─ PurloryCore/
-│  ├─ Project/               WritingProject, ProjectStore, ProjectSession
-│  ├─ Workspace/             shell, routing, navigator presentation
-│  ├─ Onboarding/            first run, project creation and import
-│  ├─ Editor/                TextKit editor, Ghost Completion, math, images
-│  ├─ Inference/             MLX runtime, completion, context assembly
-│  ├─ Knowledge/             story understanding, retrieval, evidence anchors
-│  ├─ Intelligence/          Living Margin
-│  ├─ WritingQuality/        provider-independent diagnostics
-│  ├─ Media/                 image references, asset lifecycle
-│  ├─ Storage/               entries, images, trash, writing position
-│  ├─ Export/                Markdown and EPUB
-│  └─ Components/            shared view components
+├─ PurloryFoundation/           shared identifiers, anchors, foundational value types
+├─ PurloryDocumentEngine/       DocumentOutline, ManuscriptVersion, ImageReference, codec
+├─ PurloryStorage/              WritingProject, ProjectStore, ProjectBackup, ProjectGitRepository
+├─ PurloryInference/            MLX runtime, CompletionEngine, PromptPrefixCache, ModelManager
+├─ PurloryIntelligence/
+│  ├─ Inference/                ContextAssembler, StyleExtractor, FolderNamer
+│  ├─ Knowledge/                story understanding, retrieval, evidence anchors, continuity
+│  └─ WritingQuality/           provider-independent diagnostics
+├─ PurloryWorkspaceUI/
+│  ├─ Project/                  ProjectSession, migration, recovery UI
+│  ├─ Workspace/                shell, routing, navigator, version & command actions
+│  ├─ Onboarding/               first run, project creation and import
+│  ├─ Editor/                   TextKit editor, Ghost Completion, math, images
+│  ├─ Knowledge/                BackgroundIndexer, continuity judge controller
+│  ├─ Intelligence/             Living Margin
+│  ├─ WritingQuality/           workspace diagnostics binding
+│  ├─ Media/                    image failure placeholders, AssetJanitor
+│  ├─ Storage/                  legacy entries, images, trash, writing position
+│  ├─ Export/                   Markdown and EPUB exporters
+│  └─ Components/               shared view components
+├─ PurloryCore/                 umbrella re-export module
 └─ PurloryBench/                quality and latency benchmark CLI
 
 Tests/

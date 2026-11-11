@@ -294,11 +294,23 @@ public actor CompletionEngine {
     private let promptCache = PromptCacheBox()
 
     private let memoryPolicy: ModelMemoryPolicy
+    private var testTokenCounter: TokenCounter?
     public init(memoryPolicy: ModelMemoryPolicy = .current) {
-        self.memoryPolicy = memoryPolicy; self.modelLifetime = ModelLifetimeCoordinator()
+        self.memoryPolicy = memoryPolicy
+        self.modelLifetime = ModelLifetimeCoordinator()
     }
-    init(memoryPolicy: ModelMemoryPolicy, modelLifetime: ModelLifetimeCoordinator) {
-        self.memoryPolicy = memoryPolicy; self.modelLifetime = modelLifetime
+    public init(memoryPolicy: ModelMemoryPolicy = .current, tokenCounter: TokenCounter?) {
+        self.memoryPolicy = memoryPolicy
+        self.modelLifetime = ModelLifetimeCoordinator()
+        self.testTokenCounter = tokenCounter
+    }
+    init(memoryPolicy: ModelMemoryPolicy, modelLifetime: ModelLifetimeCoordinator, tokenCounter: TokenCounter? = nil) {
+        self.memoryPolicy = memoryPolicy
+        self.modelLifetime = modelLifetime
+        self.testTokenCounter = tokenCounter
+    }
+    package func _testSetTokenCounter(_ counter: TokenCounter?) {
+        testTokenCounter = counter
     }
     /// Drain every operation before retiring model identity and its KV context.
     public func unload() async throws {
@@ -354,10 +366,30 @@ public actor CompletionEngine {
         pinnedPrefix: String? = nil,
         onLoadProgress: (@Sendable (Double) -> Void)? = nil
     ) async throws -> Completion {
-        if case .continuation(let text) = prompt,
-            text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        {
-            return .empty
+        guard parameters.maxPromptTokens > 0 else { return .empty }
+        switch prompt {
+        case .continuation(let text):
+            if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return .empty
+            }
+        case .instruct(let system, let user):
+            if user.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return .empty
+            }
+            if let counter = testTokenCounter {
+                guard ReadyInstructionLimits.promptFits(
+                    count: counter.count(prompt), budget: parameters.maxPromptTokens)
+                else {
+                    return .empty
+                }
+            } else if container == nil {
+                let conservativeMinimumTokens = max(1, (system.count + user.count) / 8)
+                guard ReadyInstructionLimits.promptFits(
+                    count: conservativeMinimumTokens, budget: parameters.maxPromptTokens)
+                else {
+                    return .empty
+                }
+            }
         }
         let cache = promptCache
         return try await withLoadedContainer(
@@ -726,6 +758,11 @@ public actor CompletionEngine {
                     chat: chat, additionalContext: ["enable_thinking": false])
                 input = try await context.processor.prepare(input: userInput)
                 promptTokenCount = input.text.tokens.size
+                guard ReadyInstructionLimits.promptFits(
+                    count: promptTokenCount, budget: parameters.maxPromptTokens)
+                else {
+                    return .empty
+                }
                 // instruct는 챗 템플릿이 본문 뒤에도 토큰을 붙여 LCP 이득이 작다 —
                 // KV 재사용은 이어쓰기 경로만 (PLAN §12, M5 범위).
             }

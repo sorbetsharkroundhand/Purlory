@@ -11,7 +11,7 @@ final class ContinuityJudgeController: ObservableObject {
     @Published private(set) var decision: JudgeDecision?
     @Published private(set) var packet: JudgeEvidencePacket?
     private let session: ProjectSession
-    private let origin: ProjectRuntimeIdentity
+    let origin: ProjectRuntimeIdentity
     private let build: Builder
     private let generate: Generator
     private var modelAvailable: Bool
@@ -22,6 +22,12 @@ final class ContinuityJudgeController: ObservableObject {
     private var subscriptions: Set<AnyCancellable> = []
     var isRunning: Bool { status == .preparing || status == .judging }
     var canJudge: Bool { !invalidated && modelAvailable && !foregroundBusy && !policyPaused && session.runtimeIdentity == origin && session.isEditorEditable }
+    func matches(_ identity: ProjectRuntimeIdentity) -> Bool {
+        !invalidated && status != .invalidated && origin == identity
+    }
+    func noteContextChanged(to identity: ProjectRuntimeIdentity?) {
+        if identity != origin { invalidate() }
+    }
 
     init(session: ProjectSession, origin: ProjectRuntimeIdentity, modelAvailable: Bool,
          build: @escaping Builder = { try JudgeEvidencePacket.prepare(candidate: $0, document: $1) }, generate: @escaping Generator) {

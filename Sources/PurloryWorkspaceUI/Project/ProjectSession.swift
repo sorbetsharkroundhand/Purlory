@@ -98,6 +98,7 @@ public final class ProjectSession {
     /// Project-scoped presentation preferences do not belong in manuscript storage.
     var presentationPreferences: UserDefaults { defaults }
     private(set) var activationEpoch: UInt64 = 0
+    private(set) var externalSourceRevision: UInt64 = 0
 
     func document(_ id: WritingDocumentID) -> WritingDocument? {
         guard let project = activeProject, !project.trashedDocumentIDs.contains(id) else { return nil }
@@ -148,6 +149,7 @@ public final class ProjectSession {
         }
         guard !replacements.isEmpty else { return }
         for (index, body) in replacements { project.documents[index].body = body }
+        externalSourceRevision &+= 1
         publishProject(project, metadataChanged: false)
         noteDocumentChange(); markDirty()
     }
@@ -443,6 +445,7 @@ public final class ProjectSession {
         else { return }
 
         project.documents[index].body = body
+        externalSourceRevision &+= 1
         publishProject(project, metadataChanged: false)
         noteDocumentChange()
         markDirty()
@@ -472,7 +475,7 @@ public final class ProjectSession {
             }
         }
         guard changed else { return }
-        publishProject(project, metadataChanged: false)
+        publishProject(project, metadataChanged: true)
         noteDocumentChange()
         markDirty()
     }

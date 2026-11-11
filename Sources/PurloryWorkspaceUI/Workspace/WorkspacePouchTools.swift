@@ -44,7 +44,7 @@ struct WorkspacePouchTools: View {
     @State private var savingVersion = false
 
     private var editor: BlockTextView? {
-        guard let id = session.selectedDocumentID, let project = session.activeProject else { return nil }
+        guard let id = session.selectedDocumentID, let project = session.projectPresentation else { return nil }
         return requests.editor(for: .init(projectID: project.id, documentID: id))
     }
     private var isManuscriptSelected: Bool {
@@ -196,10 +196,12 @@ struct WorkspacePouchTools: View {
         .onPreferenceChange(PouchContentHeightKey.self) { model.setPouchContentHeight($0, for: model.selectedTile) }
         .onAppear { markedText = editor?.hasMarkedText() == true }
         .onReceive(NotificationCenter.default.publisher(for: NSTextView.didChangeSelectionNotification)) { _ in
-            markedText = editor?.hasMarkedText() == true
+            let next = editor?.hasMarkedText() == true
+            if markedText != next { markedText = next }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSText.didChangeNotification)) { _ in
-            markedText = editor?.hasMarkedText() == true
+            let next = editor?.hasMarkedText() == true
+            if markedText != next { markedText = next }
         }
         .accessibilityElement(children: .contain)
     }
@@ -230,7 +232,8 @@ struct WorkspacePouchTools: View {
         }
     }
     private var activeResumeBrief: ManuscriptResumeBrief? {
-        guard isManuscriptSelected, let docID = session.selectedDocumentID, let project = session.activeProject else {
+        _ = model.pouchSection
+        guard isManuscriptSelected, let docID = session.selectedDocumentID, let project = session.projectPresentation else {
             return nil
         }
         let cursor = editor.flatMap { view in

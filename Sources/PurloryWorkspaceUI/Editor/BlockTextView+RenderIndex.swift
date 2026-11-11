@@ -55,6 +55,24 @@ extension BlockTextView {
         mediaDirtyRanges = mergedMediaRanges(mediaDirtyRanges + [newRange])
     }
 
+    func writingStatistics(goal: Int = 500) -> WorkspaceWritingStatistics {
+        guard let storage = textStorage else {
+            return WorkspaceWritingStatistics(characters: 0, paragraphs: 1, goal: goal)
+        }
+        if mediaParagraphIndex?.utf16Length != storage.length {
+            _ = indexedMediaParagraphs(in: NSRange(location: 0, length: 0))
+        }
+        if let index = mediaParagraphIndex, index.utf16Length == storage.length {
+            let newlines = index.newlineCount
+            return WorkspaceWritingStatistics(
+                characters: max(0, index.utf16Length - newlines),
+                paragraphs: max(1, newlines + 1),
+                goal: goal
+            )
+        }
+        return WorkspaceWritingStatistics(text: storage.string, goal: goal)
+    }
+
     private func mediaRecords(in range: NSRange) -> [ParagraphRenderIndex.Record] {
         guard let storage = textStorage else { return [] }
         let ns = storage.string as NSString
@@ -63,8 +81,10 @@ extension BlockTextView {
             let paragraph = ns.paragraphRange(for: NSRange(location: location, length: 0))
             guard paragraph.upperBound > location else { break }
             let delimiter = storage.attribute(.purloryMathDelim, at: paragraph.location, effectiveRange: nil) as? String
+            let hasNewline = paragraph.length > 0 && ns.character(at: paragraph.upperBound - 1) == 0x0A
             records.append(.init(length: paragraph.length, block: blockInfo(in: paragraph).block,
-                                 open: delimiter == "open", close: delimiter == "close"))
+                                 open: delimiter == "open", close: delimiter == "close",
+                                 newlines: hasNewline ? 1 : 0))
             location = paragraph.upperBound
         }
         return records

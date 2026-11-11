@@ -12,7 +12,7 @@ struct ManuscriptVersionsView: View {
     @State private var versions: [ManuscriptVersion] = []
     @State private var branchState = ManuscriptBranchState(documentID: WritingDocumentID())
     @State private var comparison: ManuscriptComparison?
-    @State private var mergePreview: (branch: String, merge: ManuscriptThreeWayMerge)?
+    @State private var mergePreview: (branch: String, identity: ProjectRuntimeIdentity, sourceHeadID: UUID, merge: ManuscriptThreeWayMerge)?
     @State private var mergeResolutions: [Int: ManuscriptThreeWayMerge.Resolution] = [:]
     @State private var label = ""
     @State private var newBranchName = ""
@@ -57,6 +57,7 @@ struct ManuscriptVersionsView: View {
                     }
                     .menuStyle(.borderlessButton)
                     .fixedSize()
+                    .disabled(saving || !session.isEditorEditable)
                     .accessibilityIdentifier("purlory.versions.branch-picker")
 
                     Menu {
@@ -69,6 +70,7 @@ struct ManuscriptVersionsView: View {
                     }
                     .menuStyle(.borderlessButton)
                     .fixedSize()
+                    .disabled(saving || !session.isEditorEditable)
                     .accessibilityIdentifier("purlory.versions.merge-menu")
                 }
                 Spacer()
@@ -312,17 +314,26 @@ struct ManuscriptVersionsView: View {
         do {
             let preview = try ManuscriptVersionActions.previewMerge(from: branch, in: source)
             mergeResolutions = [:]
-            mergePreview = (branch, preview.merge)
+            mergePreview = (branch, source.identity, preview.sourceHead.id, preview.merge)
             comparison = nil; message = nil
         } catch { message = error.localizedDescription }
     }
     private func confirmMerge(from branch: String) {
         let chosen = mergeResolutions
+        let expectedIdentity = mergePreview?.identity
+        let expectedHeadID = mergePreview?.sourceHeadID
         saving = true; message = nil
         Task { @MainActor in
             defer { saving = false }
             do {
-                _ = try await ManuscriptVersionActions.applyMerge(from: branch, resolutions: chosen, session: session, requests: requests)
+                _ = try await ManuscriptVersionActions.applyMerge(
+                    from: branch,
+                    resolutions: chosen,
+                    expectedIdentity: expectedIdentity,
+                    expectedSourceHeadID: expectedHeadID,
+                    session: session,
+                    requests: requests
+                )
                 mergePreview = nil; mergeResolutions = [:]
                 message = "‘\(branch)’ 흐름을 현재 원고에 합쳤습니다."; refresh()
             } catch { message = error.localizedDescription }

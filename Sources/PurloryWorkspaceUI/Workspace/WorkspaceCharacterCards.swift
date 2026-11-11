@@ -13,7 +13,7 @@ struct WorkspaceCharacterCards: View {
         var id: UUID { card.id }
     }
     private var records: [Record] {
-        guard let project = session.activeProject else { return [] }
+        guard let project = session.projectPresentation else { return [] }
         var seen: Set<UUID> = []
         return project.documents.filter { !project.trashedDocumentIDs.contains($0.id) }.flatMap { document in
             let writer = try? WriterDocumentData.decode(project.userData[WriterDocumentData.key(for: document.id)], documentID: document.id)
@@ -30,8 +30,8 @@ struct WorkspaceCharacterCards: View {
         return VStack(spacing: 0) {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 6) {
-                    if let indexer, let snapshot = session.selectedDocumentSnapshot, snapshot.mode == .fiction {
-                        ProjectCandidateReviewList(indexer: indexer, session: session, snapshot: snapshot, theme: theme)
+                    if let indexer, session.projectPresentation?.mode == .fiction, let selectedID = session.selectedDocumentID {
+                        ProjectCandidateReviewList(indexer: indexer, session: session, documentID: selectedID, theme: theme)
                     }
                     ForEach(records) { record in
                         let card = record.card
@@ -126,7 +126,7 @@ struct WorkspaceCharacterCards: View {
                 .foregroundStyle(theme.ink2C)
                 .accessibilityIdentifier("purlory.characters.edit-sheet")
                 Spacer(minLength: 4)
-                if let indexer, session.activeProject?.mode == .fiction {
+                if let indexer, session.projectPresentation?.mode == .fiction {
                     ManualIndexButton(indexer: indexer, theme: theme)
                 }
             }
@@ -179,7 +179,7 @@ struct WorkspaceCharacterCards: View {
         }
     }
     private func reference(for record: Record) -> OriginalSourceReference? {
-        guard let project = session.activeProject, let document = project.documents.first(where: { $0.id == record.documentID }), !record.card.name.isEmpty else { return nil }
+        guard let project = session.projectPresentation, let document = project.documents.first(where: { $0.id == record.documentID }), !record.card.name.isEmpty else { return nil }
         let source = document.body as NSString, name = source.range(of: record.card.name)
         guard name.location != NSNotFound else { return nil }
         let paragraph = source.paragraphRange(for: name)
@@ -194,8 +194,19 @@ struct WorkspaceCharacterCards: View {
 struct ProjectCandidateReviewList: View {
     @Bindable var indexer: BackgroundIndexer
     @Bindable var session: ProjectSession
-    let snapshot: ProjectDocumentSnapshot
+    let documentID: WritingDocumentID
     let theme: PurloryTheme
+
+    init(indexer: BackgroundIndexer, session: ProjectSession, documentID: WritingDocumentID, theme: PurloryTheme) {
+        self.indexer = indexer
+        self.session = session
+        self.documentID = documentID
+        self.theme = theme
+    }
+
+    init(indexer: BackgroundIndexer, session: ProjectSession, snapshot: ProjectDocumentSnapshot, theme: PurloryTheme) {
+        self.init(indexer: indexer, session: session, documentID: snapshot.identity.key.documentID, theme: theme)
+    }
 
     private func candidateDetail(_ candidate: CharacterDetector.Candidate) -> String {
         var pieces = ["언급 \(candidate.mentions)회 · 씬 \(candidate.sceneCount)곳"]
@@ -207,7 +218,7 @@ struct ProjectCandidateReviewList: View {
     }
 
     var body: some View {
-        if indexer.candidatesEntryID == snapshot.identity.key.documentID.rawValue,
+        if indexer.candidatesEntryID == documentID.rawValue,
            !indexer.characterCandidates.isEmpty {
             VStack(spacing: 4) {
                 ForEach(indexer.characterCandidates, id: \.name) { candidate in
@@ -230,7 +241,8 @@ struct ProjectCandidateReviewList: View {
                         Spacer(minLength: 4)
                         if let owner = candidate.aliasOfKnown {
                             Button("별칭") {
-                                indexer.approveCandidateAsAlias(candidate, of: owner, in: session, identity: snapshot.identity)
+                                guard let identity = session.runtimeIdentity, identity.key.documentID == documentID else { return }
+                                indexer.approveCandidateAsAlias(candidate, of: owner, in: session, identity: identity)
                             }
                             .purloryUIFont(10.5, .semibold)
                             .buttonStyle(.borderedProminent)
@@ -239,7 +251,8 @@ struct ProjectCandidateReviewList: View {
                         }
                         if candidate.aliasOfKnown == nil {
                             Button("등록") {
-                                indexer.approveCandidate(candidate, in: session, identity: snapshot.identity)
+                                guard let identity = session.runtimeIdentity, identity.key.documentID == documentID else { return }
+                                indexer.approveCandidate(candidate, in: session, identity: identity)
                             }
                             .purloryUIFont(10.5, .semibold)
                             .buttonStyle(.borderedProminent)
@@ -247,14 +260,16 @@ struct ProjectCandidateReviewList: View {
                             .tint(theme.novelC)
                         } else {
                             Button("새 인물") {
-                                indexer.approveCandidate(candidate, in: session, identity: snapshot.identity)
+                                guard let identity = session.runtimeIdentity, identity.key.documentID == documentID else { return }
+                                indexer.approveCandidate(candidate, in: session, identity: identity)
                             }
                             .purloryUIFont(10.5)
                             .buttonStyle(.bordered)
                             .controlSize(.mini)
                         }
                         Button("무시") {
-                            indexer.rejectCandidate(candidate, in: session, identity: snapshot.identity)
+                            guard let identity = session.runtimeIdentity, identity.key.documentID == documentID else { return }
+                            indexer.rejectCandidate(candidate, in: session, identity: identity)
                         }
                         .purloryUIFont(10.5)
                         .buttonStyle(.bordered)

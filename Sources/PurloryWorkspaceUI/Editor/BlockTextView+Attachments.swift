@@ -180,7 +180,8 @@ extension BlockTextView {
             let para = ns.paragraphRange(for: NSRange(location: cursor, length: 0))
             if blockInfo(in: para).block == .image,
                 let attrs = Self.imageAttrs(
-                    from: paragraphContent(para).trimmingCharacters(in: .whitespaces)),
+                    from: paragraphContent(para).trimmingCharacters(in: .whitespaces),
+                    definitions: currentImageDefinitions()),
                 !isTransforming
             {
                 out += Self.spokenDescription(
@@ -506,7 +507,8 @@ extension BlockTextView {
             selectedImageLocation != caretPara.location,
             blockInfo(in: caretPara).block == .image,
             let caretAttrs = Self.imageAttrs(
-                from: paragraphContent(caretPara).trimmingCharacters(in: .whitespaces)),
+                from: paragraphContent(caretPara).trimmingCharacters(in: .whitespaces),
+                definitions: currentImageDefinitions()),
             resolvedImage(for: caretAttrs.src) != nil
                 || imageFailure(for: caretAttrs.src) != nil
         else { return }
@@ -633,7 +635,8 @@ extension BlockTextView {
         let ns = string as NSString
         let para = ns.paragraphRange(for: NSRange(location: min(loc, ns.length), length: 0))
         guard let attrs = Self.imageAttrs(
-                from: paragraphContent(para).trimmingCharacters(in: .whitespaces)),
+                from: paragraphContent(para).trimmingCharacters(in: .whitespaces),
+                definitions: currentImageDefinitions()),
             let image = resolvedImage(for: attrs.src)
         else { return false }
         let pasteboard = NSPasteboard.general
@@ -724,7 +727,8 @@ extension BlockTextView {
     /// 옮겨 참조를 고친다.
     func locateBrokenImage(_ para: NSRange) {
         guard let attrs = Self.imageAttrs(
-            from: paragraphContent(para).trimmingCharacters(in: .whitespaces))
+            from: paragraphContent(para).trimmingCharacters(in: .whitespaces),
+            definitions: currentImageDefinitions())
         else { return }
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
@@ -779,7 +783,8 @@ extension BlockTextView {
     func revealBrokenImage(_ para: NSRange) {
         guard !usesProjectAssets else { return }
         guard let attrs = Self.imageAttrs(
-            from: paragraphContent(para).trimmingCharacters(in: .whitespaces))
+            from: paragraphContent(para).trimmingCharacters(in: .whitespaces),
+            definitions: currentImageDefinitions())
         else { return }
         guard let url = PurloryImageStore.url(for: attrs.src) else { return }
         let target = FileManager.default.fileExists(atPath: url.path)
@@ -806,7 +811,8 @@ extension BlockTextView {
         guard let storage = textStorage else { return }
         let content = paragraphContent(para)
         guard var attrs = Self.imageAttrs(
-            from: content.trimmingCharacters(in: .whitespaces))
+            from: content.trimmingCharacters(in: .whitespaces),
+            definitions: currentImageDefinitions())
         else { return }
         if let a = setAlign { attrs.align = a }
         if let w = setWidth { attrs.width = w }
@@ -883,7 +889,8 @@ extension BlockTextView {
         // 지워지는 asset을 장부에 적어 둔다 — undo/redo가 끝난 뒤 참조가 없으면
         // Janitor가 정리한다. 즉시 지우지 않는 것이 redo의 전제다 (이슈 #17).
         if let attrs = Self.imageAttrs(
-            from: paragraphContent(para).trimmingCharacters(in: .whitespaces)),
+            from: paragraphContent(para).trimmingCharacters(in: .whitespaces),
+            definitions: currentImageDefinitions()),
             case .managedRelative = ImageReferenceParser.classify(attrs.src)
         {
             AssetJanitor.record(attrs.src)
@@ -904,7 +911,8 @@ extension BlockTextView {
     func presentImageToolbar(for para: NSRange, overrideWidth: Int? = nil) {
         guard imageRenders.contains(where: { $0.range.location == para.location }),
             let attrs = Self.imageAttrs(
-                from: paragraphContent(para).trimmingCharacters(in: .whitespaces)),
+                from: paragraphContent(para).trimmingCharacters(in: .whitespaces),
+                definitions: currentImageDefinitions()),
             let rect = paragraphRectInView(para)
         else { return }
 
@@ -939,7 +947,8 @@ extension BlockTextView {
     /// alt·title 편집 카드를 툴바 아래에 띄운다 — 현재 alt/title로 미리 채운다 (이슈 #14).
     func presentImageAltEditor(for para: NSRange) {
         guard let attrs = Self.imageAttrs(
-            from: paragraphContent(para).trimmingCharacters(in: .whitespaces)),
+            from: paragraphContent(para).trimmingCharacters(in: .whitespaces),
+            definitions: currentImageDefinitions()),
             let toolbarFrame = imageToolbarHost?.frame
         else { return }
         let view = ImageAltEditorView(
@@ -1017,7 +1026,8 @@ extension BlockTextView {
         let para = (string as NSString).paragraphRange(
             for: NSRange(location: min(loc, (string as NSString).length), length: 0))
         return Self.imageAttrs(
-            from: paragraphContent(para).trimmingCharacters(in: .whitespaces))?.width ?? 100
+            from: paragraphContent(para).trimmingCharacters(in: .whitespaces),
+            definitions: currentImageDefinitions())?.width ?? 100
     }
 
     // MARK: - 이미지 박스 오버레이 연동 (요구 A·B)
@@ -1757,7 +1767,7 @@ extension BlockTextView {
                     mathError = status.error
                 }
             case .image:
-                attrs = Self.imageAttrs(from: source)
+                attrs = Self.imageAttrs(from: source, definitions: currentImageDefinitions())
                 // 표시용 다운샘플 (#53) — 그리기엔 컬럼 폭×배율이면 충분하다.
                 // 전체 해상도 디코딩은 복사·내보내기 경로만 남는다.
                 rendered = attrs.flatMap {
@@ -1946,9 +1956,20 @@ extension BlockTextView {
         mathPreviewHost?.removeFromSuperview()
     }
 
+    func currentImageDefinitions() -> [String: ImageReferenceParser.Definition] {
+        if imageDefinitionsDirty {
+            imageDefinitions = ImageReferenceParser.collectDefinitions(in: string)
+            imageDefinitionsDirty = false
+        }
+        return imageDefinitions
+    }
+
     /// `![alt](src)` 한 줄에서 src(상대경로)만 뽑는다. 형식이 아니면 nil.
-    static func imageSource(from line: String) -> String? {
-        imageAttrs(from: line)?.src
+    static func imageSource(
+        from line: String,
+        definitions: [String: ImageReferenceParser.Definition] = [:]
+    ) -> String? {
+        imageAttrs(from: line, definitions: definitions)?.src
     }
 
     /// `![](src){width=NN align=X}` 한 줄에서 소스·너비·정렬을 파싱한다. 형식이 아니면 nil.
@@ -1956,8 +1977,11 @@ extension BlockTextView {
     /// 결과만 쓴다. 옛 한 줄 정규식은 title·angle·괄호·reference를 놓쳤다.
     /// 원격·차단 소스는 렌더 대상에서 제외한다 (완전 로컬 원칙).
     /// 비격리 순수 파서 — 백그라운드 EPUB 내보내기가 같은 규칙을 쓴다 (#33).
-    nonisolated static func imageAttrs(from line: String) -> ImageAttrs? {
-        guard let ref = ImageReferenceParser.parse(line) else { return nil }
+    nonisolated static func imageAttrs(
+        from line: String,
+        definitions: [String: ImageReferenceParser.Definition] = [:]
+    ) -> ImageAttrs? {
+        guard let ref = ImageReferenceParser.parse(line, definitions: definitions) else { return nil }
         switch ref.destinationKind {
         case .managedRelative, .externalFile:
             break

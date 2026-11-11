@@ -127,12 +127,13 @@ public struct DocumentOutline: Equatable, Sendable {
 
         var lineStart = body.startIndex
         var utf16Pos = 0
+        var fence = MarkdownFenceTracker()
         while lineStart < body.endIndex {
             let lineEnd =
                 body[lineStart...].firstIndex(of: "\n")
                 .map { body.index(after: $0) } ?? body.endIndex
             let line = body[lineStart..<lineEnd]
-            if let (level, title) = headingLine(line) {
+            if !fence.consumeLine(line), let (level, title) = headingLine(line) {
                 closeScene(endUTF16: utf16Pos, endIndex: lineStart)
                 // 경로 갱신 — 상위 레벨은 유지, 같은/하위 레벨은 잘라내고 대체.
                 if stack.count >= level {
@@ -191,7 +192,12 @@ public struct DocumentOutline: Equatable, Sendable {
     /// 본문에 장면 구분자 줄이 있는가 — closeScene 빠른 경로의 게이트.
     /// 씬 크기는 상한(1,500) 이하라 줄 단위 스캔 비용이 미미하다.
     package static func containsSceneBreakLine(_ text: Substring) -> Bool {
-        text.split(separator: "\n").contains { isSceneBreakLine($0) }
+        var fence = MarkdownFenceTracker()
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            if fence.consumeLine(line) { continue }
+            if isSceneBreakLine(line) { return true }
+        }
+        return false
     }
 
     package static func segmentRanges(of text: Substring) -> [Range<String.Index>] {

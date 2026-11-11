@@ -307,7 +307,8 @@ package final class WritingDiagnosticsController: ObservableObject {
     }
     private var languageSupported: Bool { supportedLanguages.contains(String(language.lowercased().split(separator: "-").first ?? "")) }
     private func invalidateWork() {
-        epoch &+= 1; workTask?.cancel(); workTask = nil; state.coverage.pending.removeAll()
+        epoch &+= 1; workTask?.cancel(); workTask = nil
+        if !state.coverage.pending.isEmpty { state.coverage.pending.removeAll() }
         cancelReport()
     }
     private func policyChanged() { invalidateWork(); schedule() }
@@ -470,18 +471,24 @@ package final class WritingDiagnosticsController: ObservableObject {
     }
 
     private func refreshState() {
-        state.coverage.isComplete = !awaitingCommit && state.coverage.dirty.isEmpty && state.coverage.pending.isEmpty
-            && state.coverage.unsupported.isEmpty && !resultBudgetExhausted && profileReadable && languageSupported
-        if policyPaused { state.status = .paused; state.availability = .pausedPolicy; state.coverage.isComplete = false }
-        else if !profileReadable { state.status = .unavailable; state.availability = .unavailableProfile; state.coverage.isComplete = false }
-        else if !languageSupported { state.status = .unavailable; state.availability = .unsupportedLanguage; state.coverage.isComplete = false }
-        else if engine.configurationRevision.isEmpty { state.status = .unavailable; state.availability = .unavailableProvider; state.coverage.isComplete = false }
-        else if workTask != nil { state.status = .checking; state.availability = .available }
-        else if [.unavailableResource, .unavailableProvider, .unsupportedInput].contains(state.availability) {
-            state.status = state.findings.isEmpty ? .unavailable : .partial
+        var next = state
+        next.coverage.isComplete = !awaitingCommit && next.coverage.dirty.isEmpty && next.coverage.pending.isEmpty
+            && next.coverage.unsupported.isEmpty && !resultBudgetExhausted && profileReadable && languageSupported
+        if policyPaused { next.status = .paused; next.availability = .pausedPolicy; next.coverage.isComplete = false }
+        else if !profileReadable { next.status = .unavailable; next.availability = .unavailableProfile; next.coverage.isComplete = false }
+        else if !languageSupported { next.status = .unavailable; next.availability = .unsupportedLanguage; next.coverage.isComplete = false }
+        else if engine.configurationRevision.isEmpty { next.status = .unavailable; next.availability = .unavailableProvider; next.coverage.isComplete = false }
+        else if workTask != nil { next.status = .checking; next.availability = .available }
+        else if [.unavailableResource, .unavailableProvider, .unsupportedInput].contains(next.availability) {
+            next.status = next.findings.isEmpty ? .unavailable : .partial
         } else {
-            state.availability = .available
-            state.status = state.coverage.isComplete ? .idle : .partial
+            next.availability = .available
+            next.status = next.coverage.isComplete ? .idle : .partial
+        }
+        if state.status != next.status || state.availability != next.availability
+            || state.coverage.isComplete != next.coverage.isComplete
+        {
+            state = next
         }
     }
     private static func context(of window: WritingAnalysisWindow) -> WritingDiagnosticRange {

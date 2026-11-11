@@ -41,10 +41,20 @@ extension ProjectStore {
             let archive = try manifest.legacySource.map { try verified($0, in: manifest.id) }
             recovered.id = WritingProjectID()
             if let title { recovered.title = title }
-            guard !files.fileExists(at: try rootURL(recovered.id.rawValue.uuidString)) else {
+            let targetRoot = try rootURL(recovered.id.rawValue.uuidString)
+            guard !files.fileExists(at: targetRoot) else {
                 throw ProjectStoreError.projectAlreadyExists
             }
             try saveUnlocked(recovered, importedAssets: assets, source: archive)
+            let sourceRoot = try rootURL(manifest.id.rawValue.uuidString)
+            if try ProjectGitRepository.restoreForBackup(
+                from: sourceRoot,
+                to: targetRoot,
+                project: &recovered,
+                files: files
+            ) {
+                try saveUnlocked(recovered)
+            }
             return try loadUnlocked(id: recovered.id)
         }
     }

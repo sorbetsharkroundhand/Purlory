@@ -42,14 +42,21 @@ final class WritingDiagnosticsDecorationLayer {
         resolvedRanges[key] = range
     }
 
-    func set(_ ranges: [NSRange], revision: UInt64, identity: ProjectRuntimeIdentity?) {
-        self.revision = revision; self.identity = identity
-        self.ranges.removeAll(keepingCapacity: true)
+    @discardableResult
+    func set(_ ranges: [NSRange], revision: UInt64, identity: ProjectRuntimeIdentity?) -> Bool {
+        var normalized: [NSRange] = []
+        normalized.reserveCapacity(ranges.count)
         for range in ranges.sorted(by: { $0.location < $1.location }) {
-            if let last = self.ranges.last, last.upperBound >= range.location {
-                self.ranges[self.ranges.count - 1].length = max(last.upperBound, range.upperBound) - last.location
-            } else { self.ranges.append(range) }
+            if let last = normalized.last, last.upperBound >= range.location {
+                normalized[normalized.count - 1].length = max(last.upperBound, range.upperBound) - last.location
+            } else { normalized.append(range) }
         }
+        let changed = self.ranges != normalized
+            || (!normalized.isEmpty && (self.revision != revision || self.identity != identity))
+        self.revision = revision
+        self.identity = identity
+        self.ranges = normalized
+        return changed
     }
     func visible(_ range: NSRange, revision: UInt64, identity: ProjectRuntimeIdentity?, marked: NSRange?) -> [NSRange] {
         lastQueryVisits = 0
@@ -106,8 +113,9 @@ extension BlockTextView {
                 ranges.append(native.nsRange)
             }
         }
-        writingDecorations.set(ranges, revision: revision, identity: identity)
-        needsDisplay = true
+        if writingDecorations.set(ranges, revision: revision, identity: identity) {
+            needsDisplay = true
+        }
     }
     func writingDecorationRanges(visible: NSRange) -> [NSRange] {
         guard !isWritingDiagnosticsSuppressedByWorkspace else { return [] }

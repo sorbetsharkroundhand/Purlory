@@ -8,20 +8,26 @@ public struct DocumentSource: Sendable, Equatable {
     private final class Node: DocumentRopeNode, Sendable {
         let text: String
         let textLength: Int
+        let textNewlines: Int
         let priority: UInt64
         let left: Node?, right: Node?
-        let count: Int, length: Int
+        let count: Int, length: Int, newlines: Int
         init(_ text: String, priority: UInt64, left: Node? = nil, right: Node? = nil) {
             self.text = text; textLength = text.utf16.count; self.priority = priority
+            var nl = 0
+            for unit in text.utf16 where unit == 0x000A { nl += 1 }
+            textNewlines = nl
             self.left = left; self.right = right
             count = 1 + (left?.count ?? 0) + (right?.count ?? 0)
             length = textLength + (left?.length ?? 0) + (right?.length ?? 0)
+            newlines = nl + (left?.newlines ?? 0) + (right?.newlines ?? 0)
         }
         private init(copying node: Node, left: Node?, right: Node?) {
-            text = node.text; textLength = node.textLength; priority = node.priority
+            text = node.text; textLength = node.textLength; textNewlines = node.textNewlines; priority = node.priority
             self.left = left; self.right = right
             count = 1 + (left?.count ?? 0) + (right?.count ?? 0)
             length = textLength + (left?.length ?? 0) + (right?.length ?? 0)
+            newlines = textNewlines + (left?.newlines ?? 0) + (right?.newlines ?? 0)
         }
         func copy(left: Node?, right: Node?) -> Node { Node(copying: self, left: left, right: right) }
     }
@@ -61,6 +67,7 @@ public struct DocumentSource: Sendable, Equatable {
     public var string: String { storage.string }
     package var materializationCount: Int { storage.materializationCount }
     package var chunkCount: Int { storage.root?.count ?? 0 }
+    package var newlineCount: Int { storage.root?.newlines ?? 0 }
 
     public init(_ text: String) {
         var random: UInt64 = 0x7075726c6f727973, visits = 0
@@ -95,6 +102,46 @@ public struct DocumentSource: Sendable, Equatable {
         }
         collect(storage.root, base: 0)
         return result.joined()
+    }
+
+    package func containsNonWhitespace() -> Bool {
+        func check(_ node: Node?) -> Bool {
+            guard let node else { return false }
+            if check(node.left) { return true }
+            if node.text.unicodeScalars.contains(where: { !CharacterSet.whitespacesAndNewlines.contains($0) }) {
+                return true
+            }
+            return check(node.right)
+        }
+        return check(storage.root)
+    }
+
+    package func clampedSlice(in range: NSRange) -> String {
+        guard utf16Length > 0 else { return "" }
+        var start = max(0, min(range.location, utf16Length))
+        var end = max(start, min(range.upperBound, utf16Length))
+        if start > 0 && start < utf16Length, isTrailingSurrogate(at: start) {
+            start -= 1
+        }
+        if end > start && end < utf16Length, isTrailingSurrogate(at: end) {
+            end += 1
+        }
+        return (try? substring(in: NSRange(location: start, length: end - start))) ?? ""
+    }
+
+    private func isTrailingSurrogate(at offset: Int) -> Bool {
+        var next = storage.root, point = offset
+        while let node = next {
+            let left = node.left?.length ?? 0
+            if point < left { next = node.left }
+            else if point >= left + node.textLength { point -= left + node.textLength; next = node.right }
+            else {
+                let relative = point - left
+                return relative >= 0 && relative < node.textLength
+                    && (0xDC00...0xDFFF).contains((node.text as NSString).character(at: relative))
+            }
+        }
+        return false
     }
 
     public func replacing(_ range: NSRange, with text: String) throws -> DocumentSource {

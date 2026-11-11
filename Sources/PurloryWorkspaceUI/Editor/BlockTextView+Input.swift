@@ -154,7 +154,14 @@ extension BlockTextView {
         let sel = selectedRange()
         guard sel.length == 0 else { return }
         let ns = string as NSString
+        guard sel.location > 0, sel.location <= ns.length else { return }
+        let lastChar = ns.character(at: sel.location - 1)
+        // 인라인 마커(`$`, `*`, `~`, `=`, `` ` ``)나 링크 닫기(`)`)로 끝나는 입력만 검사한다.
+        guard lastChar == 0x24 || lastChar == 0x2A || lastChar == 0x7E
+            || lastChar == 0x3D || lastChar == 0x60 || lastChar == 0x29
+        else { return }
         let para = ns.paragraphRange(for: sel)
+        guard sel.location > para.location else { return }
         let info = blockInfo(in: para)
         guard ![PurloryBlock.code, .math, .divider, .image].contains(info.block) else { return }
         let text = paragraphContent(para)
@@ -220,6 +227,12 @@ extension BlockTextView {
         guard sel.length == 0 else { return }
         let ns = string as NSString
         let para = ns.paragraphRange(for: sel)
+        guard para.length > 0 else { return }
+        let first = ns.character(at: para.location)
+        // 블록 마커 시작 후보(`[`, `>`, `` ` ``, `$`, `-`, `#`, `*`, `0`~`9`)가 아니면 문단 복사·정규식을 건너뛴다.
+        guard first == 0x5B || first == 0x3E || first == 0x60 || first == 0x24
+            || first == 0x2D || first == 0x23 || first == 0x2A || (0x30...0x39).contains(first)
+        else { return }
         let info = blockInfo(in: para)
         let text = paragraphContent(para)
 
@@ -540,7 +553,8 @@ extension BlockTextView {
         let ns = string as NSString
         let para = ns.paragraphRange(for: NSRange(location: min(loc, ns.length), length: 0))
         return Self.imageAttrs(
-            from: paragraphContent(para).trimmingCharacters(in: .whitespaces))?.width ?? 100
+            from: paragraphContent(para).trimmingCharacters(in: .whitespaces),
+            definitions: currentImageDefinitions())?.width ?? 100
     }
 
     /// 이미지 문단을 이웃 문단과 맞바꿔 위(offset -1)·아래(+1)로 옮긴다 —
@@ -1029,42 +1043,304 @@ extension BlockTextView {
     @objc func purloryToggleSourceMode(_ sender: Any?) { setSourceMode(!isSourceMode) }
 
     /// 마크다운 원문 모드 전환 (⌘/) — 현재 문서를 직렬화한 뒤 원문/블록 뷰로 다시 로드한다.
+    /// Undo 스택에서 모드 전환 전후의 NSAttributedString 좌표계가 어긋나지 않도록
+    /// 전환 자체를 원자적 Undo 액션으로 기록한다 (H1).
     public func setSourceMode(_ enabled: Bool) {
-        guard !hasMarkedText(), isSourceMode != enabled else { return }
+        guard !hasMarkedText(), isSourceMode != enabled, let storage = textStorage else { return }
+        breakUndoCoalescing()
+        let previousSnapshot = NSAttributedString(attributedString: storage)
+        let previousMode = isSourceMode
+        let previousSelection = selectedRange()
+        let scrollOrigin = enclosingScrollView?.contentView.bounds.origin
         let markdown = serialize()
         load(markdown: markdown, sourceMode: enabled)
+        if let scrollOrigin, let scrollView = enclosingScrollView {
+            scrollView.contentView.scroll(to: scrollOrigin)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+        }
+        let afterSnapshot = NSAttributedString(attributedString: storage)
+        let afterSelection = selectedRange()
+        registerModeTransitionUndo(
+            fromSnapshot: afterSnapshot,
+            fromMode: enabled,
+            fromSelection: afterSelection,
+            toSnapshot: previousSnapshot,
+            toMode: previousMode,
+            toSelection: previousSelection
+        )
         didChangeText()
     }
 
-    /// 현재 커서 문단을 위(-1) 또는 아래(+1) 문단과 맞바꾼다 (⌥↑ / ⌥↓).
-    public func moveCurrentParagraph(direction: Int) {
-        guard !hasMarkedText() else { return }
-        let raw = serialize()
-        var lines = raw.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        guard lines.count > 1 else { return }
-        let ns = string as NSString
-        let caret = min(selectedRange().location, ns.length)
-        var currentLineIndex = 0
-        if caret > 0 {
-            let prefix = ns.substring(to: caret)
-            currentLineIndex = prefix.utf16.filter { $0 == 0x0A }.count
+    private func registerModeTransitionUndo(
+        fromSnapshot: NSAttributedString,
+        fromMode: Bool,
+        fromSelection: NSRange,
+        toSnapshot: NSAttributedString,
+        toMode: Bool,
+        toSelection: NSRange
+    ) {
+        guard let undoManager else { return }
+        let needsExplicitGroup = !undoManager.isUndoing && !undoManager.isRedoing && undoManager.groupingLevel == 0 && !undoManager.groupsByEvent
+        if needsExplicitGroup { undoManager.beginUndoGrouping() }
+        undoManager.registerUndo(withTarget: self) { target in
+            target.applyModeTransitionSnapshot(
+                toSnapshot,
+                sourceMode: toMode,
+                selection: toSelection,
+                inverseSnapshot: fromSnapshot,
+                inverseMode: fromMode,
+                inverseSelection: fromSelection
+            )
         }
-        guard currentLineIndex >= 0, currentLineIndex < lines.count else { return }
-        let targetIndex = currentLineIndex + direction
-        guard targetIndex >= 0, targetIndex < lines.count else { return }
-        lines.swapAt(currentLineIndex, targetIndex)
-        let updated = lines.joined(separator: "\n")
-        load(markdown: updated)
-        let newNS = string as NSString
-        var targetLoc = 0
-        var lineIdx = 0
-        while lineIdx < targetIndex && targetLoc < newNS.length {
-            let para = newNS.paragraphRange(for: NSRange(location: targetLoc, length: 0))
-            targetLoc = para.upperBound
-            lineIdx += 1
+        undoManager.setActionName("원문 모드 전환")
+        if needsExplicitGroup { undoManager.endUndoGrouping() }
+    }
+
+    private func applyModeTransitionSnapshot(
+        _ snapshot: NSAttributedString,
+        sourceMode: Bool,
+        selection: NSRange,
+        inverseSnapshot: NSAttributedString,
+        inverseMode: Bool,
+        inverseSelection: NSRange
+    ) {
+        guard let storage = textStorage else { return }
+        let scrollOrigin = enclosingScrollView?.contentView.bounds.origin
+        registerModeTransitionUndo(
+            fromSnapshot: snapshot,
+            fromMode: sourceMode,
+            fromSelection: selection,
+            toSnapshot: inverseSnapshot,
+            toMode: inverseMode,
+            toSelection: inverseSelection
+        )
+        isSourceMode = sourceMode
+        lastTypingKeyTimestamp = nil
+        invalidateMediaIndex()
+        isTransforming = true
+        storage.setAttributedString(snapshot)
+        let clampedLoc = min(max(0, selection.location), storage.length)
+        let clampedLen = min(max(0, selection.length), storage.length - clampedLoc)
+        setSelectedRange(NSRange(location: clampedLoc, length: clampedLen))
+        syncTypingAttributes()
+        isTransforming = false
+        selectedImageLocation = nil
+        hideImageToolbar()
+        hideSelectionToolbar()
+        syncMarkerFlag()
+        syncInlineMathFlag()
+        invalidateSerialCache()
+        if !sourceMode { refreshRenderedBlocks(forceRender: true) }
+        if let scrollOrigin, let scrollView = enclosingScrollView {
+            scrollView.contentView.scroll(to: scrollOrigin)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
         }
-        setSelectedRange(NSRange(location: min(targetLoc, newNS.length), length: 0))
         didChangeText()
+        refreshActiveLineHighlight()
+        needsDisplay = true
+    }
+
+    /// 현재 커서 문단(또는 코드·다중 행 수식 블록 단위)을 위(-1) 또는 아래(+1) 블록과 맞바꾼다 (⌥↑ / ⌥↓).
+    /// 원문↔네이티브 블록 단위를 보존하고 단일 Undo/Redo 및 스크롤·모드·선택을 유지한다 (F04).
+    public func moveCurrentParagraph(direction: Int) {
+        guard !hasMarkedText(), direction != 0, let storage = textStorage else { return }
+        let ns = storage.string as NSString
+        guard ns.length > 0 else { return }
+        let units = movableUnitRanges()
+        guard units.count > 1 else { return }
+
+        let caret = min(max(0, selectedRange().location), ns.length)
+        guard let currentIndex = units.firstIndex(where: { unit in
+            if unit.length == 0 {
+                return caret == unit.location
+            }
+            if unit.location <= caret && caret < unit.upperBound {
+                return true
+            }
+            return unit == units.last && caret == unit.upperBound
+        }) else { return }
+
+        let step = direction < 0 ? -1 : 1
+        let targetIndex = currentIndex + step
+        guard targetIndex >= 0, targetIndex < units.count else { return }
+
+        let firstIndex = min(currentIndex, targetIndex)
+        let secondIndex = max(currentIndex, targetIndex)
+        let unitA = units[firstIndex]
+        let unitB = units[secondIndex]
+        let combinedRange = NSRange(location: unitA.location, length: unitA.length + unitB.length)
+
+        let attrA = NSMutableAttributedString(attributedString: storage.attributedSubstring(from: unitA))
+        let attrB = NSMutableAttributedString(attributedString: storage.attributedSubstring(from: unitB))
+
+        let aEndsNL = attrA.string.hasSuffix("\n")
+        let bEndsNL = attrB.string.hasSuffix("\n")
+        if aEndsNL && !bEndsNL {
+            let aNLAttrs = attrA.attributes(at: attrA.length - 1, effectiveRange: nil)
+            let bNLAttrs = attrB.length > 0
+                ? attrB.attributes(at: attrB.length - 1, effectiveRange: nil)
+                : aNLAttrs
+            attrA.deleteCharacters(in: NSRange(location: attrA.length - 1, length: 1))
+            attrB.append(NSAttributedString(string: "\n", attributes: bNLAttrs))
+        }
+
+        let swapped = NSMutableAttributedString()
+        swapped.append(attrB)
+        swapped.append(attrA)
+
+        let currentUnit = units[currentIndex]
+        let relativeOffset = max(0, caret - currentUnit.location)
+        let movedAttr = step < 0 ? attrB : attrA
+        let movedContentLength = movedAttr.string.hasSuffix("\n")
+            ? max(0, movedAttr.length - 1)
+            : movedAttr.length
+        let clampedOffset = min(relativeOffset, movedContentLength)
+        let newUnitStart = step < 0 ? unitA.location : (unitA.location + attrB.length)
+        let newSelection = NSRange(location: newUnitStart + clampedOffset, length: 0)
+
+        breakUndoCoalescing()
+        applyAttributedParagraphSwap(
+            in: combinedRange,
+            with: swapped,
+            selectionAfter: newSelection
+        )
+    }
+
+    private func applyAttributedParagraphSwap(
+        in range: NSRange,
+        with replacement: NSAttributedString,
+        selectionAfter: NSRange
+    ) {
+        guard let storage = textStorage else { return }
+        let previousSnapshot = NSAttributedString(attributedString: storage.attributedSubstring(from: range))
+        let previousSelection = selectedRange()
+        let scrollOrigin = enclosingScrollView?.contentView.bounds.origin
+
+        if let undoManager {
+            let needsExplicitGroup = !undoManager.isUndoing && !undoManager.isRedoing && undoManager.groupingLevel == 0 && !undoManager.groupsByEvent
+            if needsExplicitGroup { undoManager.beginUndoGrouping() }
+            undoManager.registerUndo(withTarget: self) { target in
+                target.applyAttributedParagraphSwap(
+                    in: NSRange(location: range.location, length: replacement.length),
+                    with: previousSnapshot,
+                    selectionAfter: previousSelection
+                )
+            }
+            undoManager.setActionName("문단 이동")
+            if needsExplicitGroup { undoManager.endUndoGrouping() }
+        }
+
+        clearImageSelection()
+        isTransforming = true
+        storage.replaceCharacters(in: range, with: replacement)
+        isTransforming = false
+
+        invalidateMediaIndex()
+        invalidateSerialCache()
+        let clampedLoc = min(max(0, selectionAfter.location), storage.length)
+        setSelectedRange(NSRange(location: clampedLoc, length: 0))
+        syncTypingAttributes()
+        if !isSourceMode {
+            refreshRenderedBlocks()
+        }
+        if let scrollOrigin, let scrollView = enclosingScrollView {
+            scrollView.contentView.scroll(to: scrollOrigin)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+        }
+        didChangeText()
+        refreshActiveLineHighlight()
+        needsDisplay = true
+    }
+
+    /// 문단 이동 명령이 다루는 원자적 블록 범위 목록을 반환한다.
+    /// - 블록 모드: 연속 `.code` 블록(동일 언어)과 다중 행 `.math` 그룹(`open`..`close`)을 각각 단일 단위로 묶는다.
+    /// - 원문 모드: 코드 펜스(```` ``` ```` / `~~~`) 블록과 다중 행 `$$` 블록을 단일 단위로 묶는다.
+    private func movableUnitRanges() -> [NSRange] {
+        guard let storage = textStorage else { return [] }
+        let ns = storage.string as NSString
+        guard ns.length > 0 else { return [] }
+        var units: [NSRange] = []
+
+        if isSourceMode {
+            var location = 0
+            while location < ns.length {
+                let para = ns.paragraphRange(for: NSRange(location: location, length: 0))
+                let line = paragraphContent(para)
+                var fence = MarkdownFenceTracker()
+                if fence.consumeLine(line), fence.isInsideFence {
+                    var end = para.upperBound
+                    while end < ns.length, fence.isInsideFence {
+                        let nextPara = ns.paragraphRange(for: NSRange(location: end, length: 0))
+                        _ = fence.consumeLine(paragraphContent(nextPara))
+                        end = nextPara.upperBound
+                    }
+                    units.append(NSRange(location: para.location, length: end - para.location))
+                    location = end
+                    continue
+                }
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                let opensMultilineMath = trimmed == "$$"
+                    || (line.hasPrefix("$$") && !line.dropFirst(2).hasPrefix("$") && !(line.hasSuffix("$$") && line.count >= 4))
+                if opensMultilineMath {
+                    var end = para.upperBound
+                    while end < ns.length {
+                        let nextPara = ns.paragraphRange(for: NSRange(location: end, length: 0))
+                        let nextTrimmed = paragraphContent(nextPara).trimmingCharacters(in: .whitespaces)
+                        end = nextPara.upperBound
+                        if nextTrimmed == "$$" || (nextTrimmed.hasSuffix("$$") && nextTrimmed.count >= 2) {
+                            break
+                        }
+                    }
+                    units.append(NSRange(location: para.location, length: end - para.location))
+                    location = end
+                    continue
+                }
+                units.append(para)
+                location = para.upperBound
+            }
+        } else {
+            var location = 0
+            while location < ns.length {
+                let para = ns.paragraphRange(for: NSRange(location: location, length: 0))
+                let info = storageBlockInfo(in: para)
+                if info.block == .code {
+                    var end = para.upperBound
+                    while end < ns.length {
+                        let nextPara = ns.paragraphRange(for: NSRange(location: end, length: 0))
+                        let nextInfo = storageBlockInfo(in: nextPara)
+                        guard nextInfo.block == .code, nextInfo.codeLang == info.codeLang else { break }
+                        end = nextPara.upperBound
+                    }
+                    units.append(NSRange(location: para.location, length: end - para.location))
+                    location = end
+                    continue
+                }
+                let delim = storage.attribute(.purloryMathDelim, at: para.location, effectiveRange: nil) as? String
+                if info.block == .math, delim == "open" {
+                    var end = para.upperBound
+                    while end < ns.length {
+                        let nextPara = ns.paragraphRange(for: NSRange(location: end, length: 0))
+                        let nextInfo = storageBlockInfo(in: nextPara)
+                        guard nextInfo.block == .math else { break }
+                        let nextDelim = storage.attribute(.purloryMathDelim, at: nextPara.location, effectiveRange: nil) as? String
+                        end = nextPara.upperBound
+                        if nextDelim == "close" || nextDelim == nil {
+                            break
+                        }
+                    }
+                    units.append(NSRange(location: para.location, length: end - para.location))
+                    location = end
+                    continue
+                }
+                units.append(para)
+                location = para.upperBound
+            }
+        }
+
+        if ns.length > 0, ns.character(at: ns.length - 1) == 0x0A {
+            units.append(NSRange(location: ns.length, length: 0))
+        }
+        return units
     }
     func performFind(_ action: NSTextFinder.Action) {
         if workspaceFind?(action) == true { return }
@@ -1104,6 +1380,9 @@ extension BlockTextView: @preconcurrency NSTextStorageDelegate {
         let end = min(ns.length, editedRange.upperBound + 1)
         guard end > start else { return }
         let touched = ns.substring(with: NSRange(location: start, length: end - start))
+        if touched.contains("]:") || touched.contains("[") {
+            imageDefinitionsDirty = true
+        }
         // 인라인 수식 후보 — `$` 하나만으로도 보수적으로 켠다 (이슈 #20).
         // 접기 검사(collapseRawInlineMath)가 실측으로 다시 끝낸다.
         if touched.contains("$") {

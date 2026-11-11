@@ -9,12 +9,27 @@ struct WorkspaceWritingStatistics {
     let paragraphs: Int
     let readingSeconds: Int
     let progress: Double
+
+    init(characters: Int, paragraphs: Int, goal: Int = 500) {
+        let safeChars = max(0, characters)
+        self.characters = safeChars
+        self.paragraphs = max(1, paragraphs)
+        self.readingSeconds = max(10, Int((Double(safeChars) / 450 * 60).rounded()))
+        self.progress = min(1, Double(safeChars) / Double(goal > 0 ? goal : 500))
+    }
+
+    init(source: DocumentSource, goal: Int = 500) {
+        let newlines = source.newlineCount
+        self.init(
+            characters: max(0, source.utf16Length - newlines),
+            paragraphs: max(1, newlines + 1),
+            goal: goal
+        )
+    }
+
     init(text: String, goal: Int = 500) {
         let counts = Self.counts(for: text)
-        characters = counts.characters
-        paragraphs = counts.paragraphs
-        readingSeconds = max(10, Int((Double(characters) / 450 * 60).rounded()))
-        progress = min(1, Double(characters) / Double(goal > 0 ? goal : 500))
+        self.init(characters: counts.characters, paragraphs: counts.paragraphs, goal: goal)
     }
 
     private static func counts(for text: String) -> (characters: Int, paragraphs: Int) {

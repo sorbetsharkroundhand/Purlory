@@ -247,6 +247,9 @@ final class BlockTextView: NSTextView {
 
     var lastTypingKeyTimestamp: TimeInterval?
     var isHandlingSoftReturn = false
+    /// 문서 내 `[label]: dest` 이미지 참조 정의 캐시 — 로드 시 수집하고 필요 시 갱신한다 (F19).
+    var imageDefinitions: [String: ImageReferenceParser.Definition] = [:]
+    var imageDefinitionsDirty = false
 
     // MARK: 이미지 삽입 (붙여넣기 · 드롭 · 파일 선택)
 

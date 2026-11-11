@@ -231,7 +231,7 @@ final class ProjectEditorBridge {
         editor.writingCommitDidChange = { [weak self] in self?.receive($0) }
         editor.writingCompositionDidChange = { [weak self] in self?.compositionDidChange?($0) }
         editor.writingRuntimeIdentityProvider = { [weak self] in self?.currentSnapshot?()?.identity }
-        if let snapshot = currentSnapshot() { noteSnapshot(snapshot) }
+        if (changed || pendingSnapshot == nil), let snapshot = currentSnapshot() { noteSnapshot(snapshot) }
     }
     func disconnect(_ editor: BlockTextView) {
         guard self.editor === editor else { return }
@@ -330,7 +330,8 @@ struct EditorPane: View {
     }
 
     private var editor: some View {
-        Group {
+        let _ = projectSession.externalSourceRevision
+        return Group {
             if let identity = editorIdentity {
                 PurloryBlockEditor(
                     source: sourceBinding,
@@ -427,7 +428,7 @@ struct EditorPane: View {
     }
 
     private var displayedDocument: WritingDocument? {
-        (documentID ?? projectSession.selectedDocumentID).flatMap { projectSession.document($0) }
+        (documentID ?? projectSession.selectedDocumentID).flatMap { projectSession.documentPresentation($0) }
     }
 
     private var editorIdentity: EditorDocumentIdentity? {

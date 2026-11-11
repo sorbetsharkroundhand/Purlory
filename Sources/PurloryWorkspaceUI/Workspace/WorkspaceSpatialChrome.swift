@@ -6,7 +6,7 @@ struct WorkspaceSpatialChrome: View {
     let theme: PurloryTheme
     var body: some View {
         WorkspaceWindowChrome(projectTitle: session.projectPresentation?.title ?? "프로젝트", theme: theme,
-            trailingInset: 60, documentTitle: session.selectedDocument?.title,
+            trailingInset: 60, documentTitle: session.selectedDocumentPresentation?.title,
             openCount: model.layout.openDocuments.count, glass: true)
             .contextMenu {
                 if let mode = session.projectPresentation?.mode {

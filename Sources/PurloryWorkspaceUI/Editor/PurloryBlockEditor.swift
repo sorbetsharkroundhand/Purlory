@@ -298,17 +298,17 @@ public struct PurloryBlockEditor: NSViewRepresentable {
         }
         // 저널이 바뀌면(전환) 직전 저널의 커서 위치를 저장해 둔다 — 아직 옛 내용을
         // 보여주는 지금 selectedRange가 옛 커서다 (M6).
-        if documentChanged, let previous = context.coordinator.loadedDocumentIdentity {
-            if textView.hasMarkedText() { textView.unmarkText() }
-            context.coordinator.selectionByDocument[previous] = textView.selectedRange()
-            // 재실행 후 복원용 영속 기록 (#36) — IME 조합 중은 스냅샷이 nil을
-            // 돌려 저장하지 않는다 (완료 조건 4).
-            if let snapshot = textView.writingPositionSnapshot() {
-                context.coordinator.recordPosition(
-                    snapshot, body: textView.string, for: previous,
-                    in: positionStore)
+            if documentChanged, let previous = context.coordinator.loadedDocumentIdentity {
+                if textView.hasMarkedText() { textView.unmarkText() }
+                context.coordinator.selectionByDocument[previous] = textView.selectedRange()
+                // 재실행 후 복원용 영속 기록 (#36) — IME 조합 중은 스냅샷이 nil을
+                // 돌려 저장하지 않는다 (완료 조건 4).
+                if let snapshot = textView.writingPositionSnapshot() {
+                    context.coordinator.recordPosition(
+                        snapshot, for: previous,
+                        in: positionStore)
+                }
             }
-        }
         // 외부(저널 전환·로드)에서 본문이 바뀐 경우에만 다시 파싱한다.
         // serialize() 재비교가 아니라 "마지막 동기화 텍스트"와 비교한다 —
         // 직렬화 왕복의 미세한 비대칭이 렌더 → reload → publish → 렌더의
@@ -535,7 +535,7 @@ public struct PurloryBlockEditor: NSViewRepresentable {
             // record가 무시한다. 전환 없이 ⌘Q해도 마지막 자리가 남는 이유다.
             if let snapshot = textView.writingPositionSnapshot() {
                 recordPosition(
-                    snapshot, body: textView.string,
+                    snapshot,
                     for: loadedDocumentIdentity ?? parent.documentIdentity,
                     in: parent.positionStore)
             }
@@ -552,7 +552,6 @@ public struct PurloryBlockEditor: NSViewRepresentable {
             _ snapshot: (
                 location: Int, selectionLength: Int, before: String, after: String, marked: Bool
             ),
-            body: String,
             for identity: EditorDocumentIdentity,
             in store: WritingPositionStore
         ) {
@@ -561,7 +560,8 @@ public struct PurloryBlockEditor: NSViewRepresentable {
                 store.record(
                     location: snapshot.location,
                     selectionLength: snapshot.selectionLength,
-                    body: body,
+                    before: snapshot.before,
+                    after: snapshot.after,
                     for: key,
                     marked: snapshot.marked)
             case .legacy(let id):
@@ -629,7 +629,7 @@ public struct PurloryBlockEditor: NSViewRepresentable {
                 let snapshot = textView.writingPositionSnapshot(), !snapshot.marked
             {
                 recordPosition(
-                    snapshot, body: textView.string, for: identity,
+                    snapshot, for: identity,
                     in: parent.positionStore)
             }
             guard parent.isActiveEditor, let controller = parent.controller,

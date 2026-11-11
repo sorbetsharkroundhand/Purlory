@@ -107,6 +107,9 @@ extension BlockTextView {
         // 줄에 열리고 $$로 닫힌다. 그룹 안에선 다른 블록 파싱(#·-·>)을 전부 건너뛴다:
         // 행렬·cases 내용 줄이 헤딩·목록으로 오독되면 원문 구조가 깨진다 (이슈 #20).
         var inMathGroup = false
+        let definitions = ImageReferenceParser.collectDefinitions(in: markdown)
+        imageDefinitions = definitions
+        imageDefinitionsDirty = false
         let lines = markdown.components(separatedBy: "\n")
         if sourceMode {
             result.append(NSAttributedString(string: markdown, attributes: styleAttributes(for: .p, checked: false)))
@@ -188,11 +191,10 @@ extension BlockTextView {
                     block = .math
                     mathDelim = "open"
                     inMathGroup = true
-                } else if line.hasPrefix("!["), line.range(
-                    of: #"^!\[[^\]]*\]\([^)\s]+\)(?:\{[^}]*\})?$"#,
-                    options: .regularExpression) != nil {
-                    // 한 줄 전체가 이미지 마크다운 — 원문(![](src){…})을 소스로 보관하고
-                    // 커서가 밖이면 렌더 이미지로 덮어 그린다 (수식과 같은 방식).
+                } else if line.trimmingCharacters(in: .whitespaces).hasPrefix("!["),
+                    Self.imageAttrs(from: line, definitions: definitions) != nil {
+                    // 한 줄 전체가 이미지 마크다운(인라인·angle·title·참조형·{옵션} 포함) —
+                    // 원문을 소스로 보관하고 커서가 밖이면 렌더 이미지로 덮어 그린다 (F19).
                     block = .image
                 }
                 var attrs = styleAttributes(for: block, checked: checked, indent: indent)
@@ -285,6 +287,9 @@ extension BlockTextView {
     func writingPositionSnapshot() -> (
         location: Int, selectionLength: Int, before: String, after: String, marked: Bool
     )? {
+        if hasMarkedText() {
+            return (max(0, selectedRange().location), max(0, selectedRange().length), "", "", true)
+        }
         let ns = string as NSString
         let location = max(0, min(selectedRange().location, ns.length))
         let selectionLength = max(0, min(selectedRange().length, ns.length - location))
@@ -296,7 +301,7 @@ extension BlockTextView {
             selectionLength,
             ns.substring(with: NSRange(location: beforeStart, length: location - beforeStart)),
             ns.substring(with: NSRange(location: selectionEnd, length: afterEnd - selectionEnd)),
-            hasMarkedText()
+            false
         )
     }
 
@@ -773,22 +778,28 @@ extension BlockTextView {
            clamped.length == 0 || ns.rangeOfCharacter(from: .newlines, options: [], range: clamped).location == NSNotFound {
             let para = ns.paragraphRange(
                 for: NSRange(location: min(editedRange.location, max(0, ns.length)), length: 0))
-            // 문단 내부(경계 1글자 안쪽) 편집은 이웃 문단 프로젝션 캡처에 영향을 주지 않는다.
-            let strictlyInsideParagraph = clamped.location > para.location
+            // 기존 문단(편집 전 길이 > 0) 내 편집이고 프로젝션 더티도 같은 문단 안이면 단일 문단 빠른 경로를 탄다.
+            let withinParagraph = clamped.location >= para.location
                 && (clamped.upperBound < para.upperBound || para.upperBound == ns.length)
-            if para.location == serialFastStart, strictlyInsideParagraph {
-                serialFastDirty = true
-                return
-            }
-            if !serialFastDirty, strictlyInsideParagraph, ns.length > 0,
+                && para.length > delta
+            let captureWithinParagraph = writingProjectionCapture.currentDirtyRange.map {
+                $0.location >= para.location && $0.upperBound <= para.upperBound
+            } ?? true
+            if withinParagraph, captureWithinParagraph, ns.length > 0,
                let index = mediaParagraphIndex, index.utf16Length == ns.length,
-               index.paragraphCount == serialLines.count,
-               let rank = index.paragraphRank(forParagraphAt: para.location),
-               rank < serialLines.count {
-                serialFastIndex = rank
-                serialFastStart = para.location
-                serialFastDirty = true
-                return
+               index.paragraphCount == serialLines.count {
+                if para.location == serialFastStart, let fastIdx = serialFastIndex, fastIdx < serialLines.count {
+                    serialFastDirty = true
+                    return
+                }
+                if !serialFastDirty,
+                   let rank = index.paragraphRank(forParagraphAt: para.location),
+                   rank < serialLines.count {
+                    serialFastIndex = rank
+                    serialFastStart = para.location
+                    serialFastDirty = true
+                    return
+                }
             }
         }
 

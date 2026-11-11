@@ -344,9 +344,11 @@ extension BlockTextView {
 
     /// 제안 표시/숨김 — 컨트롤러의 conversationSuggestionDidChange가 부른다.
     func showConversationPrompt(_ range: NSRange?) {
-        conversationPromptRange = range.flatMap {
+        let valid = range.flatMap {
             $0.location + $0.length <= (string as NSString).length ? $0 : nil
         }
+        guard conversationPromptRange != valid else { return }
+        conversationPromptRange = valid
         layoutConversationPrompt()
         needsDisplay = true
     }
@@ -757,21 +759,22 @@ extension BlockTextView {
         let ns = string as NSString
         guard selectedRange().location != NSNotFound else { return nil }
         let caret = min(selectedRange().location, ns.length)
-        layoutManager.ensureLayout(for: textContainer)
+        let caretPara = ns.paragraphRange(for: NSRange(location: caret, length: 0))
+        layoutManager.ensureLayout(forCharacterRange: caretPara)
         let origin = textContainerOrigin
-        let extra = layoutManager.extraLineFragmentRect
         // Empty documents and final hard/soft breaks have no following glyph.
         // Use the new line's font metrics, never the previous line's baseline.
         let endsWithBreak = ns.length == 0
             || [0x0A, 0x0D, 0x2028, 0x2029].contains(Int(ns.character(at: ns.length - 1)))
-        if caret == ns.length,
-           endsWithBreak,
-           extra.height > 0,
-           layoutManager.extraLineFragmentTextContainer === textContainer {
-            return CaretLineGeometry(
-                fragment: extra.offsetBy(dx: origin.x, dy: origin.y),
-                baselineY: origin.y + extra.minY
-                    + layoutManager.defaultBaselineOffset(for: caretLineFont()))
+        if caret == ns.length, endsWithBreak {
+            layoutManager.ensureLayout(for: textContainer)
+            let extra = layoutManager.extraLineFragmentRect
+            if extra.height > 0, layoutManager.extraLineFragmentTextContainer === textContainer {
+                return CaretLineGeometry(
+                    fragment: extra.offsetBy(dx: origin.x, dy: origin.y),
+                    baselineY: origin.y + extra.minY
+                        + layoutManager.defaultBaselineOffset(for: caretLineFont()))
+            }
         }
         guard ns.length > 0 else { return nil }
         var glyphIndex = layoutManager.glyphIndexForCharacter(at: min(caret, ns.length - 1))

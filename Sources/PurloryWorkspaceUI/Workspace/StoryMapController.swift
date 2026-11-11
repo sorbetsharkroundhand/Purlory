@@ -93,16 +93,18 @@ final class StoryMapController: ObservableObject {
     }
     private func invalidate() {
         epoch &+= 1; workTask?.cancel(); workTask = nil
-        prepared = nil; visibleRows = []; currentSceneID = nil
+        if prepared != nil { prepared = nil }
+        if !visibleRows.isEmpty { visibleRows = [] }
+        if currentSceneID != nil { currentSceneID = nil }
     }
     private func owns(_ input: StoryMapInput) -> Bool {
         session?.runtimeIdentity == input.document.identity && (!requiresMapMode || session?.workspaceMode == .map) && session?.isEditorEditable == true
     }
     private func schedule() {
         invalidate()
-        guard let input, owns(input) else { status = .idle; return }
-        guard !foregroundBusy, !policyPaused, !energyPaused else { status = .paused; return }
-        status = .preparing
+        guard let input, owns(input) else { if status != .idle { status = .idle }; return }
+        guard !foregroundBusy, !policyPaused, !energyPaused else { if status != .paused { status = .paused }; return }
+        if status != .preparing { status = .preparing }
         let owned = epoch, sleep = sleep, project = project
         workTask = Task { [weak self] in
             do {
@@ -112,14 +114,14 @@ final class StoryMapController: ObservableObject {
                 guard let self, !Task.isCancelled, self.epoch == owned, self.owns(input) else { return }
                 self.prepared = .init(identity: input.document.identity, projection: projection)
                 self.visibleRows = projection.filtered(threadID: self.threadID, characterID: self.characterID)
-                self.workTask = nil; self.status = .idle
+                self.workTask = nil; if self.status != .idle { self.status = .idle }
             } catch {
                 guard let self, !Task.isCancelled, self.epoch == owned else { return }
-                self.workTask = nil; self.status = .unavailable
+                self.workTask = nil; if self.status != .unavailable { self.status = .unavailable }
             }
         }
     }
-    func stop() { input = nil; invalidate(); status = .idle }
+    func stop() { input = nil; invalidate(); if status != .idle { status = .idle } }
     func waitForCurrentWork() async { while let task = workTask { await task.value } }
 }
 
