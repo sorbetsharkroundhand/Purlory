@@ -368,7 +368,8 @@ public final class CompletionController {
     public struct KeystrokeStats: Equatable, Sendable {
         /// 에디터 핸들러(직렬화·저장 전달)만의 p95 (ms).
         public var handlerP95: Double = 0
-        /// 키 입력 → 메인 스레드가 한가해질 때까지 (SwiftUI 갱신·레이아웃 포함) p95.
+        /// Coordinator 핸들러 진입부터 뒤이은 메인 큐 콜백까지의 p95.
+        /// 큐 대기 시간이나 실제 화면 표시 시점을 단독으로 나타내지는 않는다.
         public var totalP95: Double = 0
         /// 최근 표본 중 최대 총 시간 (ms) — 간헐 스파이크 포착용.
         public var totalMax: Double = 0
@@ -378,9 +379,11 @@ public final class CompletionController {
     public private(set) var keystrokeStats = KeystrokeStats()
     @ObservationIgnored private var handlerSamples: [Double] = []
     @ObservationIgnored private var totalSamples: [Double] = []
+    @ObservationIgnored private var samplesSinceKeystrokePublication = 0
 
     /// 에디터가 키 입력 하나를 처리할 때마다 호출 (BlockTextView Coordinator).
     /// 발행은 20표본마다 — 계측이 제 관찰 비용을 만들지 않게 한다.
+    /// `totalMs`는 Coordinator 핸들러 진입부터 뒤이은 메인 큐 콜백까지의 시간이다.
     public func noteKeystroke(handlerMs: Double, totalMs: Double) {
         handlerSamples.append(handlerMs)
         totalSamples.append(totalMs)
@@ -388,7 +391,9 @@ public final class CompletionController {
             handlerSamples.removeFirst(handlerSamples.count - 120)
             totalSamples.removeFirst(totalSamples.count - 120)
         }
-        guard totalSamples.count % 20 == 0 else { return }
+        samplesSinceKeystrokePublication += 1
+        guard samplesSinceKeystrokePublication == 20 else { return }
+        samplesSinceKeystrokePublication = 0
         func p95(_ values: [Double]) -> Double {
             let sorted = values.sorted()
             return sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.95))]
