@@ -1091,11 +1091,7 @@ public struct ManuscriptResumeBrief: Equatable, Sendable {
         let activeHead = branchState.resolveDocumentHead(for: branchState.activeBranch, in: versions)
         let hasUnsaved: Bool
         if let activeHead {
-            if (activeHead.text as NSString).length != source.utf16Length {
-                hasUnsaved = true
-            } else {
-                hasUnsaved = !activeHead.text.utf8.elementsEqual(document.body.utf8)
-            }
+            hasUnsaved = !source.utf8Equals(activeHead.text)
         } else {
             hasUnsaved = Self.containsNonWhitespace(in: source)
         }
@@ -1113,18 +1109,7 @@ public struct ManuscriptResumeBrief: Equatable, Sendable {
         let tagPrefix = "[\(document.title)]"
         var extractedNotes: [String] = []
         for noteDoc in project.documents where noteDoc.kind == .note && !project.trashedDocumentIDs.contains(noteDoc.id) {
-            for rawLine in noteDoc.body.components(separatedBy: .newlines) {
-                var line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
-                if line.hasPrefix("- ") || line.hasPrefix("* ") {
-                    line = String(line.dropFirst(2)).trimmingCharacters(in: .whitespacesAndNewlines)
-                }
-                if line.hasPrefix(tagPrefix) {
-                    let content = String(line.dropFirst(tagPrefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !content.isEmpty {
-                        extractedNotes.append(content)
-                    }
-                }
-            }
+            extractedNotes.append(contentsOf: noteDoc.source.extractTaggedNoteLines(tagPrefix: tagPrefix))
         }
 
         return Self(

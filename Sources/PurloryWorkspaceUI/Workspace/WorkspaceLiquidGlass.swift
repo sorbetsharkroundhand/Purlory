@@ -3,17 +3,22 @@ import SwiftUI
 
 /// One glass surface spans the outer window and tile gaps; manuscripts stay opaque.
 struct WorkspaceLiquidGlass: NSViewRepresentable {
+    static let cornerRadius: CGFloat = 18
     let theme: PurloryTheme
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.purloryWorkspaceAccessibilityOptions) private var accessibilityOptions
     func makeNSView(context: Context) -> Surface { Surface() }
-    func updateNSView(_ view: Surface, context: Context) { view.configure(theme: theme, opaque: reduceTransparency) }
+    func updateNSView(_ view: Surface, context: Context) {
+        view.configure(theme: theme, opaque: reduceTransparency || accessibilityOptions.reduceTransparency)
+    }
     final class Surface: NSView {
         private var effect: NSView?
+        override var isFlipped: Bool { true }
         override init(frame: NSRect) {
             super.init(frame: frame); wantsLayer = true
             setAccessibilityIdentifier("purlory.workspace.liquid-glass"); setAccessibilityElement(false)
             if #available(macOS 26.0, *) {
-                let glass = NSGlassEffectView(); glass.style = .regular; glass.cornerRadius = 18
+                let glass = NSGlassEffectView(); glass.style = .regular; glass.cornerRadius = WorkspaceLiquidGlass.cornerRadius
                 effect = glass; addSubview(glass)
             } else {
                 let material = NSVisualEffectView(); material.material = .underWindowBackground
@@ -23,7 +28,7 @@ struct WorkspaceLiquidGlass: NSViewRepresentable {
             }
         }
         required init?(coder: NSCoder) { nil }
-        func configure(theme: PurloryTheme, opaque: Bool) {
+        func configure(theme: PurloryTheme, opaque: Bool, cornerRadius: CGFloat = WorkspaceLiquidGlass.cornerRadius) {
             let dark = (theme.editorSurface.usingColorSpace(.sRGB)?.redComponent ?? 1) < 0.5
             effect?.isHidden = opaque
             layer?.backgroundColor = opaque ? theme.workspaceSurface.cgColor : NSColor.clear.cgColor
@@ -31,6 +36,7 @@ struct WorkspaceLiquidGlass: NSViewRepresentable {
             if #available(macOS 26.0, *), let glass = effect as? NSGlassEffectView {
                 glass.style = .regular
                 glass.tintColor = tintColor
+                glass.cornerRadius = cornerRadius
             } else if let material = effect as? NSVisualEffectView {
                 material.layer?.backgroundColor = tintColor.cgColor
             }

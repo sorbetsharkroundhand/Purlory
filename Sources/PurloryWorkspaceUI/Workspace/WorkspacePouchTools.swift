@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 enum WorkspacePouchSection: String, CaseIterable {
-    case overview, format, ai, view, object
+    case overview, format, ai, view, object, note
     // Retained as command destinations; these are no longer visual tabs.
     func title(for tile: WorkspaceTileID?) -> String {
         switch self {
@@ -10,6 +10,7 @@ enum WorkspacePouchSection: String, CaseIterable {
         case .format: return "서식"
         case .ai: return "AI"
         case .view: return "환경"
+        case .note: return "빠른 메모"
         case .object:
             switch tile {
             case .characters: return "인물·작품"
@@ -71,11 +72,13 @@ struct WorkspacePouchTools: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            if model.pouchSection != .note {
             HStack(spacing: 4) {
                 panelButton(.navigator, "문서 목록", "folder")
                 panelButton(.characters, "인물·작품", "person.2")
                 panelButton(.narrative, "서사 흐름", "arrow.triangle.branch")
                 panelButton(.search, "원문 검색", "magnifyingglass")
+            }
             }
             HStack(spacing: 6) {
                 TextField("떠오른 생각이나 대사를 바로 메모…", text: $quickNote)
@@ -95,6 +98,7 @@ struct WorkspacePouchTools: View {
                (!brief.linkedNotes.isEmpty || brief.hasMultipleBranches || brief.currentSceneHeading != nil) {
                 resumeBriefCard(brief)
             }
+            if model.pouchSection != .note {
             divider
             VStack(spacing: 8) {
                 themeRow
@@ -185,6 +189,7 @@ struct WorkspacePouchTools: View {
                     .accessibilityIdentifier("purlory.workspace.pouch.collapse")
                     .background(WorkspaceAccessibilityProbe(identifier: "purlory.workspace.pouch.collapse", label: "창을 미니 오브로 접기"))
             }.buttonStyle(PouchRowButtonStyle())
+            }
         }
         .padding(.horizontal, 10).padding(.bottom, 8)
         .fixedSize(horizontal: false, vertical: true)
@@ -232,8 +237,10 @@ struct WorkspacePouchTools: View {
         }
     }
     private var activeResumeBrief: ManuscriptResumeBrief? {
-        _ = model.pouchSection
-        guard isManuscriptSelected, let docID = session.selectedDocumentID, let project = session.projectPresentation else {
+        guard model.pouchSection != nil,
+              isManuscriptSelected,
+              let docID = session.selectedDocumentID,
+              let project = session.projectPresentation else {
             return nil
         }
         let cursor = editor.flatMap { view in

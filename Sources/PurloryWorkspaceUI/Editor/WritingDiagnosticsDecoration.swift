@@ -5,9 +5,24 @@ import AppKit
 final class WritingDiagnosticsDecorationLayer {
     struct ResolutionKey: Hashable {
         let id: String
-        let stamp: WritingDiagnosticsStamp
-        let source: WritingDiagnosticRange
+        let profileRevision: UInt64
+        let providerRevision: String
+        let ruleRevision: Int
+        let windowDigest: String
         let quote: String
+
+        init(finding: WritingDiagnosticsFinding) {
+            self.id = finding.id
+            self.profileRevision = finding.stamp.profileRevision
+            self.providerRevision = finding.stamp.providerRevision
+            self.ruleRevision = finding.stamp.ruleRevision
+            self.windowDigest = finding.stamp.windowDigest
+            self.quote = finding.evidence.quote
+        }
+    }
+    private struct CachedResolution {
+        var sourceRange: WritingDiagnosticRange
+        var nativeRange: NSRange?
     }
     private var ranges: [NSRange] = []
     private var revision: UInt64 = 0
@@ -15,8 +30,36 @@ final class WritingDiagnosticsDecorationLayer {
     private var resolvedCacheRevision: UInt64 = 0
     private var resolvedCacheIdentity: ProjectRuntimeIdentity?
     private var resolvedCacheStorageLength: Int = -1
-    private var resolvedRanges: [ResolutionKey: NSRange?] = [:]
+    private var resolvedRanges: [ResolutionKey: CachedResolution] = [:]
     private(set) var lastQueryVisits = 0
+
+    func rebase(editedRange: NSRange, delta: Int, storageLength: Int) {
+        guard resolvedCacheStorageLength >= 0,
+              resolvedCacheStorageLength + delta == storageLength else {
+            resolvedRanges.removeAll(keepingCapacity: true)
+            resolvedCacheStorageLength = -1
+            return
+        }
+        resolvedCacheStorageLength = storageLength
+        guard !resolvedRanges.isEmpty else { return }
+        let oldRange = NSRange(location: editedRange.location, length: max(0, editedRange.length - delta))
+        var next: [ResolutionKey: CachedResolution] = [:]
+        next.reserveCapacity(resolvedRanges.count)
+        for (key, var entry) in resolvedRanges {
+            guard let native = entry.nativeRange else { continue }
+            if native.upperBound < oldRange.location {
+                next[key] = entry
+            } else if native.location > oldRange.upperBound {
+                let shiftedNative = native.location + delta
+                let shiftedSource = entry.sourceRange.location + delta
+                guard shiftedNative >= 0, shiftedSource >= 0 else { continue }
+                entry.nativeRange = NSRange(location: shiftedNative, length: native.length)
+                entry.sourceRange = WritingDiagnosticRange(location: shiftedSource, length: entry.sourceRange.length)
+                next[key] = entry
+            }
+        }
+        resolvedRanges = next
+    }
 
     func prepareResolutionCache(revision: UInt64, identity: ProjectRuntimeIdentity?, storageLength: Int, validMapping: Bool) {
         guard validMapping else {
@@ -26,20 +69,21 @@ final class WritingDiagnosticsDecorationLayer {
             resolvedCacheStorageLength = -1
             return
         }
-        if resolvedCacheRevision != revision || resolvedCacheIdentity != identity || resolvedCacheStorageLength != storageLength {
+        if resolvedCacheIdentity?.key != identity?.key || resolvedCacheStorageLength != storageLength {
             resolvedRanges.removeAll(keepingCapacity: true)
-            resolvedCacheRevision = revision
-            resolvedCacheIdentity = identity
-            resolvedCacheStorageLength = storageLength
         }
+        resolvedCacheRevision = revision
+        resolvedCacheIdentity = identity
+        resolvedCacheStorageLength = storageLength
     }
 
-    func cachedResolution(for key: ResolutionKey) -> NSRange?? {
-        resolvedRanges[key]
+    func cachedResolution(for key: ResolutionKey, source: WritingDiagnosticRange) -> NSRange?? {
+        guard let entry = resolvedRanges[key], entry.sourceRange == source else { return nil }
+        return entry.nativeRange
     }
 
-    func storeResolution(_ range: NSRange?, for key: ResolutionKey) {
-        resolvedRanges[key] = range
+    func storeResolution(_ range: NSRange?, for key: ResolutionKey, source: WritingDiagnosticRange) {
+        resolvedRanges[key] = CachedResolution(sourceRange: source, nativeRange: range)
     }
 
     @discardableResult
@@ -96,20 +140,17 @@ extension BlockTextView {
                 guard finding.stamp.nativeRevision == revision, finding.stamp.runtime == identity,
                       finding.sourceRanges.count == 1, let source = finding.sourceRanges.first,
                       finding.evidence.documentID == identity?.key.documentID, finding.evidence.utf16Hint == source.location else { continue }
-                let key = WritingDiagnosticsDecorationLayer.ResolutionKey(
-                    id: finding.id, stamp: finding.stamp, source: source, quote: finding.evidence.quote)
-                if let cached = writingDecorations.cachedResolution(for: key) {
+                let key = WritingDiagnosticsDecorationLayer.ResolutionKey(finding: finding)
+                if let cached = writingDecorations.cachedResolution(for: key, source: source) {
                     if let resolved = cached { ranges.append(resolved) }
                     continue
                 }
                 writingDecorationLookupCount += 1
-                guard let native = nativeRange(forSource: source, revision: revision),
-                      let mapped = writingProjectionCapture.nativeLookup?(source),
-                      mapped.original.utf16.elementsEqual(finding.evidence.quote.utf16) else {
-                    writingDecorations.storeResolution(nil, for: key)
+                guard let native = nativeRange(forSource: source, revision: revision, expectedQuote: finding.evidence.quote) else {
+                    writingDecorations.storeResolution(nil, for: key, source: source)
                     continue
                 }
-                writingDecorations.storeResolution(native.nsRange, for: key)
+                writingDecorations.storeResolution(native.nsRange, for: key, source: source)
                 ranges.append(native.nsRange)
             }
         }

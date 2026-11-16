@@ -72,7 +72,7 @@ struct WorkspaceEntityEvent: Equatable {
     var navigatorDrop: SpatialNavigatorDrop? { willSet { if navigatorDrop != newValue { presentationWillChange.send() } } }
     var resonatingTerm: String? { willSet { if resonatingTerm != newValue { presentationWillChange.send() } } }
     var activeParagraph = ""
-    var entityTerms: [String] = []
+    var entityTerms: [String] = [] { willSet { if entityTerms != newValue { presentationWillChange.send() } } }
     var entityEvents: [WorkspaceEntityEvent] = [] { willSet { presentationWillChange.send(); _entityEventsEvents.send(newValue) } }
     private(set) var toast: String? { willSet { presentationWillChange.send() } }
     @ObservationIgnored private var toastTask: Task<Void, Never>?

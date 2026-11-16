@@ -189,7 +189,6 @@ struct WorkspaceSurface: View {
             if spatial.layout.isSingleManuscript { theme.editorSurfaceC }
             else { WorkspaceLiquidGlass(theme: theme) }
         }
-        .overlay { WorkspacePaperGrain().allowsHitTesting(false).accessibilityHidden(true) }
         .overlay(alignment: .bottom) {
             if let toast = spatial.toast {
                 HStack(spacing: 8) {
@@ -365,6 +364,26 @@ struct WorkspaceSurface: View {
                 },
                 WorkspacePouchAction(id: "purlory.workspace.object-settings", label: "집필 도구 열기", symbol: "slider.horizontal.3", selected: { spatial.pouchSection != nil }) {
                     spatial.openPouchTools()
+                }
+            ], indexActions: [
+                WorkspacePouchAction(id: "purlory.workspace.pouch.index.note", label: "빠른 메모", symbol: "square.and.pencil",
+                    selected: { spatial.pouchSection == .note }, enabled: { projectSession.isEditorEditable }) {
+                    editorRequests.pouch?.showTools(.note)
+                },
+                pouchTool(.navigator, id: "purlory.workspace.pouch.index.documents", label: "문서 목록", symbol: "folder"),
+                pouchTool(.characters, id: "purlory.workspace.pouch.index.characters", label: "인물·작품", symbol: "person.2"),
+                WorkspacePouchAction(id: "purlory.workspace.pouch.index.search", label: "원문 검색", symbol: "magnifyingglass",
+                    selected: { spatial.layout.contains(.search) }, enabled: { projectSession.isEditorEditable }) {
+                    editorRequests.pouch?.dismissTools(); spatial.openSearch()
+                },
+                WorkspacePouchAction(id: "purlory.workspace.pouch.index.history", label: "원고 기록 · 저장과 비교", symbol: "clock.arrow.circlepath",
+                    enabled: { projectSession.isEditorEditable && projectSession.selectedDocumentPresentation?.kind == .manuscript
+                        && editorRequests.nativeEditor?.hasMarkedText() != true }) {
+                    editorRequests.pouch?.dismissTools(); versionsVisible = true
+                },
+                WorkspacePouchAction(id: "purlory.workspace.pouch.index.environment", label: "집필 환경", symbol: "slider.horizontal.3",
+                    selected: { spatial.pouchSection != nil && spatial.pouchSection != .note }) {
+                    editorRequests.pouch?.showTools(.overview)
                 }
             ], extraActions: [
                 WorkspacePouchAction(id: "purlory.workspace.pouch.collapse", label: "창을 주머니로 접기", symbol: "arrow.down.right.and.arrow.up.left") {

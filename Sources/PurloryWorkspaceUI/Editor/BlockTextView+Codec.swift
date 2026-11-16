@@ -368,6 +368,35 @@ extension BlockTextView {
             return min(max(0, requestedOffset ?? selectedRange().location), ns.length)
         }
         let ns = string as NSString, caret = min(max(0, requestedOffset ?? selectedRange().location), ns.length)
+        if ns.length > 0, mediaParagraphIndex?.utf16Length != ns.length {
+            _ = indexedMediaParagraphs(in: NSRange(location: 0, length: 0))
+        }
+        if ns.length > 0,
+           serialLinesValid,
+           serialDirtyRange == nil,
+           !serialFastDirty,
+           serialSyncedLength == ns.length,
+           let index = mediaParagraphIndex,
+           index.utf16Length == ns.length,
+           index.paragraphCount == serialLines.count,
+           markdownCodec.source.chunkCount == serialLines.count {
+            let para = ns.paragraphRange(for: NSRange(location: min(caret, ns.length - 1), length: 0))
+            if let rank = index.paragraphRank(forParagraphAt: para.location),
+               rank >= 0, rank < serialLines.count {
+                let line = serialLines[rank]
+                let wasCode = rank > 0 && serialLines[rank - 1].isCode
+                let beforeFence = markdownCodec.source.chunkOffset(at: rank) + (rank > 0 ? 1 : 0)
+                let fenceDelta = line.isCode != wasCode
+                    ? (line.isCode ? 4 + (line.codeLang?.utf16.count ?? 0) : 4)
+                    : 0
+                return paragraphSourceCursorOffset(
+                    in: para,
+                    caret: caret,
+                    baseSourceOffset: beforeFence + fenceDelta,
+                    serializedLineText: line.text
+                )
+            }
+        }
         var nativeOffset = 0, sourceOffset = 0, inCode = false
         repeat {
             let para = ns.paragraphRange(for: NSRange(location: nativeOffset, length: 0))
@@ -377,56 +406,69 @@ extension BlockTextView {
                 inCode = line.isCode
             }
             if caret < NSMaxRange(para) || NSMaxRange(para) == ns.length {
-                let info = storageBlockInfo(in: para), plain = paragraphContent(para)
-                let length = min(max(0, caret - para.location), plain.utf16.count)
-                let indentCount = info.indent * 2
-                let blockPrefix: Int
-                switch info.block {
-                case .h1: blockPrefix = 2
-                case .h2: blockPrefix = 3
-                case .h3: blockPrefix = 4
-                case .h4: blockPrefix = 5
-                case .h5: blockPrefix = 6
-                case .h6: blockPrefix = 7
-                case .quote: blockPrefix = (info.indent + 1) * 2
-                case .bullet: blockPrefix = indentCount + 2
-                case .number: blockPrefix = indentCount + (info.marker ?? "1.").utf16.count + 1
-                case .todo: blockPrefix = indentCount + 6
-                case .math:
-                    let content = serializedContent(of: para, block: info.block)
-                    blockPrefix = line.text == content ? 0 : 2
-                default:
-                    if let align = alignValue(at: para), info.block == .p {
-                        blockPrefix = "<p align=\"\(align)\">".utf16.count
-                    } else { blockPrefix = 0 }
-                }
-                guard let storage = textStorage,
-                    ![PurloryBlock.code, .math, .divider, .image].contains(info.block) else {
-                    return sourceOffset + blockPrefix + length
-                }
-                var prefixLength = InlineMarkdown.serialize(storage,
-                    in: NSRange(location: para.location, length: length)).utf16.count
-                if length > 0 {
-                    var run = NSRange()
-                    let attrs = storage.attributes(at: para.location + length - 1, effectiveRange: &run)
-                    if NSMaxRange(run) > para.location + length,
-                        !(attrs[.attachment] is MathAtomAttachment) {
-                        if attrs[.purloryCode] as? Bool == true { prefixLength -= 1 }
-                        else {
-                            prefixLength -= (attrs[.purloryBold] as? Bool == true ? 2 : 0)
-                                + (attrs[.purloryItalic] as? Bool == true ? 1 : 0)
-                                + (attrs[.purloryStrikethrough] as? Bool == true ? 2 : 0)
-                                + (attrs[.purloryHighlight] as? Bool == true ? 2 : 0)
-                        }
-                        if attrs[.purloryColor] != nil || attrs[.purloryFontSize] != nil { prefixLength -= 7 }
-                    }
-                }
-                return sourceOffset + blockPrefix + max(0, prefixLength)
+                return paragraphSourceCursorOffset(
+                    in: para,
+                    caret: caret,
+                    baseSourceOffset: sourceOffset,
+                    serializedLineText: line.text
+                )
             }
             sourceOffset += line.text.utf16.count + 1
             nativeOffset = NSMaxRange(para)
         } while nativeOffset < ns.length
         return sourceOffset
+    }
+
+    private func paragraphSourceCursorOffset(
+        in para: NSRange,
+        caret: Int,
+        baseSourceOffset: Int,
+        serializedLineText: String
+    ) -> Int {
+        let info = storageBlockInfo(in: para), plain = paragraphContent(para)
+        let length = min(max(0, caret - para.location), plain.utf16.count)
+        let indentCount = info.indent * 2
+        let blockPrefix: Int
+        switch info.block {
+        case .h1: blockPrefix = 2
+        case .h2: blockPrefix = 3
+        case .h3: blockPrefix = 4
+        case .h4: blockPrefix = 5
+        case .h5: blockPrefix = 6
+        case .h6: blockPrefix = 7
+        case .quote: blockPrefix = (info.indent + 1) * 2
+        case .bullet: blockPrefix = indentCount + 2
+        case .number: blockPrefix = indentCount + (info.marker ?? "1.").utf16.count + 1
+        case .todo: blockPrefix = indentCount + 6
+        case .math:
+            blockPrefix = serializedLineText == plain ? 0 : 2
+        default:
+            if let align = alignValue(at: para), info.block == .p {
+                blockPrefix = "<p align=\"\(align)\">".utf16.count
+            } else { blockPrefix = 0 }
+        }
+        guard let storage = textStorage,
+            ![PurloryBlock.code, .math, .divider, .image].contains(info.block) else {
+            return baseSourceOffset + blockPrefix + length
+        }
+        var prefixLength = InlineMarkdown.serialize(storage,
+            in: NSRange(location: para.location, length: length)).utf16.count
+        if length > 0 {
+            var run = NSRange()
+            let attrs = storage.attributes(at: para.location + length - 1, effectiveRange: &run)
+            if NSMaxRange(run) > para.location + length,
+                !(attrs[.attachment] is MathAtomAttachment) {
+                if attrs[.purloryCode] as? Bool == true { prefixLength -= 1 }
+                else {
+                    prefixLength -= (attrs[.purloryBold] as? Bool == true ? 2 : 0)
+                        + (attrs[.purloryItalic] as? Bool == true ? 1 : 0)
+                        + (attrs[.purloryStrikethrough] as? Bool == true ? 2 : 0)
+                        + (attrs[.purloryHighlight] as? Bool == true ? 2 : 0)
+                }
+                if attrs[.purloryColor] != nil || attrs[.purloryFontSize] != nil { prefixLength -= 7 }
+            }
+        }
+        return baseSourceOffset + blockPrefix + max(0, prefixLength)
     }
 
     /// Read-only original coverage for complete native paragraphs. Unlike a caret,
@@ -436,6 +478,46 @@ extension BlockTextView {
         let ns = string as NSString
         guard range.location >= 0, range.length > 0, range.location <= ns.length,
               range.length <= ns.length - range.location else { return nil }
+        if ns.length > 0, mediaParagraphIndex?.utf16Length != ns.length {
+            _ = indexedMediaParagraphs(in: NSRange(location: 0, length: 0))
+        }
+        if ns.length > 0,
+           serialLinesValid,
+           serialDirtyRange == nil,
+           !serialFastDirty,
+           serialSyncedLength == ns.length,
+           let index = mediaParagraphIndex,
+           index.utf16Length == ns.length,
+           index.paragraphCount == serialLines.count,
+           markdownCodec.source.chunkCount == serialLines.count {
+            guard let startRank = index.paragraphRank(forParagraphAt: range.location),
+                  let endRank = index.paragraphRank(forParagraphAt: range.upperBound),
+                  startRank >= 0, endRank > startRank, endRank <= serialLines.count else {
+                return nil
+            }
+            let firstLine = serialLines[startRank]
+            let wasCodeBeforeFirst = startRank > 0 && serialLines[startRank - 1].isCode
+            let beforeFirstFence = markdownCodec.source.chunkOffset(at: startRank) + (startRank > 0 ? 1 : 0)
+            let firstFenceDelta = firstLine.isCode != wasCodeBeforeFirst
+                ? (firstLine.isCode ? 4 + (firstLine.codeLang?.utf16.count ?? 0) : 4)
+                : 0
+            let start = firstLine.isCode && !wasCodeBeforeFirst ? beforeFirstFence : (beforeFirstFence + firstFenceDelta)
+
+            let lastRank = endRank - 1
+            let lastLine = serialLines[lastRank]
+            let wasCodeBeforeLast = lastRank > 0 && serialLines[lastRank - 1].isCode
+            let beforeLastFence = markdownCodec.source.chunkOffset(at: lastRank) + (lastRank > 0 ? 1 : 0)
+            let lastFenceDelta = lastLine.isCode != wasCodeBeforeLast
+                ? (lastLine.isCode ? 4 + (lastLine.codeLang?.utf16.count ?? 0) : 4)
+                : 0
+            var endSource = beforeLastFence + lastFenceDelta + lastLine.text.utf16.count
+                + (ns.character(at: range.upperBound - 1) == 10 ? 1 : 0)
+            if lastLine.isCode {
+                let nextCode = endRank < serialLines.count ? serialLines[endRank].isCode : false
+                if !nextCode { endSource += 4 }
+            }
+            return NSRange(location: start, length: endSource - start)
+        }
         var native = 0, source = 0, inCode = false, start: Int?
         while native < ns.length {
             let paragraph = ns.paragraphRange(for: NSRange(location: native, length: 0))
@@ -527,7 +609,9 @@ extension BlockTextView {
             line.text.makeContiguousUTF8()
             lines.append(line)
             // 커서가 든 문단을 빠른 경로의 시작점으로 삼는다(타이핑은 여기서 이어진다).
-            if fastIdx == nil, para.lowerBound <= selLoc, selLoc <= para.upperBound {
+            let endsWithNewline = para.length > 0 && ns.character(at: para.upperBound - 1) == 0x0A
+            if fastIdx == nil, para.lowerBound <= selLoc,
+               selLoc < para.upperBound || (!endsWithNewline && selLoc == para.upperBound) {
                 fastIdx = lines.count - 1
                 fastStart = para.location
             }
@@ -619,7 +703,9 @@ extension BlockTextView {
             var line = serializedLine(of: para)
             line.text.makeContiguousUTF8()
             updatedLines.append(line)
-            if fastIdx == nil, para.lowerBound <= selLoc, selLoc <= para.upperBound {
+            let endsWithNewline = para.length > 0 && ns.character(at: para.upperBound - 1) == 0x0A
+            if fastIdx == nil, para.lowerBound <= selLoc,
+               selLoc < para.upperBound || (!endsWithNewline && selLoc == para.upperBound) {
                 fastIdx = startRank + updatedLines.count - 1
                 fastStart = para.location
             }
@@ -761,10 +847,13 @@ extension BlockTextView {
     func updateSerialCacheState(
         editedMask: NSTextStorageEditActions, editedRange: NSRange, delta: Int
     ) {
-        let tracked = serialPendingTracked
-        let removedNewlines = serialPendingRemovedNewlines
-        serialPendingTracked = false
-        serialPendingRemovedNewlines = 0
+        let hasCharacterEdit = editedMask.contains(.editedCharacters)
+        let tracked = hasCharacterEdit ? serialPendingTracked : false
+        let removedNewlines = hasCharacterEdit ? serialPendingRemovedNewlines : 0
+        if hasCharacterEdit {
+            serialPendingTracked = false
+            serialPendingRemovedNewlines = 0
+        }
 
         guard serialLinesValid, !editedMask.isEmpty else { return }
 
@@ -772,6 +861,11 @@ extension BlockTextView {
         let clamped = NSRange(
             location: min(editedRange.location, ns.length),
             length: min(editedRange.length, max(0, ns.length - editedRange.location)))
+
+        if !hasCharacterEdit, let storage = textStorage,
+           writingProjectionCapture.hasUnchangedAuthorMetadata(storage, range: clamped) {
+            return
+        }
 
         // 단일 문단 내 문자 편집이고 기존 범위 더티가 없을 때:
         if serialDirtyRange == nil, editedMask.contains(.editedCharacters), tracked, removedNewlines == 0,

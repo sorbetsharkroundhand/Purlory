@@ -32,11 +32,14 @@ public enum EditorMetrics {
     public static let minSideInset: CGFloat = 56
 
     /// 뷰 폭에 맞는 좌우 inset — 폭이 넓어지면 여백을 키워 본문을 가운데로 모은다.
+    /// 주의: `.rounded()`로 반올림하면 창 폭이 홀수/짝수로 1px 바뀔 때마다
+    /// `width - inset * 2`가 `maxContentWidth`와 `maxContentWidth - 1` 사이를 진동해
+    /// TextKit이 매 픽셀마다 24만 자 전체 줄바꿈을 다시 계산한다. 정확한 절반값을 유지한다.
     public static func sideInset(forWidth width: CGFloat) -> CGFloat {
-        max(minSideInset, ((width - maxContentWidth) / 2).rounded())
+        max(minSideInset, (width - maxContentWidth) / 2)
     }
     static func workspaceSideInset(forWidth width: CGFloat, windowWidth: CGFloat) -> CGFloat {
-        max(windowWidth < 640 ? 28 : 48, ((width - 680) / 2).rounded())
+        max(windowWidth < 640 ? 28 : 48, (width - 680) / 2)
     }
 }
 
@@ -154,6 +157,7 @@ public struct PurloryBlockEditor: NSViewRepresentable {
         // TextKit 1 스택을 직접 조립 — 커스텀 레이아웃 매니저(블록 장식)를 쓰기 위해.
         let storage = NSTextStorage()
         let layoutManager = PurloryLayoutManager()
+        layoutManager.allowsNonContiguousLayout = true
         storage.addLayoutManager(layoutManager)
         let container = NSTextContainer(
             containerSize: NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude))
@@ -229,6 +233,7 @@ public struct PurloryBlockEditor: NSViewRepresentable {
             for: documentIdentity, body: textView.string, in: positionStore)
         {
             textView.restoreWritingPosition(persisted)
+            scrollView.initialPositionReveal = (documentIdentity, textView.selectedRange())
         }
         context.coordinator.loadedDocumentIdentity = documentIdentity
         context.coordinator.attach(to: textView)
@@ -251,8 +256,11 @@ public struct PurloryBlockEditor: NSViewRepresentable {
     public func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? BlockTextView else { return }
         let activationChanged = context.coordinator.parent.isActiveEditor != isActiveEditor
+        let documentChanged = documentIdentity != context.coordinator.loadedDocumentIdentity
         textView.setAccessibilityIdentifier(isActiveEditor ? "purlory.editor" : "purlory.editor.\(documentIdentity.documentID.rawValue.uuidString)")
-        textView.writingDocumentIdentity = documentIdentity
+        if !documentChanged {
+            textView.writingDocumentIdentity = documentIdentity
+        }
         if !isEditable, textView.hasMarkedText() {
             textView.unmarkText()
             textView.didChangeText()
@@ -261,7 +269,6 @@ public struct PurloryBlockEditor: NSViewRepresentable {
         textView.editorWindowDidChange = onEditorWindowChange
         if textView.window != nil { onEditorWindowChange?(textView) }
         configureAssets(textView)
-        let documentChanged = documentIdentity != context.coordinator.loadedDocumentIdentity
         if documentChanged {
             context.coordinator.isDocumentTransitioning = true
         } else {
@@ -785,8 +792,19 @@ public struct PurloryBlockEditor: NSViewRepresentable {
 /// 활성 줄이 대략 화면 75% 지점에 park하게 한다 — iA Writer·Ulysses의 차분한
 /// 글쓰기 존과 같은 감각. 한 화면 안에 드는 짧은 글엔 스크롤이 없어 영향이 없다.
 final class WritingScrollView: NSScrollView {
+    var initialPositionReveal: (identity: EditorDocumentIdentity, selection: NSRange)?
     var workspacePresentationEnabled = false
     var workspaceTypewriter = false
+    override func layout() {
+        super.layout()
+        guard bounds.width > 0, bounds.height > 0, window != nil,
+              let pending = initialPositionReveal, let editor = documentView as? BlockTextView,
+              editor.bounds.width > 0 else { return }
+        initialPositionReveal = nil
+        guard editor.writingDocumentIdentity == pending.identity, editor.selectedRange() == pending.selection else { return }
+        // Lazy TextKit layout cannot reveal a restored range in the zero-size makeNSView viewport.
+        editor.scrollRangeToVisible(pending.selection)
+    }
     func updateWorkspaceInsets() {
         guard workspacePresentationEnabled else { return }
         // Ordinary writing keeps the established 25% bottom breathing room.

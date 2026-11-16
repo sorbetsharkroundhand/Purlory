@@ -38,9 +38,17 @@ final class WritingEditorProjectionCapture {
     private var changes: [Change] = []
     private var bindingIdentity: ProjectRuntimeIdentity?
     private var knownIdentity: ProjectRuntimeIdentity?
+    var hasInitializedIdentity: Bool { knownIdentity != nil }
     private var bindingIsCurrent = false
     private var isBinding = false
     private var needsCanonicalLoadCompletion = false
+
+    private func resetStaleDirtyState() {
+        dirty = nil
+        oldDirty = nil
+        changes.removeAll(keepingCapacity: true)
+        mappedRevision = nil
+    }
     private weak var serializationStorage: NSAttributedString?
     var nativeLookup: ((WritingDiagnosticRange) -> WritingNativeMappedRange?)?
     var mappedRevision: UInt64?
@@ -59,6 +67,7 @@ final class WritingEditorProjectionCapture {
     var publishedProjection: WritingProjectionIndex?
 
     func rejectUnownedLoad() {
+        loadedDocumentSource = nil
         knownIdentity = nil; mappedIdentity = nil; mappedRevision = nil; nativeLookup = nil
         base = nil; boundIdentity = nil; boundRevision = nil; prepared = nil
         projectionTask?.cancel(); projectionTask = nil; deferred.removeAll(); collectionEpoch &+= 1
@@ -183,6 +192,9 @@ final class WritingEditorProjectionCapture {
         result.color = attributes[.purloryColor] as? String
         result.fontSize = attributes[.purloryFontSize] as? Double
         return result
+    }
+    func hasUnchangedAuthorMetadata(_ storage: NSAttributedString, range: NSRange) -> Bool {
+        oldDirty == nil && dirty == nil && matchesAuthorMetadata(storage, range: range)
     }
     private func matchesAuthorMetadata(_ storage: NSAttributedString, range: NSRange) -> Bool {
         guard storage.length == nativeRows.nativeLength, range.location <= storage.length,
@@ -502,8 +514,14 @@ final class WritingEditorProjectionCapture {
     }
     func didBind(source: DocumentSource, storage: NSAttributedString) {
         defer { isBinding = false }
-        guard bindingIsCurrent, let current = runtimeIdentity?(), current.key == bindingIdentity?.key else { return }
-        guard updateProjection(storage: storage, ownerChanged: current != bindingIdentity) else { return }
+        guard bindingIsCurrent, let current = runtimeIdentity?(), current.key == bindingIdentity?.key else {
+            resetStaleDirtyState()
+            return
+        }
+        guard updateProjection(storage: storage, ownerChanged: current != bindingIdentity) else {
+            resetStaleDirtyState()
+            return
+        }
         loadedDocumentSource = source; knownIdentity = current
         boundRevision = revision; boundIdentity = current
         if !deferred.isEmpty || projectionTask != nil {
@@ -517,9 +535,19 @@ final class WritingEditorProjectionCapture {
     func noteSnapshot(_ snapshot: ProjectDocumentSnapshot) {
         guard !isBinding else { return }
         guard snapshot.identity != knownIdentity else { return }
+        if knownIdentity == nil {
+            guard oldDirty == nil, dirty == nil, projectionTask == nil, deferred.isEmpty,
+                  let loadedDocumentSource, loadedDocumentSource == snapshot.source else {
+                return
+            }
+            knownIdentity = snapshot.identity
+            if boundIdentity != nil { boundIdentity = snapshot.identity }
+            if mappedRevision == revision { mappedIdentity = snapshot.identity }
+            return
+        }
         guard snapshot.identity.key == knownIdentity?.key else {
-            knownIdentity = nil; mappedRevision = nil; mappedIdentity = nil
-            projectionTask?.cancel(); projectionTask = nil; deferred.removeAll(); collectionEpoch &+= 1
+            // Identical bytes after an ownership round trip cannot reauthorize a stale editor.
+            rejectUnownedLoad()
             return
         }
         guard oldDirty == nil, dirty == nil, projectionTask == nil, deferred.isEmpty,
@@ -590,6 +618,7 @@ final class WritingEditorProjectionCapture {
     func beginComposition() { compositionDepth += 1 }
     func endComposition(_ range: NSRange?) {
         compositionDepth -= 1
+        guard compositionDepth == 0 else { return }
         marked = range.map(WritingDiagnosticRange.init)
         compositionDidChange?(marked)
         publishIfReady()
@@ -609,7 +638,7 @@ extension BlockTextView {
     var writingRuntimeIdentityProvider: (() -> ProjectRuntimeIdentity?)? {
         get { writingProjectionCapture.runtimeIdentity }
         set {
-            let wasConfigured = writingProjectionCapture.runtimeIdentity != nil
+            let wasConfigured = writingProjectionCapture.hasInitializedIdentity
             writingProjectionCapture.runtimeIdentity = newValue
             if newValue == nil {
                 writingProjectionCapture.mappedRevision = nil
@@ -642,12 +671,13 @@ extension BlockTextView {
         writingProjectionCapture.sourceDidLoad?()
     }
 
-    func nativeRange(forSource range: WritingDiagnosticRange, revision: UInt64) -> WritingDiagnosticRange? {
+    func nativeRange(forSource range: WritingDiagnosticRange, revision: UInt64, expectedQuote: String? = nil) -> WritingDiagnosticRange? {
         guard revision == writingNativeRevision, !hasMarkedText(),
               writingProjectionCapture.compositionDepth == 0,
               writingProjectionCapture.mappedRevision == revision,
               writingProjectionCapture.mappedIdentity == writingProjectionCapture.runtimeIdentity?(),
               let mapped = writingProjectionCapture.nativeLookup?(range), let storage = textStorage,
+              expectedQuote.map({ mapped.original.utf16.elementsEqual($0.utf16) }) ?? true,
               mapped.range.location >= 0, mapped.range.location <= storage.length,
               mapped.range.length >= 0, mapped.range.length <= storage.length - mapped.range.location,
               (storage.string as NSString).rangeOfComposedCharacterSequences(for: mapped.range) == mapped.range,

@@ -5,6 +5,36 @@ import XCTest
 @testable import PurloryWorkspaceUI
 
 @MainActor final class WorkspaceEntityTests: XCTestCase {
+    func testNoteInspectionRefreshesAfterEqualLengthEditsAndRetiresDeletedNotes() async throws {
+        let h = try await FramedWorkspaceHarness(mode: .fiction); defer { h.close() }
+        let session = h.fixture.session, manuscript = try XCTUnwrap(session.selectedDocumentID)
+        session.updateSelectedDocumentBody("도경은 프레넬 렌즈를 닦았다.")
+        let note = try XCTUnwrap(session.createDocument(title: "등대 고증", kind: .note))
+        session.updateSelectedDocumentBody("## 프레넬 렌즈\n원래 설명.")
+        session.selectDocument(manuscript)
+        let editor = try await h.editor()
+        let model = WorkspaceEntityController(session: session, requests: h.requests)
+        let key = try XCTUnwrap(session.runtimeIdentity).key
+        let offset = (editor.string as NSString).range(of: "프레넬 렌즈").location
+        model.hover(editor: editor, key: key, nativeOffset: offset)
+        XCTAssertEqual(model.peek?.note, "원래 설명.")
+        let scans = model.noteParagraphScanCount
+        session.updateDocumentBody("## 프레넬 렌즈\n새로 설명.", for: .init(projectID: key.projectID, documentID: note))
+        XCTAssertNil(model.peek, "Old original-backed cards must retire before another inspection")
+        XCTAssertEqual(model.noteParagraphScanCount, scans, "Typing must not prepare note headings")
+        model.hover(editor: editor, key: key, nativeOffset: offset)
+        XCTAssertEqual(model.peek?.note, "새로 설명.")
+        model.hover(editor: editor, key: key, nativeOffset: offset)
+        XCTAssertEqual(model.noteParagraphScanCount, scans + 1, "Repeated inspection reuses the current note version")
+        session.selectDocument(note)
+        session.trashSelectedDocument()
+        session.selectDocument(manuscript)
+        XCTAssertNil(model.peek)
+        model.hover(editor: editor, key: key, nativeOffset: offset)
+        XCTAssertNil(model.peek)
+        XCTAssertFalse(h.requests.spatialWorkspace?.entityTerms.contains("프레넬 렌즈") == true)
+    }
+
     func testEventPeekRejectsAChangedOriginal() async throws {
         let h = try await FramedWorkspaceHarness(mode: .fiction); defer { h.close() }
         let session = h.fixture.session

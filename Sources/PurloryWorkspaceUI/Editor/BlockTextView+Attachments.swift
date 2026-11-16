@@ -534,7 +534,12 @@ extension BlockTextView {
         }
         nativeTextUpdateDepth += 1
         defer { finishNativeTextUpdate() }
+        let wasComposing = hasMarkedText()
+        if wasComposing { writingProjectionCapture.beginComposition() }
         super.insertText(insertString, replacementRange: replacementRange)
+        if wasComposing {
+            writingProjectionCapture.endComposition(hasMarkedText() ? markedRange() : nil)
+        }
         let committed = (insertString as? String) ?? (insertString as? NSAttributedString)?.string
         // Keep each word and its trailing whitespace together. Only committed text
         // ends a typing unit, so Hangul marked-text updates remain AppKit-owned.
@@ -2084,6 +2089,9 @@ extension BlockTextView {
             storage.attribute(.paragraphStyle, at: paragraph.location, effectiveRange: nil)
             as? NSParagraphStyle
         guard current?.minimumLineHeight != ps.minimumLineHeight else { return }
+        let wasRestyling = isRestylingPresentation
+        isRestylingPresentation = true
+        defer { isRestylingPresentation = wasRestyling }
         storage.addAttribute(.paragraphStyle, value: ps, range: paragraph)
     }
 
@@ -2110,6 +2118,9 @@ extension BlockTextView {
             storage.attribute(.paragraphStyle, at: paragraph.location, effectiveRange: nil)
             as? NSParagraphStyle
         guard current?.isEqual(ps) != true else { return }
+        let wasRestyling = isRestylingPresentation
+        isRestylingPresentation = true
+        defer { isRestylingPresentation = wasRestyling }
         storage.addAttribute(.paragraphStyle, value: ps, range: paragraph)
     }
 

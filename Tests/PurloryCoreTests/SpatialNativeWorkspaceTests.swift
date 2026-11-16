@@ -11,7 +11,7 @@ import XCTest
         XCTAssertTrue(canvas.isAccessibilityElement())
         XCTAssertEqual(canvas.accessibilityRole(), .group)
         XCTAssertEqual(canvas.accessibilityIdentifier(), "purlory.workspace.tiles")
-        let trigger = try XCTUnwrap(h.requests.spatialWorkspace?.pouchAnchor)
+        let trigger = try XCTUnwrap(h.element("purlory.writer-tools.compatibility"))
         XCTAssertEqual(trigger.accessibilityRole(), .button)
         XCTAssertEqual(trigger.accessibilityIdentifier(), "purlory.writer-tools.compatibility")
     }

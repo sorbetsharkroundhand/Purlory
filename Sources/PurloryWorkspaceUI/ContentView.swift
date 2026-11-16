@@ -231,6 +231,13 @@ final class ProjectEditorBridge {
         editor.writingCommitDidChange = { [weak self] in self?.receive($0) }
         editor.writingCompositionDidChange = { [weak self] in self?.compositionDidChange?($0) }
         editor.writingRuntimeIdentityProvider = { [weak self] in self?.currentSnapshot?()?.identity }
+        if changed, !editor.writingProjectionCapture.hasInitializedIdentity,
+           let snapshot = currentSnapshot(), editor.writingDocumentIdentity == .project(snapshot.identity.key),
+           editor.serialize().utf16.elementsEqual(snapshot.body.utf16) {
+            // Reattaching a retained tile is an explicit ownership boundary. Rebuild
+            // its derived map only after proving the current document and native bytes.
+            editor.writingDidLoad(snapshot.body)
+        }
         if (changed || pendingSnapshot == nil), let snapshot = currentSnapshot() { noteSnapshot(snapshot) }
     }
     func disconnect(_ editor: BlockTextView) {

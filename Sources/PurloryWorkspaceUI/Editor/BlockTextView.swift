@@ -113,6 +113,10 @@ final class BlockTextView: NSTextView {
 
     /// 마커 소비/스타일 적용 중 재진입 방지.
     var isTransforming = false
+    /// 테마·글자 크기·줄 간격·표시 전용 속성 변경 중인지 여부.
+    /// 문장 내용이나 마크다운 직렬화 결과를 바꾸지 않는 순수 프레젠테이션 변경이
+    /// `serialDirtyRange`와 `writingProjectionCapture.dirty`를 문서 전체로 오염시키지 않게 막는다.
+    var isRestylingPresentation = false
     var mediaParagraphIndex: ParagraphRenderIndex?
     var mediaDirtyRanges: [NSRange] = []
     var mediaIndexBuildCount = 0

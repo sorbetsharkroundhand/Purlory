@@ -24,13 +24,22 @@ enum WritingDiagnosticsPresentation {
     }
     static func bindings(for finding: WritingDiagnosticsFinding) -> [Binding] {
         var values: [Binding] = []
+        let stamp = finding.stamp
+        var baseHasher = SHA256()
+        updateHasher(&baseHasher, string: finding.id)
+        updateHasher(&baseHasher, string: stamp.runtime.key.projectID.rawValue.uuidString)
+        updateHasher(&baseHasher, string: stamp.runtime.key.documentID.rawValue.uuidString)
+        updateHasher(&baseHasher, uint64: stamp.runtime.generation)
+        updateHasher(&baseHasher, uint64: stamp.nativeRevision)
+        updateHasher(&baseHasher, uint64: stamp.profileRevision)
+        updateHasher(&baseHasher, string: stamp.providerRevision)
+        updateHasher(&baseHasher, uint64: UInt64(bitPattern: Int64(stamp.ruleRevision)))
+        updateHasher(&baseHasher, string: stamp.windowDigest)
         func add(_ operation: Operation, verb: String, payload: String = "", kind: MarginAction.Kind = .custom, title: String) {
-            let stamp = finding.stamp
-            let components = [finding.id, stamp.runtime.key.projectID.rawValue.uuidString, stamp.runtime.key.documentID.rawValue.uuidString,
-                String(stamp.runtime.generation), String(stamp.nativeRevision), String(stamp.profileRevision), stamp.providerRevision,
-                String(stamp.ruleRevision), stamp.windowDigest, verb, payload]
-            let bytes = try! JSONEncoder().encode(components)
-            let digest = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+            var hasher = baseHasher
+            updateHasher(&hasher, string: verb)
+            updateHasher(&hasher, string: payload)
+            let digest = hexString(hasher.finalize())
             values.append(.init(action: .init(id: "writing-action:" + digest, kind: kind, title: title), operation: operation))
         }
         for (index, alternative) in finding.diagnostic.alternatives.enumerated() {
@@ -44,6 +53,30 @@ enum WritingDiagnosticsPresentation {
             add(.learnWord(word), verb: "learn", payload: word, title: "‘\(word)’ 기억하기")
         }
         return values
+    }
+    private static func updateHasher(_ hasher: inout SHA256, uint64 value: UInt64) {
+        withUnsafeBytes(of: value.littleEndian) { hasher.update(bufferPointer: $0) }
+    }
+    private static func updateHasher(_ hasher: inout SHA256, string value: String) {
+        var utf8 = value
+        utf8.withUTF8 { buffer in
+            updateHasher(&hasher, uint64: UInt64(buffer.count))
+            hasher.update(bufferPointer: UnsafeRawBufferPointer(buffer))
+        }
+    }
+    private static func hexString(_ digest: SHA256Digest) -> String {
+        let hex: StaticString = "0123456789abcdef"
+        return String(unsafeUninitializedCapacity: 64) { out in
+            hex.withUTF8Buffer { table in
+                var i = 0
+                for byte in digest {
+                    out[i] = table[Int(byte >> 4)]
+                    out[i + 1] = table[Int(byte & 0x0F)]
+                    i += 2
+                }
+            }
+            return 64
+        }
     }
     static func learnableWord(_ original: String) -> String? {
         let word = original.precomposedStringWithCanonicalMapping

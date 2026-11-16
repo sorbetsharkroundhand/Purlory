@@ -109,7 +109,9 @@ public enum SourceSearch {
                             location: max(region.lowerBound, match.location - 24),
                             length: min(region.upperBound, NSMaxRange(match) + 24)
                                 - max(region.lowerBound, match.location - 24)))
-                        let scene = outline.scenes.first { $0.utf16Range.contains(match.location) }
+                        let scene = outline.sceneIndex(at: match.location).flatMap {
+                            outline.scenes[$0].utf16Range.contains(match.location) ? outline.scenes[$0] : nil
+                        }
                         let revision = revisions[document.id] ?? DocumentOutline.stableHash(document.body)
                         revisions[document.id] = revision
                         results.append(SourceSearchHit(projectID: project.id, documentID: document.id,

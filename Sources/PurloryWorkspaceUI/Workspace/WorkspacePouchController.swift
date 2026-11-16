@@ -40,6 +40,7 @@ struct WorkspacePouchAction {
 
 @MainActor final class WorkspacePouchController: NSObject {
     private(set) var panel: NSPanel?
+    private(set) var index: WorkspacePouchIndexController?
     private(set) var isCollapsed = false
     private(set) var isDragging = false
     var reduceMotion = false
@@ -50,6 +51,7 @@ struct WorkspacePouchAction {
     var reduceTransparency = false
     var theme: PurloryTheme = .light { didSet { refresh() } }
     var actions: [WorkspacePouchAction] = [] { didSet { refresh() } }
+    var indexActions: [WorkspacePouchAction] = [] { didSet { refresh() } }
     var extraActions: [WorkspacePouchAction] = []
     var targetTitle = "Purlory" { didSet { content?.targetTitle = targetTitle } }
     weak var requests: ProjectEditorRequests?
@@ -134,13 +136,17 @@ struct WorkspacePouchAction {
         let content = WorkspacePouchView(); content.controller = self
         content.setAccessibilityIdentifier("purlory.workspace.rail"); content.setAccessibilityLabel("주머니 도구창")
         panel.contentView = content; self.panel = panel; self.content = content
+        index = WorkspacePouchIndexController(parent: window)
+        index?.onClose = { [weak self] in self?.dismissTools() }
         escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown]) { [weak self] event in
             guard let self, event.window === self.window else { return event }
             if event.type != .keyDown {
                 let trigger = self.model.pouchAnchor
                 let hitsTrigger = trigger.map { $0.bounds.contains($0.convert(event.locationInWindow, from: nil)) } ?? false
-                if self.model.pouchSection != nil, !hitsTrigger, let content = self.content,
-                   !content.containsControl(at: content.convert(event.locationInWindow, from: nil)) { self.dismissTools() }
+                if !hitsTrigger, let content = self.content,
+                   !content.containsControl(at: content.convert(event.locationInWindow, from: nil)) {
+                    self.dismissTools(); self.index?.setExpanded(false)
+                }
                 return event
             }
             guard event.keyCode == 53,
@@ -149,16 +155,22 @@ struct WorkspacePouchAction {
                   !self.isCollapsed, !self.isDragging, !self.model.isDragging else { return event }
             if let text = self.window?.firstResponder as? NSTextView, text.hasMarkedText() { return event }
             if let editor = self.window?.firstResponder as? BlockTextView, editor.ownsEscapeKey { return event }
-            guard self.model.pouchSection != nil else { return event }
+            guard self.model.pouchSection != nil || self.index?.isExpanded == true else { return event }
             if event.isARepeat { return nil }
-            self.dismissTools()
+            if self.model.pouchSection != nil { self.dismissTools() }
+            else { self.index?.setExpanded(false) }
             return nil
         }
         for name in [NSWindow.didMoveNotification, NSWindow.didResizeNotification,
+                     NSWindow.didChangeOcclusionStateNotification,
                      NSWindow.didBecomeKeyNotification, NSWindow.didEnterFullScreenNotification,
-                     NSWindow.didExitFullScreenNotification, NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification] {
+                     NSWindow.didExitFullScreenNotification, NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification,
+                     NSWindow.willBeginSheetNotification, NSWindow.didEndSheetNotification] {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.dock(immediate: false) }
+                MainActor.assumeIsolated {
+                    if name == NSWindow.willBeginSheetNotification { self?.index?.hide() }
+                    else { self?.dock(immediate: false) }
+                }
             })
         }
         observers.append(NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { [weak self] _ in
@@ -171,6 +183,7 @@ struct WorkspacePouchAction {
     }
 
     func detach() {
+        index?.detach(); index = nil
         stopDragTracking()
         if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor); self.escapeMonitor = nil }
         timer?.invalidate(); timer = nil
@@ -300,6 +313,7 @@ struct WorkspacePouchAction {
 
     func refresh() {
         guard let panel, let content else { return }
+        updateIndex()
         // The pouch is an independent panel and does not inherit SwiftUI's
         // preferredColorScheme from the manuscript window.
         let appearanceName: NSAppearance.Name = theme.editorSurface.relativeLuminance < 0.5 ? .darkAqua : .aqua
@@ -308,7 +322,7 @@ struct WorkspacePouchAction {
         }
         content.appearance = panel.appearance
         content.toolsExpanded = isAttached && model.pouchSection != nil
-        content.targetTitle = targetTitle
+        content.targetTitle = model.pouchSection == .note ? "빠른 메모" : targetTitle
         content.configure(orb: isCollapsed, horizontal: false, actions: [], theme: theme, attached: isAttached)
         panel.hidesOnDeactivate = !isCollapsed; panel.canHide = !isCollapsed
         panel.alphaValue = 1; panel.ignoresMouseEvents = false
@@ -323,6 +337,19 @@ struct WorkspacePouchAction {
         if model.pouchSection != nil { dismissTools(); return }
         model.openPouchTools()
         refresh(); syncAttachment()
+    }
+    func showTools(_ section: WorkspacePouchSection) {
+        if model.pouchSection == section { dismissTools(); return }
+        model.whisperTyping = false; model.pouchSection = section
+        index?.setExpanded(true)
+        refresh(); syncAttachment()
+    }
+    private func updateIndex() {
+        index?.reduceMotion = motionReduced
+        index?.reduceTransparency = reduceTransparency
+        if isCollapsed, index?.isExpanded == true { index?.setExpanded(false) }
+        if !isCollapsed, model.pouchSection != nil, index?.isExpanded == false { index?.setExpanded(true) }
+        index?.update(theme: theme, actions: indexActions, visible: !isCollapsed)
     }
     private func dock(immediate: Bool) {
         guard let window, let panel else { return }
@@ -367,6 +394,7 @@ struct WorkspacePouchAction {
 
     /// The card is always anchored to window chrome, independently of tile selection.
     func syncAttachment() {
+        updateIndex()
         guard !isCollapsed, !isDragging, window?.isVisible == true,
               let destination = attachmentFrame(), let content, let panel else { return }
         if !isAttached {

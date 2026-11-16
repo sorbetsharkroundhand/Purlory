@@ -67,6 +67,8 @@ final class FramedWorkspaceTests: XCTestCase {
         XCTAssertEqual(trigger.accessibilityLabel(), "주머니 열기")
         XCTAssertNotNil(trigger.target); XCTAssertNotNil(trigger.action)
         trigger.performClick(nil); await h.layout()
+        try XCTUnwrap(h.element("purlory.workspace.pouch.index.environment") as? NSButton).performClick(nil)
+        await h.layout()
         XCTAssertNotNil(h.element("purlory.workspace.pouch.more"))
         let menu = try XCTUnwrap(h.requests.pouch).moreMenu()
         for identifier in ["purlory.workspace.navigator-toggle", "purlory.source-search.show", "purlory.workspace.settings"] {
@@ -470,6 +472,7 @@ final class FramedWorkspaceHarness {
         }
         var result = walk(root ?? host)
         if root == nil, let pouch = requests.pouch?.panel?.contentView { result += walk(pouch) }
+        if root == nil, let index = requests.pouch?.index?.view { result += walk(index) }
         return result
     }
 

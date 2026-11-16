@@ -350,7 +350,7 @@ public final class CompletionController {
     /// 마지막으로 본 커서 위치 (UTF-16) — 인덱서의 **커서 거리순 순회**용
     /// (docs/m6-scene-split.md §5: 씬이 수십 개면 쓰고 있는 장부터 이해해야
     /// 한다). Int 하나 저장 — 키 입력 경로 비용 없음.
-    public private(set) var lastCaretLocation: Int?
+    @ObservationIgnored public private(set) var lastCaretLocation: Int?
     /// 현재 고스트가 만들어진 모드 (fast/smart/story[-dialogue]) — 수락률
     /// 로그의 축 (M7, PLAN §13). 제안과 함께 세팅·소멸한다.
     @ObservationIgnored private var currentSuggestionMode: String?

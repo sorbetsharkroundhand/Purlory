@@ -762,7 +762,12 @@ final class SpatialWorkspaceCanvasView: NSView {
         let measured = model?.pouchContentHeight ?? 0
         let height: CGFloat = model?.pouchSection == nil ? 0
             : max(80, measured + WorkspacePouchStyle.bodyInsets)
-        return WorkspacePouchPlacement(anchor: button.convert(button.bounds, to: self), visible: visibleRect, toolHeight: height)
+        var anchor = button.convert(button.bounds, to: self)
+        if let index = model?.pouchController?.index, index.isExpanded, index.geometry?.opensInward == true {
+            // Keep the detail card beside the rail when the display edge makes it open inward.
+            anchor.origin.x -= 84
+        }
+        return WorkspacePouchPlacement(anchor: anchor, visible: visibleRect, toolHeight: height)
     }
     func header(for tile: WorkspaceTileID) -> SpatialTileHeaderView? {
         func find(_ view: NSView) -> SpatialTileHeaderView? {
@@ -830,79 +835,107 @@ struct SpatialDocumentTile: View {
             EditorPane(projectSession: session, editorRequests: requests, completion: completion,
                 settings: completion.settings, theme: theme, editorBridge: editorBridge,
                 positionStore: positionStore, documentID: documentID, showsChrome: false)
-            let stats = statistics
-            HStack(spacing: 8) {
-                if active && completion.longParagraph.count > 0 {
-                    Button { longParagraphOpen.toggle() } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "bolt.horizontal")
-                                .font(.system(size: 9, weight: .semibold))
-                            Text("긴 문단 \(completion.longParagraph.count)")
-                                .font(PurloryFonts.monoUI(9))
-                        }
-                        .foregroundStyle(theme.novelC)
-                        .padding(.vertical, 2)
-                        .padding(.horizontal, 6)
-                        .background(Capsule().fill(theme.novelBgC))
-                    }
-                    .buttonStyle(.plain)
-                    .help("긴 문단이 있어 입력이 느려질 수 있어요")
-                    .popover(isPresented: $longParagraphOpen, arrowEdge: .top) {
-                        LongParagraphNotice(completion: completion, theme: theme, onDismiss: { longParagraphOpen = false })
-                    }
-                }
-                if active && session.savePhase == .failed {
-                    Button {
-                        Task { try? await session.flush() }
-                    } label: {
-                        Text("저장 실패 · 재시도")
-                            .font(PurloryFonts.monoUI(9.5))
-                            .foregroundStyle(theme.dangerC)
-                    }
-                    .buttonStyle(.plain)
-                    .help(session.lastErrorMessage ?? "프로젝트를 저장하지 못했습니다.")
-                } else if active, let notice = session.lastErrorMessage {
-                    Text(notice)
-                        .font(PurloryFonts.monoUI(9.5))
-                        .foregroundStyle(theme.blueC)
-                        .lineLimit(1)
-                }
-                if active, case .failed(let msg) = completion.engineState, completion.settings.autocompleteEnabled {
-                    Button {
-                        completion.retryEngineLoad()
-                    } label: {
-                        Text("자동완성 재시도")
-                            .font(PurloryFonts.monoUI(9.5))
-                            .foregroundStyle(theme.dangerC)
-                    }
-                    .buttonStyle(.plain)
-                    .help(msg)
-                }
-                Spacer(minLength: 8)
-                if hoveringStats { Text(stats.detail).font(PurloryFonts.monoUI(9)).fixedSize() }
-                Circle().stroke(theme.sepC, lineWidth: 1.5).overlay {
-                    Circle().trim(from: 0, to: stats.progress).stroke(theme.blueC, style: StrokeStyle(lineWidth: 1.5, lineCap: .round)).rotationEffect(.degrees(-90))
-                }.frame(width: 11, height: 11).accessibilityLabel("집필 목표 \(Int(stats.progress * 100))퍼센트")
-                Text("\(stats.characters.formatted())자").font(PurloryFonts.monoUI(10)).fixedSize()
-            }.foregroundStyle(theme.workspaceMutedC).padding(.horizontal, 14).frame(height: 26).opacity(quietChrome ? 0 : (hoveringStats ? 1 : 0.65))
-                .allowsHitTesting(!quietChrome)
-                .onHover { hoveringStats = $0 }.help(stats.detail)
-                .animation(WorkspaceHTMLStyle.animation(0.24), value: hoveringStats)
+            SpatialDocumentFooterBar(
+                session: session,
+                requests: requests,
+                completion: completion,
+                documentID: documentID,
+                theme: theme,
+                quietChrome: quietChrome,
+                longParagraphOpen: $longParagraphOpen
+            )
         }
         .background(WorkspacePaperSurface(theme: theme, surface: theme.editorSurface,
             cornerRadius: model.layout.isSingleManuscript ? 0 : PurloryRadius.lg))
-        .animation(WorkspaceHTMLStyle.animation(0.12), value: quietChrome)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("purlory.document-tile.\(documentID.rawValue.uuidString)")
-        .task { await Task.yield(); statsRevision += 1 }
     }
     private var documentHeader: some View {
         SpatialManilaTabBar(session: session, model: model, documentID: documentID, theme: theme)
             .frame(height: SpatialManilaTabBarView.height)
     }
+}
 
-    private var document: WritingDocument? { session.documentPresentation(documentID) }
-    private var active: Bool { session.selectedDocumentID == documentID }
+private struct SpatialDocumentFooterBar: View {
+    @Bindable var session: ProjectSession
+    @ObservedObject var requests: ProjectEditorRequests
+    @Bindable var completion: CompletionController
+    let documentID: WritingDocumentID
+    let theme: PurloryTheme
+    let quietChrome: Bool
+    @Binding var longParagraphOpen: Bool
+    @State private var hoveringStats = false
+    @State private var statsRevision = 0
+
+    var body: some View {
+        let isActive = session.selectedDocumentID == documentID
+        let stats = statistics
+        HStack(spacing: 8) {
+            if isActive && completion.longParagraph.count > 0 {
+                Button { longParagraphOpen.toggle() } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "bolt.horizontal")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text("긴 문단 \(completion.longParagraph.count)")
+                            .font(PurloryFonts.monoUI(9))
+                    }
+                    .foregroundStyle(theme.novelC)
+                    .padding(.vertical, 2)
+                    .padding(.horizontal, 6)
+                    .background(Capsule().fill(theme.novelBgC))
+                }
+                .buttonStyle(.plain)
+                .help("긴 문단이 있어 입력이 느려질 수 있어요")
+                .popover(isPresented: $longParagraphOpen, arrowEdge: .top) {
+                    LongParagraphNotice(completion: completion, theme: theme, onDismiss: { longParagraphOpen = false })
+                }
+            }
+            if isActive && session.savePhase == .failed {
+                Button {
+                    Task { try? await session.flush() }
+                } label: {
+                    Text("저장 실패 · 재시도")
+                        .font(PurloryFonts.monoUI(9.5))
+                        .foregroundStyle(theme.dangerC)
+                }
+                .buttonStyle(.plain)
+                .help(session.lastErrorMessage ?? "프로젝트를 저장하지 못했습니다.")
+            } else if isActive, let notice = session.lastErrorMessage {
+                Text(notice)
+                    .font(PurloryFonts.monoUI(9.5))
+                    .foregroundStyle(theme.blueC)
+                    .lineLimit(1)
+            }
+            if isActive, case .failed(let msg) = completion.engineState, completion.settings.autocompleteEnabled {
+                Button {
+                    completion.retryEngineLoad()
+                } label: {
+                    Text("자동완성 재시도")
+                        .font(PurloryFonts.monoUI(9.5))
+                        .foregroundStyle(theme.dangerC)
+                }
+                .buttonStyle(.plain)
+                .help(msg)
+            }
+            Spacer(minLength: 8)
+            if hoveringStats { Text(stats.detail).font(PurloryFonts.monoUI(9)).fixedSize() }
+            Circle().stroke(theme.sepC, lineWidth: 1.5).overlay {
+                Circle().trim(from: 0, to: stats.progress).stroke(theme.blueC, style: StrokeStyle(lineWidth: 1.5, lineCap: .round)).rotationEffect(.degrees(-90))
+            }.frame(width: 11, height: 11).accessibilityLabel("집필 목표 \(Int(stats.progress * 100))퍼센트")
+            Text("\(stats.characters.formatted())자").font(PurloryFonts.monoUI(10)).fixedSize()
+        }
+        .foregroundStyle(theme.workspaceMutedC)
+        .padding(.horizontal, 14)
+        .frame(height: 26)
+        .opacity(quietChrome ? 0 : (hoveringStats ? 1 : 0.65))
+        .allowsHitTesting(!quietChrome)
+        .onHover { hoveringStats = $0 }
+        .help(stats.detail)
+        .animation(WorkspaceHTMLStyle.animation(0.24), value: hoveringStats)
+        .animation(WorkspaceHTMLStyle.animation(0.12), value: quietChrome)
+        .task { await Task.yield(); statsRevision += 1 }
+    }
+
     private var statistics: WorkspaceWritingStatistics {
         _ = statsRevision
         let goal = session.presentationPreferences.integer(forKey: "purlory.writing-goal.\(documentID.rawValue.uuidString)")

@@ -114,7 +114,8 @@ extension BlockTextView {
         let endsWithSoftBreak = paragraph.upperBound == ns.length && ns.length > 0
             && ns.character(at: ns.length - 1) == 0x2028
         if paragraph.length == 0 || endsWithSoftBreak {
-            layoutManager.ensureLayout(for: textContainer)
+            let tailRange = NSRange(location: max(0, ns.length - 1), length: ns.length > 0 ? 1 : 0)
+            layoutManager.ensureLayout(forCharacterRange: tailRange)
             let extra = layoutManager.extraLineFragmentRect
             if layoutManager.extraLineFragmentTextContainer === textContainer, extra.height > 0 {
                 var used = layoutManager.extraLineFragmentUsedRect
@@ -767,7 +768,8 @@ extension BlockTextView {
         let endsWithBreak = ns.length == 0
             || [0x0A, 0x0D, 0x2028, 0x2029].contains(Int(ns.character(at: ns.length - 1)))
         if caret == ns.length, endsWithBreak {
-            layoutManager.ensureLayout(for: textContainer)
+            let tailRange = NSRange(location: max(0, ns.length - 1), length: ns.length > 0 ? 1 : 0)
+            layoutManager.ensureLayout(forCharacterRange: tailRange)
             let extra = layoutManager.extraLineFragmentRect
             if extra.height > 0, layoutManager.extraLineFragmentTextContainer === textContainer {
                 return CaretLineGeometry(
@@ -778,7 +780,10 @@ extension BlockTextView {
         }
         guard ns.length > 0 else { return nil }
         var glyphIndex = layoutManager.glyphIndexForCharacter(at: min(caret, ns.length - 1))
-        guard glyphIndex < layoutManager.numberOfGlyphs else { return nil }
+        // The character above is validated and its paragraph has layout. Asking
+        // for numberOfGlyphs here forces generation through the entire manuscript,
+        // including offscreen text invalidated by an IME/font change.
+        guard layoutManager.isValidGlyphIndex(glyphIndex) else { return nil }
         var glyphRange = NSRange()
         var fragment = layoutManager.lineFragmentRect(
             forGlyphAt: glyphIndex, effectiveRange: &glyphRange)

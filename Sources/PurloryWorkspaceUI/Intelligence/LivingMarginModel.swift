@@ -218,7 +218,10 @@ public final class LivingMarginModel: ObservableObject {
         if !qualityIDs.isEmpty {
             otherProducerInsights.removeAll { qualityIDs.contains($0.id) }
         }
-        self.insights = otherProducerInsights + writingQualityInsights
+        let next = otherProducerInsights + writingQualityInsights
+        if self.insights != next {
+            self.insights = next
+        }
     }
 
     public func dismiss(_ insightID: String) {

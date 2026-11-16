@@ -101,7 +101,8 @@ final class WorkspacePouchView: NSView {
         grip.image = attached ? WorkspaceIcons.image("slider.horizontal.3", size: 13) : nil
         grip.theme = theme; grip.selected = orb || toolsExpanded
         grip.font = PurloryFonts.serif(12, weight: .bold); grip.refresh()
-        grip.setAccessibilityIdentifier(orb ? "purlory.workspace.pouch.restore" : "purlory.writer-tools.compatibility")
+        grip.setAccessibilityIdentifier(orb ? "purlory.workspace.pouch.restore" : "purlory.workspace.pouch.legacy-grip")
+        grip.setAccessibilityHidden(attached)
         grip.setAccessibilityLabel(orb ? "Purlory 전체 창 펼치기" : "주머니 펼치기")
         grip.toolTip = orb ? "클릭하여 원고 펼치기 · 드래그하여 이동" : "주머니 펼치기"
         grip.menu = controller?.moreMenu()
@@ -248,7 +249,7 @@ final class WorkspacePouchButton: WorkspaceHTMLButton {
     private func screenPoint(_ event: NSEvent) -> CGPoint { window?.convertPoint(toScreen: event.locationInWindow) ?? event.locationInWindow }
 }
 
-/// The only normal-mode pouch entry point; dragging it never moves or folds a window.
+/// A geometry-only anchor for detail cards; the visible entry lives on the window edge.
 struct WorkspacePouchTrigger: NSViewRepresentable {
     @Bindable var model: SpatialWorkspaceController
     let theme: PurloryTheme
@@ -263,6 +264,9 @@ struct WorkspacePouchTrigger: NSViewRepresentable {
         button.setAccessibilityIdentifier("purlory.writer-tools.compatibility")
         button.setAccessibilityLabel("주머니 열기")
         button.toolTip = "집필 도구 · 조판 · 로컬 AI"
+        button.alphaValue = 0
+        button.setAccessibilityElement(false); button.setAccessibilityHidden(true)
+        button.setAccessibilityIdentifier("purlory.workspace.pouch.anchor")
         button.geometryChanged = { [weak model] in model?.pouchGeometryDidChange?() }
         model.pouchAnchor = button
         return button
@@ -277,6 +281,7 @@ struct WorkspacePouchTrigger: NSViewRepresentable {
     final class Trigger: WorkspaceHTMLButton {
         var geometryChanged: (() -> Void)?
         override var mouseDownCanMoveWindow: Bool { false }
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             DispatchQueue.main.async { [weak self] in self?.geometryChanged?() }
@@ -297,8 +302,10 @@ struct WorkspacePouchBridge: NSViewRepresentable {
     let tools: AnyView
     var targetTitle = "Purlory"
     let actions: [WorkspacePouchAction]
+    let indexActions: [WorkspacePouchAction]
     let extraActions: [WorkspacePouchAction]
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var systemReduceTransparency
     @Environment(\.purloryWorkspaceAccessibilityOptions) private var accessibilityOptions
 
     func makeCoordinator() -> Coordinator { Coordinator(model: model, defaults: defaults) }
@@ -312,8 +319,9 @@ struct WorkspacePouchBridge: NSViewRepresentable {
         let controller = context.coordinator.controller
         controller.reduceMotion = accessibilityOptions.resolvedReduceMotion(system: systemReduceMotion)
         controller.accessibilityOptions = accessibilityOptions
-        controller.reduceTransparency = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency || accessibilityOptions.reduceTransparency
+        controller.reduceTransparency = systemReduceTransparency || accessibilityOptions.reduceTransparency
         controller.theme = theme; controller.actions = actions; controller.extraActions = extraActions
+        controller.indexActions = indexActions
         controller.targetTitle = targetTitle
         controller.requests = requests
         controller.setTools(tools)

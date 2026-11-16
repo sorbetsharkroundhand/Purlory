@@ -155,7 +155,13 @@ public struct DocumentOutline: Equatable, Sendable {
 
     /// 커서(UTF-16)가 속한 씬 인덱스. 씬이 없거나 커서가 첫 씬 앞이면 nil.
     public func sceneIndex(at utf16Offset: Int) -> Int? {
-        scenes.lastIndex(where: { $0.utf16Range.lowerBound <= utf16Offset })
+        var low = 0, high = scenes.count
+        while low < high {
+            let mid = (low + high) / 2
+            if scenes[mid].utf16Range.lowerBound <= utf16Offset { low = mid + 1 }
+            else { high = mid }
+        }
+        return low > 0 ? low - 1 : nil
     }
 
     /// 커서 이전(커서가 속한 씬 포함) 씬들 — 커서 위치 **이후**의 지식을
