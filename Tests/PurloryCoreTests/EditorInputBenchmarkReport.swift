@@ -291,7 +291,6 @@ extension EditorInputBenchmarkTests {
         let location = caretLocation(position, length: length)
         let paragraph = (initial as NSString).paragraphRange(for: NSRange(location: location, length: 0))
         let (undo, idleDuration) = try await prepare(host, initial: initial, location: location, timing: timing)
-        let expected = trace.expectedText(initial, location: location)
         let before = host.counters
         let visibilityBefore = host.visibility
         let settings = host.effectiveSettings
@@ -333,6 +332,8 @@ extension EditorInputBenchmarkTests {
         host.attach(nil)
         let after = host.counters
         let visibilityAfter = host.visibility
+        // Build the full-document integrity reference after trace capture.
+        let expected = trace.expectedText(initial, location: location)
         guard view.string == expected, !view.hasMarkedText() else { throw InputBenchmarkError.integrity("measured final text/composition") }
         let sourceAfter = (view as? BlockTextView)?.serialize()
         view.breakUndoCoalescing()
