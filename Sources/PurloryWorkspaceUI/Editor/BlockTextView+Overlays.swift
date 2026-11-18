@@ -418,6 +418,9 @@ extension BlockTextView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        let recorder = inputTraceRecorder
+        let traceToken = recorder?.drawBegan(dirtyRect)
+        defer { if let traceToken { recorder?.drawEnded(traceToken) } }
         // The single activeLineView covers the active paragraph and clears its
         // old frame atomically when selection or layout changes.
 

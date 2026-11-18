@@ -137,6 +137,9 @@ extension BlockTextView {
     }
 
     override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        let recorder = inputTraceRecorder
+        let traceToken = recorder?.beginOperation(kind: .setMarkedText, composing: hasMarkedText())
+        defer { if let traceToken { recorder?.endOperation(traceToken) } }
         nativeTextUpdateDepth += 1
         defer { finishNativeTextUpdate() }
         writingProjectionCapture.beginComposition()
@@ -145,6 +148,9 @@ extension BlockTextView {
     }
 
     override func unmarkText() {
+        let recorder = inputTraceRecorder
+        let traceToken = recorder?.beginOperation(kind: .unmarkText, composing: hasMarkedText())
+        defer { if let traceToken { recorder?.endOperation(traceToken) } }
         nativeTextUpdateDepth += 1
         defer { finishNativeTextUpdate() }
         writingProjectionCapture.beginComposition()
@@ -500,6 +506,9 @@ extension BlockTextView {
     }
 
     override func keyDown(with event: NSEvent) {
+        let recorder = inputTraceRecorder
+        let traceToken = recorder?.beginOperation(kind: .keyDown, eventTimestamp: event.timestamp, composing: hasMarkedText())
+        defer { if let traceToken { recorder?.endOperation(traceToken) } }
         workspaceInteraction?.keyDown(event)
         if selectedImageLocation != nil, handleObjectKey(event) { return }
         if handleMathEditingKey(event) { return }
@@ -1392,6 +1401,8 @@ extension BlockTextView: @preconcurrency NSTextStorageDelegate {
         range editedRange: NSRange,
         changeInLength delta: Int
     ) {
+        inputTraceRecorder?.storageProcessed(range: editedRange, delta: delta,
+            editedCharacters: editedMask.contains(.editedCharacters), composing: hasMarkedText())
         // Font/paragraph edits and undo can bypass text input overrides. Wait
         // until TextKit has processed their layout invalidation before measuring.
         scheduleEditingOverlayRefresh()
