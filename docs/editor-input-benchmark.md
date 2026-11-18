@@ -4,7 +4,7 @@ This opt-in XCTest suite compares a native TextKit 1 `NSTextView` in a scroll vi
 
 ## Run
 
-Run from the checkout root with an existing resolved Swift package graph. No model, private manuscript, inference benchmark, or network setup is used. Keep the desktop available; do not interact with benchmark windows. Each output must be a new path. The runner builds the test executable, records its hash and source/build provenance, creates a temporary `CFFIXED_USER_HOME`, then uses `swift test --skip-build` against that build. It removes the temporary home on exit. Scratch project files are temporary synthetic fixtures.
+Run from the checkout root with an existing resolved Swift package graph. The default corpus is generated. An explicit local-file option can use a private Markdown document. The runner requires no model, inference benchmark, or network setup. Keep the desktop available; do not interact with benchmark windows. Each output must be a new path. The runner builds the test executable, records its hash and source/build provenance, creates a temporary `CFFIXED_USER_HOME`, then uses `swift test --skip-build` against that build. It removes the temporary home on exit. Scratch project files are temporary synthetic fixtures.
 
 ```sh
 # Smoke subset: 1k short/plain, middle, immediate Latin + synthetic Hangul,
@@ -41,9 +41,21 @@ The generator is versioned, deterministic and BMP-only: requested character coun
 
 Each `moving` run keeps one document open and completes the selected trace at the start, at the midpoint of the current rendered UTF-16 length, at the current end, and back at the start. Each move uses AppKit selection and scrolling after composition ends. Both shapes, both formats, all traces, and both timing modes support `moving`. Any five-second idle precedes the initial trace. The whole sequence uses one undo group and one set of integrity checks.
 
+## Measure a private local document
+
+```sh
+scripts/benchmark-editor-input.sh --local-document /path/to/private-copy.md \
+  --positions start,middle,end,moving --traces latin,hangul --timings immediate \
+  --repetitions 5 --output build/input-local
+```
+
+Use a local UTF-8 Markdown copy. The runner reads the full file once and opens temporary scratch projects with an isolated `CFFIXED_USER_HOME`. It never writes to the provided file. Remove `--sizes`, `--shapes` and `--formats` when supplying a private file. Position, trace, timing, cadence and repetition flags still apply. Using `--quick` selects fewer scenarios while preserving the full file.
+
+The report marks `fixture.origin` as `local-document` and records source bytes, characters, UTF-16 length, paragraph count and SHA-256. It omits the generated fixture's shape and gives the rendered length separately. Paragraph counts include blank paragraphs and a trailing empty paragraph after a terminator. A local-file midpoint inside a composed character moves to the start of that character. Before recording, the runner checks the bound workspace source against the full file and requires matching rendered text across hosts and repetitions. Only the pass status and rendered length are exported for that comparison. The local file's path, filename and text are absent from report, CSV and runner provenance. Use a generic output directory name. Keep artifacts local if sharing the content fingerprint or dimensions would identify a private document.
+
 ## Measurement contract and exports
 
-`report.json` has schema version 2, configuration/provenance/environment/limitations and separate `runs`. Each run identifies scenario, repetition (`runID`), burst, target and actual effective settings. Distributions use nearest rank (`ceil(p*n)`, one-based): p50/p95/p99/max and n. Empty or invalid distributions are absent, never a fabricated zero. No pooling hides individual runs.
+`report.json` has schema version 3, configuration/provenance/environment/limitations and separate `runs`. Each run identifies scenario, repetition (`runID`), burst, target and actual effective settings. Distributions use nearest rank (`ceil(p*n)`, one-based): p50/p95/p99/max and n. Empty or invalid distributions are absent, never a fabricated zero. No pooling hides individual runs.
 
 `trace.csv` contains raw numeric/enum samples with sequence, operation/parent IDs, character revision, time, range/delta, composition and main-thread flags, optional native timestamp and dirty rectangle. `schedule.csv` preserves the action and requested, start and end times. Rows in a moving run also carry the segment ID and selection offset before the action. Movement rows include requested and selected UTF-16 offsets, clip-view scroll origin before and after the request in points, and the optional recorder operation ID. The next input row in each new segment is flagged `first_input_after_move`. `probes.csv` preserves sentinel post/execution. Optional fields are empty cells or omitted JSON properties. IDs are scoped to a run/burst; join using schema/scenario/run/burst/target before ID. Exports are written after all measurements and integrity checks. Existing report/CSV files are not overwritten. A failure leaves the test log and returns nonzero; it must not be interpreted as a successful integrity result.
 
@@ -57,7 +69,7 @@ Warmup, initial scroll/focus/layout and integrity checks are outside timing. In 
 
 Each target’s effective settings are captured at the requested position after warmup and any idle wait, before the recorder is attached. The native target copies attributed content and settings from an equivalently prepared workspace reference. That reference flushes and closes before the native target warms up. Check reported differences in font, viewport/container dimensions, inset, paragraph spacing, substitutions and noncontiguous layout before comparing. Both targets share the noncontiguous-layout setting and use their own layout manager implementations. The workspace is General mode, completion disabled/no model, diagnostics nil, default outline/position/chrome owners and 800ms session autosave. It is not an all-features app experiment. Five-second idle measures elapsed idle/resume; background-job schedule/start/cancel/stop/application attribution is not captured. Moving-run settings and active paragraph length describe the initial caret. Inspect fixed-position runs for settings at other locations, especially for Markdown with varying typing attributes. Long continuous typing and feature-ablation matrices remain follow-on work.
 
-Each run verifies final text/composition, undo/redo, and save/reopen outside timing. Workspace checks source binding, `ProjectSession.flush()` and `ProjectStore` reload; native checks a UTF-8 scratch file. This does not cover EPUB/media/math export. Reports contain no fixture text or input strings; local build/test logs and paths/provenance are separate artifacts. GPU and input source are `unknown` when unavailable. Maximum display FPS is not current refresh rate; configured refresh may also be unknown. `windowVisible`, `windowKey`, `occlusionVisible`, first responder and visible rect are observations, not proof of unobscured pixels. Keep false/unknown values; do not rewrite them into successful visibility claims.
+Each run verifies final text/composition, undo/redo, and save/reopen outside timing. Workspace checks source binding, `ProjectSession.flush()` and `ProjectStore` reload; native checks a UTF-8 scratch file. This does not cover EPUB/media/math export. Reports contain no fixture text or input strings. Runner logs and provenance identify the build and use generic local-document labels. GPU and input source are `unknown` when unavailable. Maximum display FPS is not current refresh rate; configured refresh may also be unknown. `windowVisible`, `windowKey`, `occlusionVisible`, first responder and visible rect are observations, not proof of unobscured pixels. Keep false/unknown values; do not rewrite them into successful visibility claims.
 
 ## Instruments and signposts
 

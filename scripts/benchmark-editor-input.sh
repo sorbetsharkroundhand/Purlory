@@ -15,6 +15,7 @@ import tempfile
 parser = argparse.ArgumentParser(description='Synthetic editor input baseline. --quick is a smoke subset, not performance acceptance.')
 parser.add_argument('--output', required=True, type=Path, help='new directory; existing paths are refused')
 parser.add_argument('--quick', action='store_true', help='1k short/plain middle, Latin and synthetic Hangul, immediate, one repetition')
+parser.add_argument('--local-document', type=Path, help='read one private local UTF-8 Markdown file in an isolated workspace')
 parser.add_argument('--sizes')
 parser.add_argument('--shapes')
 parser.add_argument('--formats')
@@ -27,6 +28,18 @@ parser.add_argument('--instrumentation', choices=['on', 'off'], default='on')
 parser.add_argument('--signposts', choices=['on', 'off'], default='off')
 parser.add_argument('--configuration', choices=['debug', 'release'], default='debug')
 args = parser.parse_args()
+synthetic_dimensions = ('sizes', 'shapes', 'formats')
+local_document = None
+if args.local_document is not None:
+    if any(getattr(args, key) is not None for key in synthetic_dimensions):
+        parser.error('--local-document cannot be combined with --sizes, --shapes or --formats')
+    try:
+        local_document = args.local_document.expanduser().resolve(strict=True)
+        if not local_document.is_file():
+            parser.error('--local-document must point to a readable local UTF-8 Markdown file')
+    except (OSError, RuntimeError, ValueError):
+        parser.error('--local-document must point to a readable local UTF-8 Markdown file')
+
 choices = {
     'sizes': ('1000,10000,100000,230544,500000,1000000', '1000'),
     'shapes': ('short,long', 'short'), 'formats': ('plain,markdown', 'plain'),
@@ -34,6 +47,8 @@ choices = {
     'timings': ('immediate,idle', 'immediate'),
 }
 for key, (full, quick) in choices.items():
+    if local_document is not None and key in synthetic_dimensions:
+        continue
     value = getattr(args, key) or (quick if args.quick else full)
     parts = value.split(',')
     if len(set(parts)) != len(parts) or not set(parts).issubset(full.split(',')):
@@ -59,7 +74,10 @@ def optional(arguments):
     except (OSError, subprocess.CalledProcessError):
         return 'unknown'
 
-print('SMOKE SUBSET: not a performance acceptance run.' if args.quick else 'Synthetic matrix: no external visual or real Korean IME measurement.', flush=True)
+fixture_origin = 'local-document' if local_document is not None else 'generated'
+print(f'Corpus: {fixture_origin}. Input events are synthetic.', flush=True)
+if args.quick:
+    print('SMOKE SUBSET: not a performance acceptance run.', flush=True)
 # Build once, then hash the exact executable used by --skip-build. No package/model download is requested.
 build = ['swift', 'build', '--build-tests', '--disable-automatic-resolution', '-c', args.configuration]
 with (output / 'build.log').open('w') as log:
@@ -71,6 +89,7 @@ bin_path = Path(command(['swift', 'build', '--show-bin-path', '-c', args.configu
 binary = bin_path / 'PurloryPackageTests.xctest/Contents/MacOS/PurloryPackageTests'
 if not binary.is_file():
     raise RuntimeError(f'missing built test executable: {binary}')
+runner_arguments = {key: value for key, value in vars(args).items() if key != 'local_document'}
 provenance = {
     'sourceSHA': command(['git', 'rev-parse', 'HEAD']),
     'sourceDirty': str(bool(command(['git', 'status', '--porcelain']))).lower(),
@@ -82,12 +101,22 @@ provenance = {
     'architecture': platform.machine(), 'gpu': 'unknown',
     'powerSource': optional(['pmset', '-g', 'batt']),
     'buildCommand': ' '.join(build),
-    'runnerArguments': json.dumps(vars(args), default=str, sort_keys=True),
+    'fixtureOrigin': fixture_origin,
+    'runnerArguments': json.dumps(runner_arguments, default=str, sort_keys=True),
 }
 (output / 'provenance.json').write_text(json.dumps(provenance, indent=2, sort_keys=True) + '\n')
 environment = os.environ.copy()
+document_key = 'PURLORY_INPUT_BENCHMARK_LOCAL_DOCUMENT'
+environment.pop(document_key, None)
+if local_document is not None:
+    environment[document_key] = str(local_document)
 for key in choices:
-    environment['PURLORY_INPUT_BENCHMARK_' + key.upper()] = getattr(args, key)
+    environment_key = 'PURLORY_INPUT_BENCHMARK_' + key.upper()
+    value = getattr(args, key)
+    if value is None:
+        environment.pop(environment_key, None)
+    else:
+        environment[environment_key] = value
 environment.update({
     'PURLORY_INPUT_BENCHMARK_OUTPUT': str(output),
     'PURLORY_INPUT_BENCHMARK_REPETITIONS': str(args.repetitions),
@@ -110,6 +139,7 @@ if result.returncode:
 report = json.loads((output / 'report.json').read_text())
 assert report['runs'], 'empty report'
 for run in report['runs']:
+    assert run['fixture']['origin'] == fixture_origin
     assert run['integrity']['finalText'] == 'passed'
     assert all(row['requested'] <= row['started'] <= row['ended'] for row in run['schedule'])
     rows = run.get('trace', {}).get('samples', [])

@@ -19,7 +19,7 @@ extension EditorInputBenchmarkTests {
             countersBefore: [:], countersAfter: [:], integrity: [:], schedule: [movement, first], probes: [], trace: nil, metrics: nil,
             dispatchDurationSeconds: nil, syntheticSchedulingDelaySeconds: nil, caretMoveDurationSeconds: nil,
             firstPostMoveDispatchDurationSeconds: nil, firstPostMoveSchedulingDelaySeconds: nil, probeDelaySeconds: nil)
-        let report = InputBenchmarkReport(schemaVersion: 2, clock: "ProcessInfo.systemUptime", timestampUnit: "seconds",
+        let report = InputBenchmarkReport(schemaVersion: 3, clock: "ProcessInfo.systemUptime", timestampUnit: "seconds",
             configuration: configuration, provenance: [:], environment: [:], limitations: [], runs: [run])
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("input-moving-export-\(UUID())")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -71,7 +71,7 @@ extension EditorInputBenchmarkTests {
             metrics: InputBenchmarkMetrics(trace: captured), dispatchDurationSeconds: nil,
             syntheticSchedulingDelaySeconds: nil, caretMoveDurationSeconds: nil, firstPostMoveDispatchDurationSeconds: nil,
             firstPostMoveSchedulingDelaySeconds: nil, probeDelaySeconds: nil)
-        let report = InputBenchmarkReport(schemaVersion: 2, clock: "ProcessInfo.systemUptime",
+        let report = InputBenchmarkReport(schemaVersion: 3, clock: "ProcessInfo.systemUptime",
             timestampUnit: "seconds", configuration: configuration, provenance: [:], environment: [:],
             limitations: [], runs: [run])
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("input-export-\(UUID())")

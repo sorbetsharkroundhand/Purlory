@@ -82,6 +82,48 @@ final class EditorInputBenchmarkTests: XCTestCase {
         }
     }
 
+    func testLocalDocumentIntegrityDistinguishesComposedAndDecomposedHangul() {
+        XCTAssertTrue(inputBenchmarkTextMatches("한", "한"))
+        XCTAssertFalse(inputBenchmarkTextMatches("한", "\u{1112}\u{1161}\u{11AB}"))
+    }
+
+    func testLocalDocumentPreservesWholeUTF8File() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("fixture-with-private-name.md")
+        let fixture = "# First\n\n아🎈\r\nlast\n"
+        try Data(fixture.utf8).write(to: url)
+        let loaded = try InputBenchmarkFixture.loadLocalDocument(from: url)
+        XCTAssertEqual(loaded.text, fixture)
+        XCTAssertEqual(loaded.metadata.characterCount, 17)
+        XCTAssertEqual(loaded.metadata.utf16Count, 19)
+        XCTAssertEqual(loaded.metadata.utf8Count, 23)
+        XCTAssertEqual(loaded.metadata.paragraphCount, 5)
+        XCTAssertEqual(loaded.metadata.format, .markdown)
+        XCTAssertEqual(loaded.metadata.origin, .localDocument)
+        XCTAssertNil(loaded.metadata.shape)
+        XCTAssertEqual(midpointAtCharacterBoundary(in: "aa🎈z" as NSString), 2)
+        XCTAssertEqual(midpointAtCharacterBoundary(in: "aa🎈zzz" as NSString), 2)
+        try Data([0xFF]).write(to: url)
+        XCTAssertThrowsError(try InputBenchmarkFixture.loadLocalDocument(from: url)) { error in
+            XCTAssertFalse(String(describing: error).contains(url.lastPathComponent))
+        }
+    }
+
+    func testLocalDocumentConfigurationExcludesGeneratedFixtures() throws {
+        let environment = ["PURLORY_INPUT_BENCHMARK_LOCAL_DOCUMENT": "/unused/private-fixture.md"]
+        let configuration = try InputBenchmarkConfiguration(environment: environment)
+        XCTAssertEqual(configuration.fixtureOrigin, .localDocument)
+        XCTAssertTrue(configuration.sizes.isEmpty)
+        XCTAssertTrue(configuration.shapes.isEmpty)
+        XCTAssertTrue(configuration.formats.isEmpty)
+        let conflict = environment.merging(["PURLORY_INPUT_BENCHMARK_SIZES": "1000"]) { _, value in value }
+        XCTAssertThrowsError(try InputBenchmarkConfiguration(environment: conflict))
+        let json = String(decoding: try JSONEncoder().encode(configuration), as: UTF8.self)
+        XCTAssertFalse(json.contains("private-fixture.md"))
+    }
+
     func testConfigurationAcceptsMovingAndFixedPositionsTogether() throws {
         let configuration = try InputBenchmarkConfiguration(environment: [
             "PURLORY_INPUT_BENCHMARK_POSITIONS": "start,middle,end,moving"

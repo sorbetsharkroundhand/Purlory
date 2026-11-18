@@ -125,22 +125,16 @@ extension EditorInputBenchmarkTests {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         var runs: [InputBenchmarkRun] = []
-        for size in configuration.sizes {
-            for shape in configuration.shapes {
-                for format in configuration.formats {
-                    let fixture = InputBenchmarkFixture(size: size, shape: shape, format: format)
-                    for position in configuration.positions {
-                        for trace in configuration.traces {
-                            for timing in configuration.timings {
-                                for repetition in 0..<configuration.repetitions {
-                                    // Alternate order by repetition; retain order in the output for paired analysis.
-                                    for target in repetition.isMultiple(of: 2) ? ["native", "workspace"] : ["workspace", "native"] {
-                                        runs.append(try await recordRun(fixture: fixture, position: position, trace: trace,
-                                            timing: timing, target: target, repetition: repetition, configuration: configuration))
-                                    }
-                                }
-                            }
-                        }
+        if let path = environment[InputBenchmarkConfiguration.localDocumentEnvironmentKey] {
+            guard environment["PURLORY_INPUT_BENCHMARK_ISOLATED"] == "1" else { throw InputBenchmarkError.missingIsolation }
+            let fixture = try InputBenchmarkFixture.loadLocalDocument(from: URL(fileURLWithPath: path))
+            try await recordRuns(fixture: fixture, configuration: configuration, into: &runs)
+        } else {
+            for size in configuration.sizes {
+                for shape in configuration.shapes {
+                    for format in configuration.formats {
+                        let fixture = InputBenchmarkFixture(size: size, shape: shape, format: format)
+                        try await recordRuns(fixture: fixture, configuration: configuration, into: &runs)
                     }
                 }
             }
@@ -171,7 +165,7 @@ extension EditorInputBenchmarkTests {
                 runtime["configuredRefreshHz"] = String(mode.refreshRate)
             }
         }
-        let report = InputBenchmarkReport(schemaVersion: 2, clock: "ProcessInfo.systemUptime", timestampUnit: "seconds",
+        let report = InputBenchmarkReport(schemaVersion: 3, clock: "ProcessInfo.systemUptime", timestampUnit: "seconds",
             configuration: configuration, provenance: provenance, environment: runtime, limitations: [
                 "Synthetic calls have no native event ID or OS event-queue delay; schedule delay belongs to the harness.",
                 "A completed draw observes the revision captured at draw start, not a specific glyph or physical presentation.",
@@ -185,6 +179,34 @@ extension EditorInputBenchmarkTests {
                 "Save/reopen and undo/redo are checked outside timing; EPUB/media/math export is not measured by this experiment."
             ], runs: runs)
         try report.write(to: directory)
+    }
+
+    private func recordRuns(fixture: InputBenchmarkFixture, configuration: InputBenchmarkConfiguration,
+                            into runs: inout [InputBenchmarkRun]) async throws {
+        var initialRenderedDigest: SHA256.Digest?
+        let verifyInitialRender: ((String) throws -> Void)? = if fixture.metadata.origin == .localDocument {
+            { text in
+                let digest = SHA256.hash(data: Data(text.utf8))
+                if let initialRenderedDigest, initialRenderedDigest != digest {
+                    throw InputBenchmarkError.integrity("local document rendered content differs across hosts or repetitions")
+                }
+                initialRenderedDigest = digest
+            }
+        } else { nil }
+        for position in configuration.positions {
+            for trace in configuration.traces {
+                for timing in configuration.timings {
+                    for repetition in 0..<configuration.repetitions {
+                        // Alternate host order and preserve it in the output for paired analysis.
+                        for target in repetition.isMultiple(of: 2) ? ["native", "workspace"] : ["workspace", "native"] {
+                            runs.append(try await recordRun(fixture: fixture, position: position, trace: trace,
+                                timing: timing, target: target, repetition: repetition, configuration: configuration,
+                                verifyInitialRender: verifyInitialRender))
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // Freezing settings during host construction misses caret-dependent Markdown font runs.
@@ -300,7 +322,7 @@ extension EditorInputBenchmarkTests {
         view.deleteBackward(nil)
         undo.endUndoGrouping()
         try await Task.sleep(for: .milliseconds(100))
-        guard view.string == initial else { throw InputBenchmarkError.integrity("warmup final text") }
+        guard inputBenchmarkTextMatches(view.string, initial) else { throw InputBenchmarkError.integrity("warmup final text") }
         view.breakUndoCoalescing()
         undo.removeAllActions()
         let idleStart = ProcessInfo.processInfo.systemUptime
@@ -314,7 +336,7 @@ extension EditorInputBenchmarkTests {
         let reference = try await InputBenchmarkHost.makeWorkspace(fixture: fixture)
         defer { reference.close() }
         let initial = reference.view.string
-        let location = caretLocation(position, length: (initial as NSString).length)
+        let location = caretLocation(position, text: initial as NSString, alignMidpoint: fixture.metadata.origin == .localDocument)
         _ = try await prepare(reference, initial: initial, location: location, timing: timing)
         let settings = reference.effectiveSettings
         let native = InputBenchmarkHost.makeNative(matching: reference.view)
@@ -327,17 +349,18 @@ extension EditorInputBenchmarkTests {
         }
     }
 
-    private func caretLocation(_ position: String, length: Int) -> Int {
+    private func caretLocation(_ position: String, text: NSString, alignMidpoint: Bool) -> Int {
         switch position {
         case "start", "moving": 0
-        case "middle": length / 2
-        default: length
+        case "middle": alignMidpoint ? midpointAtCharacterBoundary(in: text) : text.length / 2
+        default: text.length
         }
     }
 
     private func recordRun(fixture: InputBenchmarkFixture, position: String, trace: InputBenchmarkTrace,
                            timing: String, target: String, repetition: Int,
-                           configuration: InputBenchmarkConfiguration) async throws -> InputBenchmarkRun {
+                           configuration: InputBenchmarkConfiguration,
+                           verifyInitialRender: ((String) throws -> Void)? = nil) async throws -> InputBenchmarkRun {
         let host: InputBenchmarkHost
         let workspaceReference: [String: String]?
         if target == "native" {
@@ -349,9 +372,11 @@ extension EditorInputBenchmarkTests {
         defer { host.close() }
         let view = host.view
         let initial = view.string
+        try verifyInitialRender?(initial)
         let sourceBefore = (view as? BlockTextView)?.serialize()
         let length = (initial as NSString).length
-        let location = caretLocation(position, length: length)
+        let alignMidpoint = fixture.metadata.origin == .localDocument
+        let location = caretLocation(position, text: initial as NSString, alignMidpoint: alignMidpoint)
         let paragraph = (initial as NSString).paragraphRange(for: NSRange(location: location, length: 0))
         let moving = position == "moving"
         let actions = trace.scheduledActions(moving: moving)
@@ -387,7 +412,7 @@ extension EditorInputBenchmarkTests {
             default: kind = nil
             }
             let token = kind.flatMap { recorder?.beginOperation(kind: $0, composing: view.hasMarkedText()) }
-            let moveLocation = try InputBenchmarkTrace.perform(action, in: view)
+            let moveLocation = try InputBenchmarkTrace.perform(action, in: view, alignMidpoint: alignMidpoint)
             if let token { recorder?.endOperation(token) }
             let completed = ProcessInfo.processInfo.systemUptime
             let caretMove = moveLocation.map { location in
@@ -411,8 +436,8 @@ extension EditorInputBenchmarkTests {
         let after = host.counters
         let visibilityAfter = host.visibility
         // Build the full-document integrity reference after trace capture.
-        let expected = trace.expectedText(initial, location: location, moving: moving)
-        guard view.string == expected, !view.hasMarkedText() else { throw InputBenchmarkError.integrity("measured final text/composition") }
+        let expected = trace.expectedText(initial, location: location, moving: moving, alignMidpoint: alignMidpoint)
+        guard inputBenchmarkTextMatches(view.string, expected), !view.hasMarkedText() else { throw InputBenchmarkError.integrity("measured final text/composition") }
         let moves = schedule.filter { $0.caretMove != nil }
         let inputs = schedule.filter { $0.caretMove == nil }
         let firstPostMove = inputs.filter { $0.firstInputAfterMove == true }
@@ -425,24 +450,31 @@ extension EditorInputBenchmarkTests {
         view.breakUndoCoalescing()
         guard undo.canUndo else { throw InputBenchmarkError.integrity("missing undo") }
         undo.undo()
-        guard view.string == initial, (view as? BlockTextView)?.serialize() == sourceBefore else { throw InputBenchmarkError.integrity("undo") }
+        guard inputBenchmarkTextMatches(view.string, initial), inputBenchmarkTextMatches((view as? BlockTextView)?.serialize(), sourceBefore) else { throw InputBenchmarkError.integrity("undo") }
         guard undo.canRedo else { throw InputBenchmarkError.integrity("missing redo") }
         undo.redo()
-        guard view.string == expected, (view as? BlockTextView)?.serialize() == sourceAfter else { throw InputBenchmarkError.integrity("redo") }
+        guard inputBenchmarkTextMatches(view.string, expected), inputBenchmarkTextMatches((view as? BlockTextView)?.serialize(), sourceAfter) else { throw InputBenchmarkError.integrity("redo") }
         if let workspace = host.workspace {
             let session = workspace.fixture.session
-            guard session.selectedDocument?.source.string == sourceAfter else { throw InputBenchmarkError.integrity("binding") }
+            guard inputBenchmarkTextMatches(session.selectedDocument?.source.string, sourceAfter) else { throw InputBenchmarkError.integrity("binding") }
             try await session.flush()
             let project = try await workspace.fixture.store.load(id: workspace.fixture.project.id)
-            guard project.documents.first(where: { $0.id == session.selectedDocumentID })?.source.string == sourceAfter
+            guard inputBenchmarkTextMatches(project.documents.first(where: { $0.id == session.selectedDocumentID })?.source.string, sourceAfter)
             else { throw InputBenchmarkError.integrity("workspace flush/reopen") }
         } else {
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("input-benchmark-\(UUID()).txt")
             defer { try? FileManager.default.removeItem(at: url) }
             try Data(view.string.utf8).write(to: url, options: .withoutOverwriting)
-            guard try String(contentsOf: url, encoding: .utf8) == expected else { throw InputBenchmarkError.integrity("native scratch reopen") }
+            guard try inputBenchmarkTextMatches(String(contentsOf: url, encoding: .utf8), expected) else { throw InputBenchmarkError.integrity("native scratch reopen") }
         }
-        let scenario = "\(fixture.metadata.utf16Count)-\(fixture.metadata.shape.rawValue)-\(fixture.metadata.format.rawValue)-\(position)-\(trace.rawValue)-\(timing)"
+        var integrity = ["finalText": "passed", "compositionEnded": "passed", "undo": "passed", "redo": "passed",
+            "saveReopen": target == "workspace" ? "projectSession-flush-projectStore-reload-passed" : "utf8-scratch-file-passed"]
+        if verifyInitialRender != nil {
+            integrity["initialSourceBinding"] = "passed"
+            integrity["initialRenderedMatch"] = "passed"
+        }
+        let corpus = fixture.metadata.shape?.rawValue ?? fixture.metadata.origin.rawValue
+        let scenario = "\(fixture.metadata.utf16Count)-\(corpus)-\(fixture.metadata.format.rawValue)-\(position)-\(trace.rawValue)-\(timing)"
         return InputBenchmarkRun(scenarioID: scenario, runID: repetition, burstID: 0, target: target,
             fixture: fixture.metadata, position: position, activeParagraphUTF16Count: paragraph.length,
             initialRenderedUTF16Count: length, traceKind: trace, timing: timing, elapsedIdleSeconds: idleDuration,
@@ -454,8 +486,7 @@ extension EditorInputBenchmarkTests {
                 "livingMargin": "default-no-model", "chrome": "workspace-default", "instrumentation": String(configuration.instrumentation)]
                 : ["host": "native-TextKit1-NSScrollView", "workspaceOwners": "none", "instrumentation": String(configuration.instrumentation)],
             visibilityBefore: visibilityBefore, visibilityAfter: visibilityAfter, countersBefore: before, countersAfter: after,
-            integrity: ["finalText": "passed", "compositionEnded": "passed", "undo": "passed", "redo": "passed",
-                        "saveReopen": target == "workspace" ? "projectSession-flush-projectStore-reload-passed" : "utf8-scratch-file-passed"],
+            integrity: integrity,
             schedule: schedule, probes: probes, trace: captured, metrics: captured.map(InputBenchmarkMetrics.init),
             dispatchDurationSeconds: InputBenchmarkDistribution(inputs.map(\.duration)),
             syntheticSchedulingDelaySeconds: InputBenchmarkDistribution(inputs.map(\.schedulingDelay)),

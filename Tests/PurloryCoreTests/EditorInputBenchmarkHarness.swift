@@ -89,6 +89,9 @@ final class InputBenchmarkProbe: @unchecked Sendable {
 }
 
 struct InputBenchmarkConfiguration: Codable {
+    static let localDocumentEnvironmentKey = "PURLORY_INPUT_BENCHMARK_LOCAL_DOCUMENT"
+
+    let fixtureOrigin: InputBenchmarkFixture.Origin
     let sizes: [Int]
     let shapes: [InputBenchmarkFixture.Shape]
     let formats: [InputBenchmarkFixture.Format]
@@ -108,11 +111,21 @@ struct InputBenchmarkConfiguration: Codable {
             else { throw InputBenchmarkError.invalidConfiguration(key) }
             return values
         }
-        sizes = try list("SIZES", "1000,10000,100000,230544,500000,1000000") {
-            guard let value = Int($0), [1000,10000,100000,230544,500000,1000000].contains(value) else { return nil }; return value
+        if let path = e[Self.localDocumentEnvironmentKey] {
+            guard !path.isEmpty, ["SIZES", "SHAPES", "FORMATS"].allSatisfy({ e["PURLORY_INPUT_BENCHMARK_" + $0] == nil })
+            else { throw InputBenchmarkError.invalidConfiguration("local document excludes synthetic size, shape, and format filters") }
+            fixtureOrigin = .localDocument
+            sizes = []
+            shapes = []
+            formats = []
+        } else {
+            fixtureOrigin = .generated
+            sizes = try list("SIZES", "1000,10000,100000,230544,500000,1000000") {
+                guard let value = Int($0), [1000,10000,100000,230544,500000,1000000].contains(value) else { return nil }; return value
+            }
+            shapes = try list("SHAPES", "short,long", parse: InputBenchmarkFixture.Shape.init(rawValue:))
+            formats = try list("FORMATS", "plain,markdown", parse: InputBenchmarkFixture.Format.init(rawValue:))
         }
-        shapes = try list("SHAPES", "short,long", parse: InputBenchmarkFixture.Shape.init(rawValue:))
-        formats = try list("FORMATS", "plain,markdown", parse: InputBenchmarkFixture.Format.init(rawValue:))
         let supportedPositions = ["start", "middle", "end", "moving"]
         positions = try list("POSITIONS", supportedPositions.joined(separator: ",")) { supportedPositions.contains($0) ? $0 : nil }
         traces = try list("TRACES", "latin,hangul,editing,paste", parse: InputBenchmarkTrace.init(rawValue:))
@@ -141,6 +154,10 @@ struct InputBenchmarkHost {
         do {
             workspace.fixture.session.updateSelectedDocumentBody(fixture.text)
             let editor = try await workspace.editor()
+            if fixture.metadata.origin == .localDocument {
+                guard workspace.fixture.session.selectedDocument?.source.string.utf8.elementsEqual(fixture.text.utf8) == true
+                else { throw InputBenchmarkError.integrity("initial local source binding") }
+            }
             return Self(view: editor, window: workspace.window, workspace: workspace)
         } catch {
             workspace.close()
