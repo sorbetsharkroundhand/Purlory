@@ -82,6 +82,14 @@ final class EditorInputBenchmarkTests: XCTestCase {
         }
     }
 
+    func testConfigurationAcceptsMovingAndFixedPositionsTogether() throws {
+        let configuration = try InputBenchmarkConfiguration(environment: [
+            "PURLORY_INPUT_BENCHMARK_POSITIONS": "start,middle,end,moving"
+        ])
+        XCTAssertEqual(configuration.positions, ["start", "middle", "end", "moving"])
+        XCTAssertEqual(try InputBenchmarkConfiguration(environment: [:]).positions, configuration.positions)
+    }
+
     func testNearestRankPreservesTailAndMissingMeasurements() {
         let stats = InputBenchmarkDistribution([1, 2, 3, 4, 100])
         XCTAssertEqual(stats?.p50, 3)
@@ -143,6 +151,15 @@ final class EditorInputBenchmarkTests: XCTestCase {
         XCTAssertEqual(editor.string, "originalA")
         undo.redo()
         XCTAssertEqual(editor.string, "originalA한")
+    }
+
+    func testMovingReferenceModelUsesCurrentDocumentLocations() {
+        let fixture = "0123456789012345678901234567890123456789"
+        let latin = String(repeating: "a", count: 12)
+        XCTAssertEqual(InputBenchmarkTrace.latin.expectedText(fixture, location: 0, moving: true),
+            latin + latin + "01234567890123" + latin + "45678901234567890123456789" + latin)
+        XCTAssertEqual(InputBenchmarkTrace.hangul.expectedText(fixture, location: 0, moving: true),
+            "한한한한한한한한012345678901234567한한한한8901234567890123456789한한한한")
     }
 
     func testTraceReferenceModelHasIndependentExpectedContent() {

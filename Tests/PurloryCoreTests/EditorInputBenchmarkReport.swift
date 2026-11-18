@@ -5,11 +5,25 @@ import XCTest
 
 struct InputBenchmarkRun: Codable {
     struct DispatchSample: Codable {
+        struct CaretMove: Codable {
+            let requestedUTF16Location: Int
+            let selectedUTF16Location: Int
+            let scrollOriginYBefore: CGFloat?
+            let scrollOriginYAfter: CGFloat?
+            let operationID: Int?
+        }
+
         let sequence: Int
         let action: InputBenchmarkTrace.Action
         let requested: Double
         let started: Double
         let ended: Double
+        let segmentID: Int?
+        let selectionBeforeUTF16: Int?
+        let firstInputAfterMove: Bool?
+        let caretMove: CaretMove?
+
+        var duration: Double { ended - started }
         var schedulingDelay: Double { max(0, started - requested) }
     }
     let scenarioID: String
@@ -40,6 +54,9 @@ struct InputBenchmarkRun: Codable {
     let metrics: InputBenchmarkMetrics?
     let dispatchDurationSeconds: InputBenchmarkDistribution?
     let syntheticSchedulingDelaySeconds: InputBenchmarkDistribution?
+    let caretMoveDurationSeconds: InputBenchmarkDistribution?
+    let firstPostMoveDispatchDurationSeconds: InputBenchmarkDistribution?
+    let firstPostMoveSchedulingDelaySeconds: InputBenchmarkDistribution?
     let probeDelaySeconds: InputBenchmarkDistribution?
 }
 
@@ -61,7 +78,7 @@ struct InputBenchmarkReport: Codable {
         let json = try encoder.encode(self)
         // Only schema enums, synthetic IDs and numbers are admitted to CSV fields.
         var trace = "schema_version,scenario_id,run_id,burst_id,target,sequence,kind,timestamp_seconds,id,operation_id,parent_id,revision,event_timestamp_seconds,event_timestamp_comparable,location,length,delta,edited_characters,main_thread,composing,rect_x,rect_y,rect_width,rect_height\n"
-        var schedule = "schema_version,scenario_id,run_id,burst_id,target,sequence,action,requested_seconds,started_seconds,ended_seconds\n"
+        var schedule = "schema_version,scenario_id,run_id,burst_id,target,sequence,action,requested_seconds,started_seconds,ended_seconds,segment_id,selection_before_utf16,first_input_after_move,move_requested_utf16,move_selected_utf16,scroll_origin_y_before,scroll_origin_y_after,move_operation_id\n"
         var probes = "schema_version,scenario_id,run_id,burst_id,target,sequence,posted_seconds,executed_seconds\n"
         func cell<T>(_ value: T?) -> String { value.map { String(describing: $0) } ?? "" }
         for run in runs {
@@ -74,7 +91,11 @@ struct InputBenchmarkReport: Codable {
                     cell(row.rect?[2]), cell(row.rect?[3])].joined(separator: ",") + "\n"
             }
             for row in run.schedule {
-                schedule += prefix + "\(row.sequence),\(row.action.rawValue),\(row.requested),\(row.started),\(row.ended)\n"
+                schedule += prefix + [String(row.sequence), row.action.rawValue, String(row.requested), String(row.started),
+                    String(row.ended), cell(row.segmentID), cell(row.selectionBeforeUTF16), cell(row.firstInputAfterMove),
+                    cell(row.caretMove?.requestedUTF16Location), cell(row.caretMove?.selectedUTF16Location),
+                    cell(row.caretMove?.scrollOriginYBefore), cell(row.caretMove?.scrollOriginYAfter),
+                    cell(row.caretMove?.operationID)].joined(separator: ",") + "\n"
             }
             for (index, row) in run.probes.enumerated() {
                 probes += prefix + "\(index),\(row.posted),\(row.executed)\n"
@@ -150,7 +171,7 @@ extension EditorInputBenchmarkTests {
                 runtime["configuredRefreshHz"] = String(mode.refreshRate)
             }
         }
-        let report = InputBenchmarkReport(schemaVersion: 1, clock: "ProcessInfo.systemUptime", timestampUnit: "seconds",
+        let report = InputBenchmarkReport(schemaVersion: 2, clock: "ProcessInfo.systemUptime", timestampUnit: "seconds",
             configuration: configuration, provenance: provenance, environment: runtime, limitations: [
                 "Synthetic calls have no native event ID or OS event-queue delay; schedule delay belongs to the harness.",
                 "A completed draw observes the revision captured at draw start, not a specific glyph or physical presentation.",
@@ -203,6 +224,48 @@ extension EditorInputBenchmarkTests {
                 XCTAssertEqual(run.settings["font"], expectedFonts[position], "\(target) \(position) actual")
                 XCTAssertEqual(run.referenceSettings["font"], expectedFonts[position], "\(target) \(position) reference")
                 XCTAssertFalse(run.settingsDifferences.contains("font"), "\(target) \(position) matched font")
+            }
+        }
+    }
+
+    func testMovingScenarioTypesAcrossFourVisitsInOneDocument() async throws {
+        let configuration = try InputBenchmarkConfiguration(environment: ["PURLORY_INPUT_BENCHMARK_CADENCE_MS": "1"])
+        let scenarios: [(InputBenchmarkFixture.Shape, InputBenchmarkTrace, [Int])] = [
+            (.short, .latin, [506, 1024, 0]),
+            (.long, .hangul, [502, 1008, 0])
+        ]
+        for (shape, trace, locations) in scenarios {
+            let fixture = InputBenchmarkFixture(size: 1000, shape: shape, format: .plain)
+            for target in ["native", "workspace"] {
+                let run = try await recordRun(fixture: fixture, position: "moving", trace: trace,
+                    timing: "immediate", target: target, repetition: 0, configuration: configuration)
+                let moves = run.schedule.filter { $0.caretMove != nil }
+                let firstInputs = run.schedule.filter { $0.firstInputAfterMove == true }
+                XCTAssertEqual(run.schedule.count, 51)
+                XCTAssertEqual(run.schedule.first?.selectionBeforeUTF16, 0)
+                XCTAssertEqual(moves.map(\.action), [.moveToMiddle, .moveToEnd, .moveToStart])
+                XCTAssertEqual(moves.map(\.sequence), [12, 25, 38])
+                XCTAssertEqual(moves.compactMap { $0.caretMove?.requestedUTF16Location }, locations)
+                XCTAssertEqual(moves.compactMap { $0.caretMove?.selectedUTF16Location }, locations)
+                XCTAssertTrue(moves.allSatisfy { $0.caretMove?.scrollOriginYBefore?.isFinite == true })
+                XCTAssertTrue(moves.allSatisfy { $0.caretMove?.scrollOriginYAfter?.isFinite == true })
+                let moveOperationIDs = moves.compactMap { $0.caretMove?.operationID }
+                let cursorSamples = run.trace?.samples.filter { $0.kind == "operation.begin.cursor" }
+                XCTAssertEqual(cursorSamples?.map(\.id), moveOperationIDs)
+                XCTAssertEqual(cursorSamples?.map(\.composing), [false, false, false])
+                XCTAssertEqual(firstInputs.compactMap(\.segmentID), [1, 2, 3])
+                XCTAssertEqual(firstInputs.map(\.sequence), [13, 26, 39])
+                XCTAssertEqual(firstInputs.compactMap(\.selectionBeforeUTF16), locations)
+                XCTAssertEqual(firstInputs.map(\.action), Array(repeating: trace == .latin ? .latin : .markJamo, count: 3))
+                XCTAssertEqual(run.dispatchDurationSeconds?.n, 48)
+                XCTAssertEqual(run.caretMoveDurationSeconds?.n, 3)
+                XCTAssertEqual(run.firstPostMoveDispatchDurationSeconds?.n, 3)
+                XCTAssertEqual(run.firstPostMoveSchedulingDelaySeconds?.n, 3)
+                for check in ["finalText", "compositionEnded", "undo", "redo"] {
+                    XCTAssertEqual(run.integrity[check], "passed", check)
+                }
+                XCTAssertEqual(run.integrity["saveReopen"], target == "workspace"
+                    ? "projectSession-flush-projectStore-reload-passed" : "utf8-scratch-file-passed")
             }
         }
     }
@@ -266,7 +329,7 @@ extension EditorInputBenchmarkTests {
 
     private func caretLocation(_ position: String, length: Int) -> Int {
         switch position {
-        case "start": 0
+        case "start", "moving": 0
         case "middle": length / 2
         default: length
         }
@@ -290,6 +353,9 @@ extension EditorInputBenchmarkTests {
         let length = (initial as NSString).length
         let location = caretLocation(position, length: length)
         let paragraph = (initial as NSString).paragraphRange(for: NSRange(location: location, length: 0))
+        let moving = position == "moving"
+        let actions = trace.scheduledActions(moving: moving)
+        let clipView = moving ? view.enclosingScrollView?.contentView : nil
         let (undo, idleDuration) = try await prepare(host, initial: initial, location: location, timing: timing)
         let before = host.counters
         let visibilityBefore = host.visibility
@@ -299,12 +365,15 @@ extension EditorInputBenchmarkTests {
         host.attach(recorder)
         let probe = InputBenchmarkProbe()
         var schedule: [InputBenchmarkRun.DispatchSample] = []
+        var segmentID = 0
         undo.beginUndoGrouping()
         let started = ProcessInfo.processInfo.systemUptime
-        for (sequence, action) in trace.actions.enumerated() {
+        for (sequence, action) in actions.enumerated() {
             let requested = started + Double(sequence) * configuration.cadenceSeconds
             let delay = requested - ProcessInfo.processInfo.systemUptime
             if delay > 0 { try await Task.sleep(for: .seconds(delay)) }
+            let selectionBefore = moving ? view.selectedRange().location : nil
+            let scrollBefore = action.isCaretMove ? clipView?.bounds.origin.y : nil
             let actual = ProcessInfo.processInfo.systemUptime
             // Input overrides cover insert/marked calls. These outer tokens identify other
             // synthetic operations and preserve nested insertText attribution.
@@ -312,16 +381,25 @@ extension EditorInputBenchmarkTests {
             switch action {
             case .newline: kind = .newline
             case .deleteBackward: kind = .deleteBackward
-            case .left, .right: kind = .cursor
+            case .left, .right, .moveToMiddle, .moveToEnd, .moveToStart: kind = .cursor
             case .replace: kind = .selectionReplacement
             case .paste: kind = .paste
             default: kind = nil
             }
             let token = kind.flatMap { recorder?.beginOperation(kind: $0, composing: view.hasMarkedText()) }
-            InputBenchmarkTrace.perform(action, in: view)
+            let moveLocation = try InputBenchmarkTrace.perform(action, in: view)
             if let token { recorder?.endOperation(token) }
-            schedule.append(.init(sequence: sequence, action: action, requested: requested,
-                                  started: actual, ended: ProcessInfo.processInfo.systemUptime))
+            let completed = ProcessInfo.processInfo.systemUptime
+            let caretMove = moveLocation.map { location in
+                InputBenchmarkRun.DispatchSample.CaretMove(requestedUTF16Location: location,
+                    selectedUTF16Location: view.selectedRange().location, scrollOriginYBefore: scrollBefore,
+                    scrollOriginYAfter: clipView?.bounds.origin.y, operationID: token?.id)
+            }
+            let firstAfterMove = moving && caretMove == nil && schedule.last?.caretMove != nil
+            if caretMove != nil { segmentID += 1 }
+            schedule.append(.init(sequence: sequence, action: action, requested: requested, started: actual, ended: completed,
+                segmentID: moving ? segmentID : nil, selectionBeforeUTF16: selectionBefore,
+                firstInputAfterMove: moving && caretMove == nil ? firstAfterMove : nil, caretMove: caretMove))
         }
         let ended = ProcessInfo.processInfo.systemUptime
         undo.endUndoGrouping()
@@ -333,8 +411,16 @@ extension EditorInputBenchmarkTests {
         let after = host.counters
         let visibilityAfter = host.visibility
         // Build the full-document integrity reference after trace capture.
-        let expected = trace.expectedText(initial, location: location)
+        let expected = trace.expectedText(initial, location: location, moving: moving)
         guard view.string == expected, !view.hasMarkedText() else { throw InputBenchmarkError.integrity("measured final text/composition") }
+        let moves = schedule.filter { $0.caretMove != nil }
+        let inputs = schedule.filter { $0.caretMove == nil }
+        let firstPostMove = inputs.filter { $0.firstInputAfterMove == true }
+        guard moves.count == firstPostMove.count, zip(moves, firstPostMove).allSatisfy({ move, input in
+            move.caretMove?.selectedUTF16Location == move.caretMove?.requestedUTF16Location &&
+                move.selectionBeforeUTF16 != move.caretMove?.selectedUTF16Location &&
+                input.selectionBeforeUTF16 == move.caretMove?.selectedUTF16Location
+        }) else { throw InputBenchmarkError.integrity("caret move destination") }
         let sourceAfter = (view as? BlockTextView)?.serialize()
         view.breakUndoCoalescing()
         guard undo.canUndo else { throw InputBenchmarkError.integrity("missing undo") }
@@ -371,8 +457,11 @@ extension EditorInputBenchmarkTests {
             integrity: ["finalText": "passed", "compositionEnded": "passed", "undo": "passed", "redo": "passed",
                         "saveReopen": target == "workspace" ? "projectSession-flush-projectStore-reload-passed" : "utf8-scratch-file-passed"],
             schedule: schedule, probes: probes, trace: captured, metrics: captured.map(InputBenchmarkMetrics.init),
-            dispatchDurationSeconds: InputBenchmarkDistribution(schedule.map { $0.ended - $0.started }),
-            syntheticSchedulingDelaySeconds: InputBenchmarkDistribution(schedule.map(\.schedulingDelay)),
+            dispatchDurationSeconds: InputBenchmarkDistribution(inputs.map(\.duration)),
+            syntheticSchedulingDelaySeconds: InputBenchmarkDistribution(inputs.map(\.schedulingDelay)),
+            caretMoveDurationSeconds: InputBenchmarkDistribution(moves.map(\.duration)),
+            firstPostMoveDispatchDurationSeconds: InputBenchmarkDistribution(firstPostMove.map(\.duration)),
+            firstPostMoveSchedulingDelaySeconds: InputBenchmarkDistribution(firstPostMove.map(\.schedulingDelay)),
             probeDelaySeconds: InputBenchmarkDistribution(probes.map { $0.executed - $0.posted }))
     }
 }

@@ -113,7 +113,8 @@ struct InputBenchmarkConfiguration: Codable {
         }
         shapes = try list("SHAPES", "short,long", parse: InputBenchmarkFixture.Shape.init(rawValue:))
         formats = try list("FORMATS", "plain,markdown", parse: InputBenchmarkFixture.Format.init(rawValue:))
-        positions = try list("POSITIONS", "start,middle,end") { ["start","middle","end"].contains($0) ? $0 : nil }
+        let supportedPositions = ["start", "middle", "end", "moving"]
+        positions = try list("POSITIONS", supportedPositions.joined(separator: ",")) { supportedPositions.contains($0) ? $0 : nil }
         traces = try list("TRACES", "latin,hangul,editing,paste", parse: InputBenchmarkTrace.init(rawValue:))
         timings = try list("TIMINGS", "immediate,idle") { ["immediate","idle"].contains($0) ? $0 : nil }
         guard let repetitions = Int(e["PURLORY_INPUT_BENCHMARK_REPETITIONS"] ?? "5"), (1...100).contains(repetitions),

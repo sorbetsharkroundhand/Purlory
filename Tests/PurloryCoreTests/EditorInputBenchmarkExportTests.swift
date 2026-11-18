@@ -4,6 +4,53 @@ import XCTest
 
 @MainActor
 extension EditorInputBenchmarkTests {
+    func testMovingScheduleExportsCaretScrollAndFirstInput() throws {
+        let configuration = try InputBenchmarkConfiguration(environment: ["PURLORY_INPUT_BENCHMARK_POSITIONS": "moving"])
+        let fixture = InputBenchmarkFixture(size: 1000, shape: .short, format: .plain)
+        let movement = InputBenchmarkRun.DispatchSample(sequence: 12, action: .moveToMiddle, requested: 1, started: 1, ended: 2,
+            segmentID: 1, selectionBeforeUTF16: 12, firstInputAfterMove: nil, caretMove: .init(
+                requestedUTF16Location: 506, selectedUTF16Location: 506, scrollOriginYBefore: 5, scrollOriginYAfter: 40, operationID: 22))
+        let first = InputBenchmarkRun.DispatchSample(sequence: 13, action: .latin, requested: 2, started: 3, ended: 4,
+            segmentID: 1, selectionBeforeUTF16: 506, firstInputAfterMove: true, caretMove: nil)
+        let run = InputBenchmarkRun(scenarioID: "1000-short-plain-moving-latin-immediate", runID: 2,
+            burstID: 0, target: "native", fixture: fixture.metadata, position: "moving", activeParagraphUTF16Count: 50,
+            initialRenderedUTF16Count: 1000, traceKind: .latin, timing: "immediate", elapsedIdleSeconds: 0, started: 1, ended: 4,
+            settings: [:], referenceSettings: [:], settingsDifferences: [], scope: [:], visibilityBefore: [:], visibilityAfter: [:],
+            countersBefore: [:], countersAfter: [:], integrity: [:], schedule: [movement, first], probes: [], trace: nil, metrics: nil,
+            dispatchDurationSeconds: nil, syntheticSchedulingDelaySeconds: nil, caretMoveDurationSeconds: nil,
+            firstPostMoveDispatchDurationSeconds: nil, firstPostMoveSchedulingDelaySeconds: nil, probeDelaySeconds: nil)
+        let report = InputBenchmarkReport(schemaVersion: 2, clock: "ProcessInfo.systemUptime", timestampUnit: "seconds",
+            configuration: configuration, provenance: [:], environment: [:], limitations: [], runs: [run])
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("input-moving-export-\(UUID())")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try report.write(to: directory)
+        let decoded = try JSONDecoder().decode(InputBenchmarkReport.self,
+            from: Data(contentsOf: directory.appendingPathComponent("report.json")))
+        let decodedRows = try XCTUnwrap(decoded.runs.first?.schedule)
+        XCTAssertEqual(decodedRows.first?.caretMove?.requestedUTF16Location, 506)
+        XCTAssertEqual(decodedRows.first?.caretMove?.scrollOriginYAfter, 40)
+        XCTAssertEqual(decodedRows.first?.caretMove?.operationID, 22)
+        XCTAssertEqual(decodedRows.last?.firstInputAfterMove, true)
+        let csv = try String(contentsOf: directory.appendingPathComponent("schedule.csv"), encoding: .utf8)
+        let rows = csv.split(separator: "\n").map { $0.split(separator: ",", omittingEmptySubsequences: false).map(String.init) }
+        XCTAssertEqual(rows.count, 3)
+        XCTAssertTrue(rows.allSatisfy { $0.count == rows[0].count })
+        let moveRow = Dictionary(uniqueKeysWithValues: zip(rows[0], rows[1]))
+        let inputRow = Dictionary(uniqueKeysWithValues: zip(rows[0], rows[2]))
+        XCTAssertEqual(moveRow["action"], "moveToMiddle")
+        XCTAssertEqual(moveRow["selection_before_utf16"], "12")
+        XCTAssertEqual(moveRow["move_requested_utf16"], "506")
+        XCTAssertEqual(moveRow["move_selected_utf16"], "506")
+        XCTAssertEqual(moveRow["scroll_origin_y_before"], "5.0")
+        XCTAssertEqual(moveRow["scroll_origin_y_after"], "40.0")
+        XCTAssertEqual(moveRow["move_operation_id"], "22")
+        XCTAssertEqual(moveRow["segment_id"], inputRow["segment_id"])
+        XCTAssertEqual(inputRow["selection_before_utf16"], "506")
+        XCTAssertEqual(inputRow["first_input_after_move"], "true")
+        XCTAssertEqual(inputRow["move_requested_utf16"], "")
+    }
+
     // Dropping IDs, inventing empty metrics, leaking fixture text or overwriting reports breaks export consumers.
     func testExportsPreserveRawCorrelationAndMissingMetricsWithoutOverwriting() throws {
         var time = 10.0
@@ -22,8 +69,9 @@ extension EditorInputBenchmarkTests {
             visibilityBefore: [:], visibilityAfter: [:], countersBefore: [:], countersAfter: [:],
             integrity: ["finalText": "passed"], schedule: [], probes: [], trace: captured,
             metrics: InputBenchmarkMetrics(trace: captured), dispatchDurationSeconds: nil,
-            syntheticSchedulingDelaySeconds: nil, probeDelaySeconds: nil)
-        let report = InputBenchmarkReport(schemaVersion: 1, clock: "ProcessInfo.systemUptime",
+            syntheticSchedulingDelaySeconds: nil, caretMoveDurationSeconds: nil, firstPostMoveDispatchDurationSeconds: nil,
+            firstPostMoveSchedulingDelaySeconds: nil, probeDelaySeconds: nil)
+        let report = InputBenchmarkReport(schemaVersion: 2, clock: "ProcessInfo.systemUptime",
             timestampUnit: "seconds", configuration: configuration, provenance: [:], environment: [:],
             limitations: [], runs: [run])
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("input-export-\(UUID())")

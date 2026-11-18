@@ -94,7 +94,26 @@ struct InputBenchmarkFixture {
 
 enum InputBenchmarkTrace: String, CaseIterable, Codable {
     case latin, hangul, editing, paste
-    enum Action: String, Codable { case latin, markJamo, markSyllable, commit, newline, deleteBackward, left, right, replace, paste }
+    enum Action: String, Codable {
+        case latin, markJamo, markSyllable, commit, newline, deleteBackward, left, right, replace, paste
+        case moveToMiddle, moveToEnd, moveToStart
+
+        var isCaretMove: Bool {
+            switch self {
+            case .moveToMiddle, .moveToEnd, .moveToStart: true
+            default: false
+            }
+        }
+
+        func caretMoveLocation(length: Int) -> Int? {
+            switch self {
+            case .moveToMiddle: length / 2
+            case .moveToEnd: length
+            case .moveToStart: 0
+            default: nil
+            }
+        }
+    }
     var actions: [Action] {
         switch self {
         case .latin: Array(repeating: .latin, count: 12)
@@ -103,8 +122,14 @@ enum InputBenchmarkTrace: String, CaseIterable, Codable {
         case .paste: [.paste]
         }
     }
+    func scheduledActions(moving: Bool) -> [Action] {
+        let input = actions
+        guard moving else { return input }
+        return input + [.moveToMiddle] + input + [.moveToEnd] + input + [.moveToStart] + input
+    }
+
     static let pasteText = String(repeating: "Synthetic paste. ", count: 8)
-    func expectedText(_ text: String, location: Int) -> String {
+    func expectedText(_ text: String, location: Int, moving: Bool = false) -> String {
         let expected = NSMutableString(string: text)
         var cursor = location
         var marked: NSRange?
@@ -112,7 +137,7 @@ enum InputBenchmarkTrace: String, CaseIterable, Codable {
             expected.replaceCharacters(in: range, with: value)
             cursor = range.location + (value as NSString).length
         }
-        for action in actions {
+        for action in scheduledActions(moving: moving) {
             switch action {
             case .latin: replace("a", range: NSRange(location: cursor, length: 0))
             case .markJamo, .markSyllable:
@@ -127,12 +152,14 @@ enum InputBenchmarkTrace: String, CaseIterable, Codable {
             case .right: cursor = min(expected.length, cursor + 1)
             case .replace: replace("Z", range: NSRange(location: max(0, cursor - 1), length: cursor > 0 ? 1 : 0))
             case .paste: replace(Self.pasteText, range: NSRange(location: cursor, length: 0))
+            case .moveToMiddle, .moveToEnd, .moveToStart:
+                cursor = action.caretMoveLocation(length: expected.length)!
             }
         }
         return expected as String
     }
     @MainActor
-    static func perform(_ action: Action, in view: NSTextView) {
+    static func perform(_ action: Action, in view: NSTextView) throws -> Int? {
         switch action {
         case .latin: view.insertText("a", replacementRange: view.selectedRange())
         case .markJamo, .markSyllable:
@@ -148,6 +175,15 @@ enum InputBenchmarkTrace: String, CaseIterable, Codable {
             view.setSelectedRange(NSRange(location: max(0, cursor - 1), length: cursor > 0 ? 1 : 0))
             view.insertText("Z", replacementRange: view.selectedRange())
         case .paste: view.insertText(pasteText, replacementRange: view.selectedRange())
+        case .moveToMiddle, .moveToEnd, .moveToStart:
+            guard !view.hasMarkedText(), let storage = view.textStorage,
+                  let location = action.caretMoveLocation(length: storage.length)
+            else { throw InputBenchmarkError.integrity("caret move with unfinished composition or missing text storage") }
+            let range = NSRange(location: location, length: 0)
+            view.setSelectedRange(range)
+            view.scrollRangeToVisible(range)
+            return location
         }
+        return nil
     }
 }

@@ -30,7 +30,7 @@ args = parser.parse_args()
 choices = {
     'sizes': ('1000,10000,100000,230544,500000,1000000', '1000'),
     'shapes': ('short,long', 'short'), 'formats': ('plain,markdown', 'plain'),
-    'positions': ('start,middle,end', 'middle'), 'traces': ('latin,hangul,editing,paste', 'latin,hangul'),
+    'positions': ('start,middle,end,moving', 'middle'), 'traces': ('latin,hangul,editing,paste', 'latin,hangul'),
     'timings': ('immediate,idle', 'immediate'),
 }
 for key, (full, quick) in choices.items():
