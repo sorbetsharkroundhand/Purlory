@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 /// Keep all accepted text, IME and undo ownership on this single NSTextView instance.
 @MainActor
 final class BlockTextView: NSTextView {
+    var inputTraceRecorder: EditorInputTraceRecorder?
     var workspaceInteraction: (any EditorWorkspaceInteraction)?
     var workspaceTrackingArea: NSTrackingArea?
     var documentUndoManager: UndoManager?

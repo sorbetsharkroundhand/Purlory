@@ -521,12 +521,17 @@ public struct PurloryBlockEditor: NSViewRepresentable {
             guard !isDocumentTransitioning,
                 let textView = notification.object as? BlockTextView
             else { return }
-            // 입력 지연 계측 (로컬 진단) — 핸들러 구간과, 이 런루프 턴에 쌓인
-            // 후속 작업(SwiftUI 갱신·레이아웃)까지의 총 구간을 나눠 잰다.
-            // 랙 보고를 숫자로 만들기 위한 장비 — 측정 없이 튜닝 없음 (CLAUDE.md §2-7).
-            let start = CFAbsoluteTimeGetCurrent()
+            // Monotonic handler time and main-queue callback delay. The latter is not
+            // display completion, presentation latency, or an operating-system event wait.
+            let start = ProcessInfo.processInfo.systemUptime
+            let recorder = textView.inputTraceRecorder
+            let coordinatorToken = recorder?.beginPhase(.coordinator)
+            defer { if let coordinatorToken { recorder?.endPhase(coordinatorToken) } }
             textView.writingProjectionCapture.willBind()
+            let serializationToken = recorder?.beginPhase(.serialization)
             let source = textView.serializedSource()
+            if let serializationToken { recorder?.endPhase(serializationToken) }
+            let bindingToken = recorder?.beginPhase(.binding)
             if let binding = parent.sourceBinding {
                 lastSyncedSource = source
                 binding.wrappedValue = source
@@ -535,9 +540,12 @@ public struct PurloryBlockEditor: NSViewRepresentable {
                 lastSyncedText = serialized
                 parent.text = serialized
             }
+            if let bindingToken { recorder?.endPhase(bindingToken) }
+            let projectionToken = recorder?.beginPhase(.projection)
             if let storage = textView.textStorage {
                 textView.writingProjectionCapture.didBind(source: source, storage: storage)
             }
+            if let projectionToken { recorder?.endPhase(projectionToken) }
             // 집필 위치 영속 기록 (#36) — 메모리 갱신 + 디바운스 디스크. 조합 중은
             // record가 무시한다. 전환 없이 ⌘Q해도 마지막 자리가 남는 이유다.
             if let snapshot = textView.writingPositionSnapshot() {
@@ -547,10 +555,10 @@ public struct PurloryBlockEditor: NSViewRepresentable {
                     in: parent.positionStore)
             }
             forwardEditEvent(textView)
-            let handlerMs = (CFAbsoluteTimeGetCurrent() - start) * 1000
+            let handlerMs = (ProcessInfo.processInfo.systemUptime - start) * 1000
             let controller = parent.controller
             DispatchQueue.main.async {
-                let totalMs = (CFAbsoluteTimeGetCurrent() - start) * 1000
+                let totalMs = (ProcessInfo.processInfo.systemUptime - start) * 1000
                 controller?.noteKeystroke(handlerMs: handlerMs, totalMs: totalMs)
             }
         }
@@ -723,6 +731,9 @@ public struct PurloryBlockEditor: NSViewRepresentable {
         }
 
         private func forwardEditEvent(_ textView: BlockTextView) {
+            let recorder = textView.inputTraceRecorder
+            let traceToken = recorder?.beginPhase(.forwarding)
+            defer { if let traceToken { recorder?.endPhase(traceToken) } }
             guard parent.isActiveEditor, let controller = parent.controller,
                   textView.window?.firstResponder === textView else { return }
             let storage = textView.string as NSString
