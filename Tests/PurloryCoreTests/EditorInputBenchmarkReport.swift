@@ -166,17 +166,65 @@ extension EditorInputBenchmarkTests {
         try report.write(to: directory)
     }
 
-    private func recordRun(fixture: InputBenchmarkFixture, position: String, trace: InputBenchmarkTrace,
-                           timing: String, target: String, repetition: Int,
-                           configuration: InputBenchmarkConfiguration) async throws -> InputBenchmarkRun {
-        let host = try await InputBenchmarkHost.make(target: target, fixture: fixture)
-        defer { host.close() }
+    // Freezing settings during host construction misses caret-dependent Markdown font runs.
+    func testMarkdownRunsExportPreparedPositionSettings() async throws {
+        let fixture = InputBenchmarkFixture(size: 1000, shape: .short, format: .markdown)
+        var expectedFonts: [String: String] = [:]
+        do {
+            let reference = try await InputBenchmarkHost.makeWorkspace(fixture: fixture)
+            defer { reference.close() }
+            for position in ["start", "middle", "end"] {
+                let view = reference.view
+                let initial = view.string
+                let length = (initial as NSString).length
+                let location = position == "start" ? 0 : position == "middle" ? length / 2 : length
+                view.setSelectedRange(NSRange(location: location, length: 0))
+                reference.window.makeKeyAndOrderFront(nil)
+                reference.window.makeFirstResponder(view)
+                let undo = try XCTUnwrap(view.undoManager)
+                undo.groupsByEvent = false
+                undo.beginUndoGrouping()
+                view.insertText("w", replacementRange: view.selectedRange())
+                view.deleteBackward(nil)
+                undo.endUndoGrouping()
+                try await Task.sleep(for: .milliseconds(100))
+                XCTAssertEqual(view.string, initial)
+                expectedFonts[position] = try XCTUnwrap(view.typingAttributes[.font] as? NSFont).fontName
+                undo.removeAllActions()
+            }
+            try await reference.workspace?.fixture.session.flush()
+        }
+        XCTAssertNotEqual(expectedFonts["start"], expectedFonts["end"], "The fixture must exercise distinct inline font runs")
+        let configuration = try InputBenchmarkConfiguration(environment: ["PURLORY_INPUT_BENCHMARK_INSTRUMENTATION": "off"])
+        for position in ["start", "middle", "end"] {
+            for target in ["native", "workspace"] {
+                let run = try await recordRun(fixture: fixture, position: position, trace: .latin,
+                    timing: "immediate", target: target, repetition: 0, configuration: configuration)
+                XCTAssertEqual(run.settings["font"], expectedFonts[position], "\(target) \(position) actual")
+                XCTAssertEqual(run.referenceSettings["font"], expectedFonts[position], "\(target) \(position) reference")
+                XCTAssertFalse(run.settingsDifferences.contains("font"), "\(target) \(position) matched font")
+            }
+        }
+    }
+
+    func testNativeComparatorMatchesWorkspaceNonContiguousLayout() async throws {
+        let fixture = InputBenchmarkFixture(size: 1000, shape: .short, format: .plain)
+        let workspace = try await InputBenchmarkHost.makeWorkspace(fixture: fixture)
+        defer { workspace.close() }
+        let native = InputBenchmarkHost.makeNative(matching: workspace.view)
+        defer { native.close() }
+
+        let workspaceLayout = try XCTUnwrap(workspace.view.layoutManager)
+        let nativeLayout = try XCTUnwrap(native.view.layoutManager)
+        XCTAssertEqual(nativeLayout.allowsNonContiguousLayout, workspaceLayout.allowsNonContiguousLayout)
+        XCTAssertEqual(native.effectiveSettings["allowsNonContiguousLayout"], String(workspaceLayout.allowsNonContiguousLayout))
+        XCTAssertEqual(workspace.effectiveSettings["allowsNonContiguousLayout"], String(workspaceLayout.allowsNonContiguousLayout))
+        try await workspace.workspace?.fixture.session.flush()
+    }
+
+    private func prepare(_ host: InputBenchmarkHost, initial: String, location: Int,
+                         timing: String) async throws -> (undo: UndoManager, idleDuration: Double) {
         let view = host.view
-        let initial = view.string
-        let sourceBefore = (view as? BlockTextView)?.serialize()
-        let length = (initial as NSString).length
-        let location = position == "start" ? 0 : position == "middle" ? length / 2 : length
-        let paragraph = (initial as NSString).paragraphRange(for: NSRange(location: location, length: 0))
         view.setSelectedRange(NSRange(location: location, length: 0))
         view.scrollRangeToVisible(view.selectedRange())
         host.window.makeKeyAndOrderFront(nil)
@@ -195,9 +243,59 @@ extension EditorInputBenchmarkTests {
         let idleStart = ProcessInfo.processInfo.systemUptime
         if timing == "idle" { try await Task.sleep(for: .seconds(5)) }
         let idleDuration = ProcessInfo.processInfo.systemUptime - idleStart
+        return (undo, idleDuration)
+    }
+
+    private func nativeComparator(fixture: InputBenchmarkFixture, position: String,
+                                  timing: String) async throws -> (host: InputBenchmarkHost, referenceSettings: [String: String]) {
+        let reference = try await InputBenchmarkHost.makeWorkspace(fixture: fixture)
+        defer { reference.close() }
+        let initial = reference.view.string
+        let location = caretLocation(position, length: (initial as NSString).length)
+        _ = try await prepare(reference, initial: initial, location: location, timing: timing)
+        let settings = reference.effectiveSettings
+        let native = InputBenchmarkHost.makeNative(matching: reference.view)
+        do {
+            try await reference.workspace?.fixture.session.flush()
+            return (native, settings)
+        } catch {
+            native.close()
+            throw error
+        }
+    }
+
+    private func caretLocation(_ position: String, length: Int) -> Int {
+        switch position {
+        case "start": 0
+        case "middle": length / 2
+        default: length
+        }
+    }
+
+    private func recordRun(fixture: InputBenchmarkFixture, position: String, trace: InputBenchmarkTrace,
+                           timing: String, target: String, repetition: Int,
+                           configuration: InputBenchmarkConfiguration) async throws -> InputBenchmarkRun {
+        let host: InputBenchmarkHost
+        let workspaceReference: [String: String]?
+        if target == "native" {
+            (host, workspaceReference) = try await nativeComparator(fixture: fixture, position: position, timing: timing)
+        } else {
+            host = try await InputBenchmarkHost.makeWorkspace(fixture: fixture)
+            workspaceReference = nil
+        }
+        defer { host.close() }
+        let view = host.view
+        let initial = view.string
+        let sourceBefore = (view as? BlockTextView)?.serialize()
+        let length = (initial as NSString).length
+        let location = caretLocation(position, length: length)
+        let paragraph = (initial as NSString).paragraphRange(for: NSRange(location: location, length: 0))
+        let (undo, idleDuration) = try await prepare(host, initial: initial, location: location, timing: timing)
         let expected = trace.expectedText(initial, location: location)
         let before = host.counters
         let visibilityBefore = host.visibility
+        let settings = host.effectiveSettings
+        let referenceSettings = workspaceReference ?? settings
         let recorder = configuration.instrumentation ? EditorInputTraceRecorder(signposts: configuration.signposts) : nil
         host.attach(recorder)
         let probe = InputBenchmarkProbe()
@@ -261,8 +359,8 @@ extension EditorInputBenchmarkTests {
         return InputBenchmarkRun(scenarioID: scenario, runID: repetition, burstID: 0, target: target,
             fixture: fixture.metadata, position: position, activeParagraphUTF16Count: paragraph.length,
             initialRenderedUTF16Count: length, traceKind: trace, timing: timing, elapsedIdleSeconds: idleDuration,
-            started: started, ended: ended, settings: host.settings, referenceSettings: host.referenceSettings,
-            settingsDifferences: host.settings.keys.filter { host.settings[$0] != host.referenceSettings[$0] }.sorted(),
+            started: started, ended: ended, settings: settings, referenceSettings: referenceSettings,
+            settingsDifferences: settings.keys.filter { settings[$0] != referenceSettings[$0] }.sorted(),
             scope: target == "workspace" ? ["host": "FramedWorkspaceHarness-ContentView", "writingMode": "general",
                 "completion": "disabled-no-model", "diagnostics": "nil", "indexer": "instantiated-no-model",
                 "outline": "workspace-default", "positionStore": "enabled", "autosaveDelayMilliseconds": "800",

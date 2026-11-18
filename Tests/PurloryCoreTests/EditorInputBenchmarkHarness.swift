@@ -134,20 +134,23 @@ struct InputBenchmarkHost {
     let view: NSTextView
     let window: NSWindow
     let workspace: FramedWorkspaceHarness?
-    let settings: [String: String]
-    let referenceSettings: [String: String]
 
-    static func make(target: String, fixture: InputBenchmarkFixture) async throws -> Self {
+    static func makeWorkspace(fixture: InputBenchmarkFixture) async throws -> Self {
         let workspace = try await FramedWorkspaceHarness(autosaveDelay: .milliseconds(800))
-        workspace.fixture.session.updateSelectedDocumentBody(fixture.text)
-        let editor = try await workspace.editor()
-        let reference = effectiveSettings(editor)
-        if target == "workspace" {
-            return Self(view: editor, window: workspace.window, workspace: workspace,
-                        settings: reference, referenceSettings: reference)
+        do {
+            workspace.fixture.session.updateSelectedDocumentBody(fixture.text)
+            let editor = try await workspace.editor()
+            return Self(view: editor, window: workspace.window, workspace: workspace)
+        } catch {
+            workspace.close()
+            throw error
         }
+    }
+
+    static func makeNative(matching editor: NSTextView) -> Self {
         let storage = NSTextStorage(attributedString: editor.textStorage!)
         let manager = NSLayoutManager()
+        manager.allowsNonContiguousLayout = editor.layoutManager!.allowsNonContiguousLayout
         storage.addLayoutManager(manager)
         let container = NSTextContainer(containerSize: editor.textContainer!.containerSize)
         container.widthTracksTextView = editor.textContainer!.widthTracksTextView
@@ -180,13 +183,13 @@ struct InputBenchmarkHost {
         window.testUndo.groupsByEvent = false
         window.contentView = scroll
         window.layoutIfNeeded()
-        let settings = effectiveSettings(view)
-        workspace.close()
-        return Self(view: view, window: window, workspace: nil, settings: settings, referenceSettings: reference)
+        return Self(view: view, window: window, workspace: nil)
     }
-    static func effectiveSettings(_ view: NSTextView) -> [String: String] {
+
+    var effectiveSettings: [String: String] {
         let font = (view.typingAttributes[.font] as? NSFont) ?? view.font
         let style = (view.typingAttributes[.paragraphStyle] as? NSParagraphStyle) ?? view.defaultParagraphStyle
+        let layoutManager = view.layoutManager!
         return [
             "font": font?.fontName ?? "unknown", "fontSize": String(describing: font?.pointSize ?? 0),
             "containerWidth": String(describing: view.textContainer?.containerSize.width ?? 0),
@@ -203,7 +206,8 @@ struct InputBenchmarkHost {
             "spellingCorrection": String(view.isAutomaticSpellingCorrectionEnabled),
             "spellChecking": String(view.isContinuousSpellCheckingEnabled), "grammarChecking": String(view.isGrammarCheckingEnabled),
             "smartInsertDelete": String(view.smartInsertDeleteEnabled), "richText": String(view.isRichText),
-            "layoutManager": String(describing: type(of: view.layoutManager!))]
+            "allowsNonContiguousLayout": String(layoutManager.allowsNonContiguousLayout),
+            "layoutManager": String(describing: type(of: layoutManager))]
     }
     func attach(_ recorder: EditorInputTraceRecorder?) {
         (view as? BlockTextView)?.inputTraceRecorder = recorder
