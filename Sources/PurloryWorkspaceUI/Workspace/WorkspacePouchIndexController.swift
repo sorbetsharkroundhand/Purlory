@@ -29,28 +29,47 @@ import AppKit
         parent.addChildWindow(panel, ordered: .above)
     }
 
-    func update(theme: PurloryTheme, actions: [WorkspacePouchAction], visible: Bool) {
-        view.configure(theme: theme, actions: actions, reduceTransparency: reduceTransparency)
-        panel.appearance = NSAppearance(named: theme.editorSurface.relativeLuminance < 0.5 ? .darkAqua : .aqua)
+    @discardableResult
+    func update(theme: PurloryTheme, actions: [WorkspacePouchAction], visible: Bool) -> Bool {
+        var changed = view.configure(theme: theme, actions: actions, reduceTransparency: reduceTransparency)
+        let appearanceName: NSAppearance.Name = theme.editorSurface.relativeLuminance < 0.5 ? .darkAqua : .aqua
+        if panel.appearance?.name != appearanceName {
+            panel.appearance = NSAppearance(named: appearanceName)
+            changed = true
+        }
         guard visible, parent?.isVisible == true, parent?.isMiniaturized == false,
               parent?.attachedSheet == nil else {
-            hide(); return
+            if panel.isVisible || drag != nil || hovered || clock != nil || expansion.value != (isExpanded ? 1 : 0) || hover.value != 0 {
+                hide()
+                changed = true
+            }
+            return changed
         }
         if reduceMotion { settle() }
-        layout()
+        if layout() { changed = true }
         // AppKit removes the child relationship when a panel is ordered out.
-        if panel.parent !== parent { parent?.addChildWindow(panel, ordered: .above) }
-        if !panel.isVisible { panel.orderFront(nil) }
+        if panel.parent !== parent { parent?.addChildWindow(panel, ordered: .above); changed = true }
+        if !panel.isVisible { panel.orderFront(nil); changed = true }
+        return changed
     }
 
-    func layout() {
-        guard let parent else { return }
+    @discardableResult
+    func layout() -> Bool {
+        guard let parent else { return false }
         let screen = (parent.screen ?? NSScreen.main)?.visibleFrame ?? parent.frame.insetBy(dx: -100, dy: 0)
         let geometry = WorkspacePouchIndexGeometry(window: parent.frame, screen: screen,
                                                    progress: expansion.value, hover: hover.value)
+        if self.geometry == geometry,
+           panel.frame == geometry.frame,
+           view.matches(geometry: geometry, progress: expansion.value, expanded: isExpanded) {
+            return false
+        }
         self.geometry = geometry
-        panel.setFrame(geometry.frame, display: false)
+        if panel.frame != geometry.frame {
+            panel.setFrame(geometry.frame, display: false)
+        }
         view.update(geometry: geometry, progress: expansion.value, expanded: isExpanded)
+        return true
     }
 
     func setExpanded(_ expanded: Bool) {
@@ -121,4 +140,5 @@ import AppKit
 private final class IndexPanel: NSPanel {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 }

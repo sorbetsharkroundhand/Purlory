@@ -13,18 +13,57 @@ enum WorkspacePouchStyle {
 }
 
 final class WorkspacePouchView: NSView {
+    private struct ActionSnapshot: Equatable {
+        let id: String
+        let label: String
+        let symbol: String
+        let enabled: Bool
+        let selected: Bool
+    }
+
+    private struct RenderedConfiguration: Equatable {
+        let orb: Bool
+        let horizontal: Bool
+        let attached: Bool
+        let theme: PurloryTheme
+        let toolsExpanded: Bool
+        let appearanceName: NSAppearance.Name?
+        let controllerID: ObjectIdentifier?
+        let actions: [ActionSnapshot]
+    }
+
     weak var controller: WorkspacePouchController?
     private let grip = WorkspacePouchButton(title: "", target: nil, action: nil)
     private var buttons: [WorkspacePouchButton] = []
     private var actions: [WorkspacePouchAction] = []
     private var orb = false, horizontal = false, attached = false
     private var toolsHost: NSHostingView<AnyView>?
+    private var pendingTools: AnyView?
+    private var renderedConfiguration: RenderedConfiguration?
+    var hasMountedToolsHost: Bool { toolsHost != nil }
+    private(set) var toolsHostUpdateCount = 0
     private let dismissButton = WorkspacePouchButton(title: "", target: nil, action: nil)
     private let moreButton = WorkspacePouchButton(title: "", target: nil, action: nil)
     private let titleField = NSTextField(labelWithString: "Purlory")
-    var targetTitle = "Purlory" { didSet { titleField.stringValue = targetTitle; titleField.toolTip = targetTitle } }
+    var targetTitle = "Purlory" {
+        didSet {
+            guard targetTitle != oldValue else { return }
+            titleField.stringValue = targetTitle
+            titleField.toolTip = targetTitle
+        }
+    }
     var placement: WorkspacePouchPlacement? { didSet { if placement != oldValue { needsLayout = true; needsDisplay = true } } }
-    var toolsExpanded = false { didSet { needsLayout = true; needsDisplay = true } }
+    var toolsExpanded = false {
+        didSet {
+            guard toolsExpanded != oldValue else { return }
+            if toolsExpanded, let pending = pendingTools {
+                pendingTools = nil
+                applyTools(pending)
+            }
+            needsLayout = true
+            needsDisplay = true
+        }
+    }
     private var theme: PurloryTheme = .light
     private(set) var hovered = false
     override var isFlipped: Bool { true }
@@ -35,7 +74,7 @@ final class WorkspacePouchView: NSView {
         wantsLayer = true
         setAccessibilityElement(true); setAccessibilityRole(.group)
         grip.target = self; grip.action = #selector(activateGrip)
-        grip.isBordered = false; grip.refusesFirstResponder = false; grip.draggable = true
+        grip.isBordered = false; grip.refusesFirstResponder = false; grip.draggable = true; grip.buildsContextMenu = true
         addSubview(grip)
         titleField.font = PurloryFonts.ui(12, weight: .semibold)
         titleField.textColor = theme.ink
@@ -57,8 +96,20 @@ final class WorkspacePouchView: NSView {
     required init?(coder: NSCoder) { nil }
 
     func setTools(_ root: AnyView) {
-        if let toolsHost { toolsHost.rootView = root }
-        else {
+        if toolsExpanded {
+            pendingTools = nil
+            applyTools(root)
+        } else {
+            pendingTools = root
+        }
+    }
+
+    private func applyTools(_ root: AnyView) {
+        toolsHostUpdateCount += 1
+        if let toolsHost {
+            toolsHost.appearance = appearance
+            toolsHost.rootView = root
+        } else {
             let host = NSHostingView(rootView: root)
             host.setAccessibilityIdentifier("purlory.workspace.pouch.tools")
             host.sizingOptions = []; host.wantsLayer = true
@@ -89,39 +140,94 @@ final class WorkspacePouchView: NSView {
         return ((responder as? NSTextView)?.delegate as? NSView)?.isDescendant(of: self) == true
     }
 
-    func configure(orb: Bool, horizontal: Bool, actions: [WorkspacePouchAction], theme: PurloryTheme, attached: Bool = false) {
-        self.orb = orb; self.horizontal = horizontal; self.actions = actions; self.theme = theme; self.attached = attached
-        titleField.textColor = theme.ink
-        moreButton.theme = theme; moreButton.refresh()
-        dismissButton.theme = theme; dismissButton.refresh()
-        toolsHost?.appearance = appearance
-        grip.controller = controller
-        grip.draggable = orb
-        grip.title = orb ? "M" : ""
-        grip.image = attached ? WorkspaceIcons.image("slider.horizontal.3", size: 13) : nil
-        grip.theme = theme; grip.selected = orb || toolsExpanded
-        grip.font = PurloryFonts.serif(12, weight: .bold); grip.refresh()
-        grip.setAccessibilityIdentifier(orb ? "purlory.workspace.pouch.restore" : "purlory.workspace.pouch.legacy-grip")
-        grip.setAccessibilityHidden(attached)
-        grip.setAccessibilityLabel(orb ? "Purlory 전체 창 펼치기" : "주머니 펼치기")
-        grip.toolTip = orb ? "클릭하여 원고 펼치기 · 드래그하여 이동" : "주머니 펼치기"
-        grip.menu = controller?.moreMenu()
+    @discardableResult
+    func configure(orb: Bool, horizontal: Bool, actions: [WorkspacePouchAction], theme: PurloryTheme, attached: Bool = false) -> Bool {
+        self.actions = actions
+        let snapshots = actions.map {
+            ActionSnapshot(id: $0.id, label: $0.label, symbol: $0.symbol, enabled: $0.enabled(), selected: $0.selected())
+        }
+        let nextConfig = RenderedConfiguration(
+            orb: orb,
+            horizontal: horizontal,
+            attached: attached,
+            theme: theme,
+            toolsExpanded: toolsExpanded,
+            appearanceName: appearance?.name,
+            controllerID: controller.map(ObjectIdentifier.init),
+            actions: snapshots
+        )
+        if renderedConfiguration == nextConfig { return false }
+
+        let previous = renderedConfiguration
+        let themeChanged = previous?.theme != theme
+        let appearanceChanged = previous?.appearanceName != appearance?.name
+        let modeChanged = previous == nil || previous?.orb != orb || previous?.attached != attached
+        let gripChanged = previous == nil
+            || modeChanged
+            || themeChanged
+            || previous?.toolsExpanded != toolsExpanded
+            || previous?.controllerID != nextConfig.controllerID
+
+        self.orb = orb; self.horizontal = horizontal; self.theme = theme; self.attached = attached
+        if themeChanged {
+            titleField.textColor = theme.ink
+            moreButton.theme = theme; moreButton.refresh()
+            dismissButton.theme = theme; dismissButton.refresh()
+        }
+        if appearanceChanged {
+            toolsHost?.appearance = appearance
+        }
+        if gripChanged {
+            grip.controller = controller
+            grip.draggable = orb
+            grip.title = orb ? "M" : ""
+            if previous == nil || previous?.attached != attached {
+                grip.image = attached ? WorkspaceIcons.image("slider.horizontal.3", size: 13) : nil
+            }
+            grip.theme = theme; grip.selected = orb || toolsExpanded
+            grip.font = PurloryFonts.serif(12, weight: .bold); grip.refresh()
+            if modeChanged {
+                grip.setAccessibilityIdentifier(orb ? "purlory.workspace.pouch.restore" : "purlory.workspace.pouch.legacy-grip")
+                grip.setAccessibilityHidden(attached)
+                grip.setAccessibilityLabel(orb ? "Purlory 전체 창 펼치기" : "주머니 펼치기")
+                grip.toolTip = orb ? "클릭하여 원고 펼치기 · 드래그하여 이동" : "주머니 펼치기"
+            }
+        }
         while buttons.count > actions.count { buttons.removeLast().removeFromSuperview() }
         while buttons.count < actions.count {
             let button = WorkspacePouchButton(title: "", target: self, action: #selector(invoke(_:)))
             button.refusesFirstResponder = false
             buttons.append(button); addSubview(button)
         }
+        let previousActions = previous?.actions ?? []
         for (index, action) in actions.enumerated() {
-            let button = buttons[index]; button.controller = controller; button.tag = index
+            let button = buttons[index]
+            let snapshot = snapshots[index]
+            let previousAction = index < previousActions.count ? previousActions[index] : nil
+            button.controller = controller; button.tag = index
             button.isHidden = orb || attached
-            button.image = WorkspaceIcons.image(action.symbol, size: 14)
-            button.title = ""; button.isEnabled = action.enabled()
-            button.theme = theme; button.selected = action.selected(); button.refresh()
-            button.setAccessibilityIdentifier(action.id); button.setAccessibilityLabel(action.label)
-            button.setAccessibilityValue(NSNumber(value: action.selected())); button.toolTip = action.label
+            if previousAction == nil || themeChanged || previousAction?.id != snapshot.id || previousAction?.label != snapshot.label || previousAction?.symbol != snapshot.symbol {
+                if previousAction?.symbol != snapshot.symbol {
+                    button.image = WorkspaceIcons.image(action.symbol, size: 14)
+                }
+                button.title = ""
+                if previousAction?.id != snapshot.id { button.setAccessibilityIdentifier(action.id) }
+                if previousAction?.label != snapshot.label {
+                    button.setAccessibilityLabel(action.label)
+                    button.toolTip = action.label
+                }
+                button.theme = theme
+            }
+            if previousAction == nil || themeChanged || previousAction?.enabled != snapshot.enabled || previousAction?.selected != snapshot.selected {
+                button.isEnabled = snapshot.enabled
+                button.selected = snapshot.selected
+                button.setAccessibilityValue(NSNumber(value: snapshot.selected))
+                button.refresh()
+            }
         }
+        renderedConfiguration = nextConfig
         needsLayout = true; needsDisplay = true
+        return true
     }
     override func layout() {
         super.layout()
@@ -220,7 +326,11 @@ final class WorkspacePouchView: NSView {
 final class WorkspacePouchButton: WorkspaceHTMLButton {
     weak var controller: WorkspacePouchController?
     var draggable = false
+    var buildsContextMenu = false
     override var mouseDownCanMoveWindow: Bool { false }
+    override func menu(for event: NSEvent) -> NSMenu? {
+        buildsContextMenu ? (controller?.moreMenu() ?? super.menu(for: event)) : super.menu(for: event)
+    }
     override func mouseDown(with event: NSEvent) {
         guard draggable else { super.mouseDown(with: event); return }
         highlight(true); controller?.beginDrag(at: screenPoint(event), from: self)
@@ -315,17 +425,20 @@ struct WorkspacePouchBridge: NSViewRepresentable {
         return view
     }
     func updateNSView(_ view: Probe, context: Context) {
-        if let window = view.window { context.coordinator.attach(to: window, from: view) }
-        let controller = context.coordinator.controller
-        controller.reduceMotion = accessibilityOptions.resolvedReduceMotion(system: systemReduceMotion)
-        controller.accessibilityOptions = accessibilityOptions
-        controller.reduceTransparency = systemReduceTransparency || accessibilityOptions.reduceTransparency
-        controller.theme = theme; controller.actions = actions; controller.extraActions = extraActions
-        controller.indexActions = indexActions
-        controller.targetTitle = targetTitle
-        controller.requests = requests
-        controller.setTools(tools)
-        requests.pouch = controller
+        context.coordinator.update(
+            window: view.window,
+            view: view,
+            reduceMotion: accessibilityOptions.resolvedReduceMotion(system: systemReduceMotion),
+            accessibilityOptions: accessibilityOptions,
+            reduceTransparency: systemReduceTransparency || accessibilityOptions.reduceTransparency,
+            theme: theme,
+            actions: actions,
+            indexActions: indexActions,
+            extraActions: extraActions,
+            targetTitle: targetTitle,
+            requests: requests,
+            tools: tools
+        )
     }
     static func dismantleNSView(_ view: Probe, coordinator: Coordinator) {
         coordinator.controller.detachFromWorkspaceView(view)
@@ -335,12 +448,48 @@ struct WorkspacePouchBridge: NSViewRepresentable {
         private(set) var controller: WorkspacePouchController
         init(model: SpatialWorkspaceController, defaults: UserDefaults) { controller = WorkspacePouchController(model: model, defaults: defaults) }
         func attach(to window: NSWindow, from view: Probe) {
+            adoptControllerIfNeeded(for: window, from: view)
+            controller.attach(to: window, from: view)
+        }
+        func update(
+            window: NSWindow?,
+            view: Probe,
+            reduceMotion: Bool,
+            accessibilityOptions: WorkspaceAccessibilityOptions,
+            reduceTransparency: Bool,
+            theme: PurloryTheme,
+            actions: [WorkspacePouchAction],
+            indexActions: [WorkspacePouchAction],
+            extraActions: [WorkspacePouchAction],
+            targetTitle: String,
+            requests: ProjectEditorRequests,
+            tools: AnyView
+        ) {
+            if let window {
+                adoptControllerIfNeeded(for: window, from: view)
+            }
+            controller.applyBridgeUpdate(
+                window: window,
+                workspaceView: view,
+                reduceMotion: reduceMotion,
+                accessibilityOptions: accessibilityOptions,
+                reduceTransparency: reduceTransparency,
+                theme: theme,
+                actions: actions,
+                indexActions: indexActions,
+                extraActions: extraActions,
+                targetTitle: targetTitle,
+                requests: requests,
+                tools: tools
+            )
+            requests.pouch = controller
+        }
+        private func adoptControllerIfNeeded(for window: NSWindow, from view: Probe) {
             if let retained = WorkspacePouchLifetime.controller(for: window), retained !== controller {
                 controller.detachFromWorkspaceView(view)
                 controller = retained
             }
             view.controller = controller
-            controller.attach(to: window, from: view)
         }
     }
     final class Probe: NSView {

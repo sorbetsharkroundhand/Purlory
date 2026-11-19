@@ -43,17 +43,18 @@ struct WorkspacePouchAction {
     private(set) var index: WorkspacePouchIndexController?
     private(set) var isCollapsed = false
     private(set) var isDragging = false
+    private(set) var refreshCount = 0
     var reduceMotion = false
     var accessibilityOptions = WorkspaceAccessibilityOptions()
     private var motionReduced: Bool {
         reduceMotion || accessibilityOptions.resolvedReduceMotion(system: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
     }
     var reduceTransparency = false
-    var theme: PurloryTheme = .light { didSet { refresh() } }
-    var actions: [WorkspacePouchAction] = [] { didSet { refresh() } }
-    var indexActions: [WorkspacePouchAction] = [] { didSet { refresh() } }
+    var theme: PurloryTheme = .light { didSet { if !isBatchUpdating, theme != oldValue { refresh() } } }
+    var actions: [WorkspacePouchAction] = [] { didSet { if !isBatchUpdating { refresh() } } }
+    var indexActions: [WorkspacePouchAction] = [] { didSet { if !isBatchUpdating { refresh() } } }
     var extraActions: [WorkspacePouchAction] = []
-    var targetTitle = "Purlory" { didSet { content?.targetTitle = targetTitle } }
+    var targetTitle = "Purlory" { didSet { if !isBatchUpdating, targetTitle != oldValue { content?.targetTitle = targetTitle } } }
     weak var requests: ProjectEditorRequests?
     fileprivate weak var window: NSWindow?
     private var collapsedWindow: NSWindow?
@@ -62,6 +63,9 @@ struct WorkspacePouchAction {
     private let model: SpatialWorkspaceController
     private let defaults: UserDefaults
     private var content: WorkspacePouchView?
+    private var latestTools: AnyView?
+    private var isBatchUpdating = false
+    private var lastPanelCollapsedState: Bool?
     private var escapeMonitor: Any?
     private var toolsWereExpanded = false
     private var observers: [NSObjectProtocol] = []
@@ -111,7 +115,7 @@ struct WorkspacePouchAction {
         subscription = model.presentationWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { [weak self] in
                 self?.model.canvas?.layoutTiles()
-                self?.refresh(); self?.syncAttachment()
+                self?.syncPresentation()
             }
         }
         model.pouchGeometryDidChange = { [weak self] in self?.syncAttachment() }
@@ -119,10 +123,47 @@ struct WorkspacePouchAction {
         model.pouchController = self
     }
 
+    func applyBridgeUpdate(
+        window: NSWindow?,
+        workspaceView: NSView,
+        reduceMotion: Bool,
+        accessibilityOptions: WorkspaceAccessibilityOptions,
+        reduceTransparency: Bool,
+        theme: PurloryTheme,
+        actions: [WorkspacePouchAction],
+        indexActions: [WorkspacePouchAction],
+        extraActions: [WorkspacePouchAction],
+        targetTitle: String,
+        requests: ProjectEditorRequests,
+        tools: AnyView
+    ) {
+        isBatchUpdating = true
+        self.reduceMotion = reduceMotion
+        self.accessibilityOptions = accessibilityOptions
+        self.reduceTransparency = reduceTransparency
+        self.theme = theme
+        self.actions = actions
+        self.indexActions = indexActions
+        self.extraActions = extraActions
+        self.targetTitle = targetTitle
+        self.requests = requests
+        setTools(tools)
+        isBatchUpdating = false
+
+        if let window {
+            if self.window !== window {
+                attach(to: window, from: workspaceView)
+            } else {
+                self.workspaceView = workspaceView
+                syncPresentation()
+            }
+        }
+    }
+
     func attach(to window: NSWindow, from workspaceView: NSView? = nil) {
         guard self.window !== window else {
             if let workspaceView { self.workspaceView = workspaceView }
-            refresh(); syncAttachment(); return
+            syncPresentation(); return
         }
         detach(); self.window = window; self.workspaceView = workspaceView
         let panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -136,6 +177,7 @@ struct WorkspacePouchAction {
         let content = WorkspacePouchView(); content.controller = self
         content.setAccessibilityIdentifier("purlory.workspace.rail"); content.setAccessibilityLabel("주머니 도구창")
         panel.contentView = content; self.panel = panel; self.content = content
+        if let latestTools { content.setTools(latestTools) }
         index = WorkspacePouchIndexController(parent: window)
         index?.onClose = { [weak self] in self?.dismissTools() }
         escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown]) { [weak self] event in
@@ -179,7 +221,7 @@ struct WorkspacePouchAction {
         observers.append(NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.dock(immediate: true) }
         })
-        refresh(); dock(immediate: true)
+        refresh(includeIndex: false); dock(immediate: true)
     }
 
     func detach() {
@@ -192,6 +234,7 @@ struct WorkspacePouchAction {
         cancelTransition(); collapsedImage = nil
         content?.removeFromSuperview()
         panel?.orderOut(nil); panel?.close(); panel = nil; content = nil; window = nil
+        lastPanelCollapsedState = nil
         start = nil; isDragging = false; isCollapsed = false
         collapsedWindow = nil
         workspaceView = nil
@@ -207,7 +250,10 @@ struct WorkspacePouchAction {
         detach()
     }
 
-    func setTools(_ root: AnyView) { content?.setTools(root) }
+    func setTools(_ root: AnyView) {
+        latestTools = root
+        content?.setTools(root)
+    }
 
     private weak var grabButton: WorkspacePouchButton?
     func beginDrag(at point: CGPoint, from button: WorkspacePouchButton? = nil) {
@@ -305,55 +351,99 @@ struct WorkspacePouchAction {
         collapsedWindow = nil
         // Retain the controller until an actual detach/close. A recreated SwiftUI
         // bridge adopts it, including when restoration happens before that bridge.
-        refresh(); dock(immediate: false)
+        refresh(includeIndex: false); dock(immediate: false)
         if !motionReduced {
             animateSnapshot(of: window, toward: window.frame, expandingFrom: collapsedSnapshotFrame(window: window, orb: origin), startingFrom: presentation)
         } else { collapsedImage = nil }
     }
 
-    func refresh() {
-        guard let panel, let content else { return }
-        updateIndex()
+    @discardableResult
+    func refresh(includeIndex: Bool = true) -> Bool {
+        guard let panel, let content else { return false }
+        let indexChanged = includeIndex ? updateIndex() : false
+        var changed = indexChanged
         // The pouch is an independent panel and does not inherit SwiftUI's
         // preferredColorScheme from the manuscript window.
         let appearanceName: NSAppearance.Name = theme.editorSurface.relativeLuminance < 0.5 ? .darkAqua : .aqua
         if panel.appearance?.name != appearanceName {
             panel.appearance = NSAppearance(named: appearanceName)
+            changed = true
         }
-        content.appearance = panel.appearance
-        content.toolsExpanded = isAttached && model.pouchSection != nil
-        content.targetTitle = model.pouchSection == .note ? "빠른 메모" : targetTitle
-        content.configure(orb: isCollapsed, horizontal: false, actions: [], theme: theme, attached: isAttached)
-        panel.hidesOnDeactivate = !isCollapsed; panel.canHide = !isCollapsed
-        panel.alphaValue = 1; panel.ignoresMouseEvents = false
+        if content.appearance?.name != panel.appearance?.name {
+            content.appearance = panel.appearance
+            changed = true
+        }
+        let toolsExpanded = isAttached && model.pouchSection != nil
+        if content.toolsExpanded != toolsExpanded {
+            content.toolsExpanded = toolsExpanded
+            changed = true
+        }
+        let resolvedTitle = model.pouchSection == .note ? "빠른 메모" : targetTitle
+        if content.targetTitle != resolvedTitle {
+            content.targetTitle = resolvedTitle
+            changed = true
+        }
+        let viewChanged = content.configure(orb: isCollapsed, horizontal: false, actions: [], theme: theme, attached: isAttached)
+        if viewChanged { changed = true }
+        if lastPanelCollapsedState != isCollapsed {
+            lastPanelCollapsedState = isCollapsed
+            panel.hidesOnDeactivate = !isCollapsed
+            panel.canHide = !isCollapsed
+            changed = true
+        }
+        if panel.alphaValue != 1 { panel.alphaValue = 1; changed = true }
+        if panel.ignoresMouseEvents { panel.ignoresMouseEvents = false; changed = true }
         if isCollapsed {
-            panel.setFrame(CGRect(origin: spring.position, size: CGSize(width: 44, height: 44)), display: false)
-            panel.orderFrontRegardless()
-        } else { panel.orderOut(nil) }
-        content.needsLayout = true; content.needsDisplay = true
+            let orbFrame = CGRect(origin: spring.position, size: CGSize(width: 44, height: 44))
+            if panel.frame != orbFrame {
+                panel.setFrame(orbFrame, display: false)
+                changed = true
+            }
+            if !panel.isVisible {
+                panel.orderFrontRegardless()
+                changed = true
+            }
+        } else if panel.isVisible {
+            panel.orderOut(nil)
+            changed = true
+        }
+        if viewChanged {
+            content.needsLayout = true
+            content.needsDisplay = true
+        }
+        if changed {
+            refreshCount += 1
+        }
+        return changed
     }
     func toggleTools(for tile: WorkspaceTileID? = nil) {
         if let tile { model.selectTile(tile) }
         if model.pouchSection != nil { dismissTools(); return }
         model.openPouchTools()
-        refresh(); syncAttachment()
+        syncPresentation()
     }
     func showTools(_ section: WorkspacePouchSection) {
         if model.pouchSection == section { dismissTools(); return }
         model.whisperTyping = false; model.pouchSection = section
         index?.setExpanded(true)
-        refresh(); syncAttachment()
+        syncPresentation()
     }
-    private func updateIndex() {
-        index?.reduceMotion = motionReduced
-        index?.reduceTransparency = reduceTransparency
-        if isCollapsed, index?.isExpanded == true { index?.setExpanded(false) }
-        if !isCollapsed, model.pouchSection != nil, index?.isExpanded == false { index?.setExpanded(true) }
-        index?.update(theme: theme, actions: indexActions, visible: !isCollapsed)
+    @discardableResult
+    private func updateIndex() -> Bool {
+        guard let index else { return false }
+        index.reduceMotion = motionReduced
+        index.reduceTransparency = reduceTransparency
+        if isCollapsed, index.isExpanded { index.setExpanded(false) }
+        if !isCollapsed, model.pouchSection != nil, !index.isExpanded { index.setExpanded(true) }
+        return index.update(theme: theme, actions: indexActions, visible: !isCollapsed)
     }
     private func dock(immediate: Bool) {
         guard let window, let panel else { return }
-        guard isCollapsed else { panel.orderOut(nil); syncAttachment(); return }
+        guard isCollapsed else {
+            if panel.isVisible { panel.orderOut(nil) }
+            syncAttachment()
+            return
+        }
         target = WorkspacePouchGeometry.clampOrb(target, screen: screenFrame(for: target))
         if immediate { spring = WorkspaceSpringPoint(position: target); panel.setFrameOrigin(target) }
         else { moveTowardTarget() }
@@ -393,16 +483,35 @@ struct WorkspacePouchAction {
     }
 
     /// The card is always anchored to window chrome, independently of tile selection.
-    func syncAttachment() {
-        updateIndex()
+    func syncAttachment(includeRefresh: Bool = true) {
+        let indexChanged = updateIndex()
         guard !isCollapsed, !isDragging, window?.isVisible == true,
-              let destination = attachmentFrame(), let content, let panel else { return }
+              let destination = attachmentFrame(), let content, let panel else {
+            if indexChanged { refreshCount += 1 }
+            return
+        }
         if !isAttached {
             panel.contentView = nil; content.removeFromSuperview()
             destination.canvas.addSubview(content, positioned: .above, relativeTo: nil)
             content.autoresizingMask = []
         }
-        panel.orderOut(nil); refresh(); updateAttachedFrame()
+        if panel.isVisible { panel.orderOut(nil) }
+        if includeRefresh {
+            if !refresh(includeIndex: false), indexChanged {
+                refreshCount += 1
+            }
+        } else if indexChanged {
+            refreshCount += 1
+        }
+        updateAttachedFrame()
+    }
+
+    private func syncPresentation() {
+        if !isCollapsed, !isDragging, window?.isVisible == true, attachmentFrame() != nil {
+            syncAttachment()
+        } else {
+            refresh()
+        }
     }
 
     private func releaseContentToPanel() {
@@ -442,7 +551,7 @@ struct WorkspacePouchAction {
         returnToolFocus()
         model.pouchSection = nil
         content?.hideToolsImmediately()
-        refresh(); syncAttachment()
+        syncPresentation()
         content?.layoutSubtreeIfNeeded()
     }
     func dismissObject(_ tile: WorkspaceTileID) {

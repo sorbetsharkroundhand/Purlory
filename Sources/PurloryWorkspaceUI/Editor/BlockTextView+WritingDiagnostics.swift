@@ -358,25 +358,41 @@ final class WritingEditorProjectionCapture {
         self.oldDirty = nil; dirty = nil; changes.removeAll(keepingCapacity: true)
         return true
     }
+    private func appendCoalescedRun(_ run: WritingProseProjection.Run, to runs: inout [WritingProseProjection.Run]) {
+        if run.eligible, let last = runs.last, last.eligible,
+           last.unsupported == run.unsupported, last.source.upperBound == run.source.location {
+            runs[runs.count - 1] = WritingProseProjection.Run(
+                source: NSRange(location: last.source.location, length: last.source.length + run.source.length),
+                eligible: true,
+                unsupported: last.unsupported
+            )
+        } else {
+            runs.append(run)
+        }
+    }
     /// Reuse proven grammar scopes for a literal edit, including an excluded URL spanning pieces.
     private func inheritedRuns(in footprint: NSRange, replacing old: NSRange, length: Int) -> [WritingProseProjection.Run] {
-        var runs: [WritingProseProjection.Run] = [], cursor = footprint.location, inserted = false
+        var rawRuns: [WritingProseProjection.Run] = [], cursor = footprint.location, inserted = false
         let delta = length - old.length
         while cursor < footprint.upperBound, let piece = sourceProjection.sourcePiece(containing: cursor) {
             for segment in piece.block.segments {
                 let global = NSRange(location: piece.range.location + segment.source.location, length: segment.source.length)
                 let before = NSIntersectionRange(global, NSRange(location: footprint.location, length: old.location - footprint.location))
-                if before.length > 0 { runs.append(.init(source: NSRange(location: before.location - footprint.location, length: before.length), eligible: segment.eligible, unsupported: segment.unsupported)) }
+                if before.length > 0 { rawRuns.append(.init(source: NSRange(location: before.location - footprint.location, length: before.length), eligible: segment.eligible, unsupported: segment.unsupported)) }
                 if !inserted, length > 0, old.location >= global.location, old.upperBound <= global.upperBound {
-                    runs.append(.init(source: NSRange(location: old.location - footprint.location, length: length), eligible: segment.eligible, unsupported: segment.unsupported))
+                    rawRuns.append(.init(source: NSRange(location: old.location - footprint.location, length: length), eligible: segment.eligible, unsupported: segment.unsupported))
                     inserted = true
                 }
                 let after = NSIntersectionRange(global, NSRange(location: old.upperBound, length: footprint.upperBound - old.upperBound))
-                if after.length > 0 { runs.append(.init(source: NSRange(location: after.location + delta - footprint.location, length: after.length), eligible: segment.eligible, unsupported: segment.unsupported)) }
+                if after.length > 0 { rawRuns.append(.init(source: NSRange(location: after.location + delta - footprint.location, length: after.length), eligible: segment.eligible, unsupported: segment.unsupported)) }
             }
             cursor = piece.range.location + piece.range.length
         }
-        return runs.sorted { $0.source.location < $1.source.location }
+        rawRuns.sort { $0.source.location < $1.source.location }
+        var runs: [WritingProseProjection.Run] = []
+        runs.reserveCapacity(rawRuns.count)
+        for run in rawRuns { appendCoalescedRun(run, to: &runs) }
+        return runs
     }
     private func projectedPieces(_ source: String, sourceOffset: Int, rows: WritingNativeRowIndex,
                                  inherited: [WritingProseProjection.Run]? = nil, unresolved: [NSRange] = []) -> [WritingProseBlock] {
@@ -386,14 +402,18 @@ final class WritingEditorProjectionCapture {
             while cursor < ns.length {
                 let newline = ns.range(of: "\n", range: NSRange(location: cursor, length: ns.length - cursor))
                 let end = newline.location == NSNotFound ? ns.length : newline.location
-                boundedSyntax += WritingProseProjection.inlineRuns(ns.substring(with: NSRange(location: cursor, length: end - cursor)), offset: cursor)
-                if end < ns.length { boundedSyntax.append(.init(source: NSRange(location: end, length: 1), eligible: true)) }
+                var lineRuns = WritingProseProjection.inlineRuns(ns.substring(with: NSRange(location: cursor, length: end - cursor)), offset: cursor)
+                if lineRuns.count > 1 { lineRuns.sort { $0.source.location < $1.source.location } }
+                for run in lineRuns { appendCoalescedRun(run, to: &boundedSyntax) }
+                if end < ns.length {
+                    appendCoalescedRun(.init(source: NSRange(location: end, length: 1), eligible: true), to: &boundedSyntax)
+                }
                 cursor = end + 1
             }
         }
         var result: [WritingProseBlock] = []
         for piece in WritingWindowSplitter.pieces(in: source, maximum: 2048) {
-            let bounds = piece.nsRange, text = ns.substring(with: bounds), local = text as NSString
+            let bounds = piece.nsRange, text = ns.substring(with: bounds)
             if bounds.length > 2048 {
                 result.append(WritingProseBlock(sourceText: text, proseText: "\n",
                     segments: [.init(source: NSRange(location: 0, length: bounds.length), prose: NSRange(location: 0, length: 1), eligible: false, unsupported: true)]))
@@ -445,9 +465,19 @@ final class WritingEditorProjectionCapture {
                 }
                 return pieces
             }
-            var runs = allowed.map { WritingProseProjection.Run(source: $0, eligible: true) }
-            runs += merged.map { WritingProseProjection.Run(source: $0, eligible: false) }
-            runs.sort { $0.source.location < $1.source.location }
+            var rawRuns = allowed.map { WritingProseProjection.Run(source: $0, eligible: true) }
+            rawRuns += merged.map { WritingProseProjection.Run(source: $0, eligible: false) }
+            rawRuns.sort { $0.source.location < $1.source.location }
+            var runs: [WritingProseProjection.Run] = []
+            runs.reserveCapacity(rawRuns.count)
+            for run in rawRuns { appendCoalescedRun(run, to: &runs) }
+            if runs.count == 1, let only = runs.first, only.eligible,
+               only.source == NSRange(location: 0, length: bounds.length), unsupported.isEmpty {
+                result.append(WritingProseBlock(sourceText: text, proseText: text,
+                    segments: [.init(source: only.source, prose: only.source, eligible: true, unsupported: false)]))
+                continue
+            }
+            let local = text as NSString
             var prose = "", length = 0, segments: [WritingProseSegment] = []
             for run in runs {
                 let content = run.eligible ? local.substring(with: run.source) : "\n"
@@ -496,7 +526,18 @@ final class WritingEditorProjectionCapture {
                 let b = movedPoint(previous.upperBound, through: change, end: true)
                 dirty = NSRange(location: a, length: max(0, b - a))
             }
-            changes.append(change)
+            if let last = changes.last, oldRange.location <= last.new.upperBound, oldRange.upperBound >= last.new.location {
+                let before = max(0, last.new.location - oldRange.location)
+                let after = max(0, oldRange.upperBound - last.new.upperBound)
+                // `last.old.location == last.new.location` holds by construction, so `last.old.location >= before`.
+                let coalescedOld = NSRange(location: max(0, last.old.location - before),
+                                           length: last.old.length + before + after)
+                let start = min(last.new.location, range.location)
+                let end = max(range.upperBound, last.new.upperBound + change.delta)
+                changes[changes.count - 1] = Change(old: coalescedOld, new: NSRange(location: start, length: max(0, end - start)))
+            } else {
+                changes.append(change)
+            }
         }
         dirty = dirty.map { NSUnionRange($0, range) } ?? range
         boundRevision = nil

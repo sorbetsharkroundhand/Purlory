@@ -1,7 +1,7 @@
 import AppKit
 
 /// Screen placement and the exposed slice of a surface tucked behind the window.
-struct WorkspacePouchIndexGeometry {
+struct WorkspacePouchIndexGeometry: Equatable {
     static let travel: CGFloat = 64
     private let seamOverlap: CGFloat = 1.5
     let frame: CGRect
