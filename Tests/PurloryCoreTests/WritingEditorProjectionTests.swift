@@ -328,6 +328,109 @@ final class WritingEditorProjectionTests: XCTestCase {
         XCTAssertEqual(harness.projectedSource, harness.body)
         XCTAssertEqual(harness.body, editor.serialize())
     }
+
+    func testKoreanIMECompositionCommitCoalescesChangesAndUsesSingleEligibleProseSegment() throws {
+        let paragraph = "이것은 평범한 한글 산문 문단 하나입니다. 차분하게 다음 문장을 씁니다."
+        let source = Array(repeating: paragraph, count: 40).joined(separator: "\n")
+        XCTAssertGreaterThan(source.utf16.count, 1_500)
+        XCTAssertLessThan(source.utf16.count, 2_048)
+
+        let harness = WritingEditorHarness(source)
+        defer { harness.close() }
+        let editor = harness.editor
+        let middleParagraphIndex = 20
+        let caretOffset = middleParagraphIndex * (paragraph.utf16.count + 1)
+
+        editor.setSelectedRange(NSRange(location: caretOffset, length: 0))
+        XCTAssertFalse(editor.hasMarkedText())
+
+        harness.window.testUndo.beginUndoGrouping()
+        editor.setMarkedText("ㅎ", selectedRange: NSRange(location: 1, length: 0),
+                             replacementRange: NSRange(location: NSNotFound, length: 0))
+        XCTAssertTrue(editor.hasMarkedText())
+        editor.setMarkedText("하", selectedRange: NSRange(location: 1, length: 0),
+                             replacementRange: editor.markedRange())
+        XCTAssertTrue(editor.hasMarkedText())
+        editor.insertText("한", replacementRange: editor.markedRange())
+        harness.window.testUndo.endUndoGrouping()
+
+        XCTAssertFalse(editor.hasMarkedText())
+        XCTAssertEqual(harness.projectedSource, harness.body)
+
+        let committedSourceRange = WritingDiagnosticRange(location: caretOffset, length: 1)
+        let native = try XCTUnwrap(editor.nativeRange(forSource: committedSourceRange,
+                                                      revision: editor.writingNativeRevision))
+        XCTAssertEqual((editor.string as NSString).substring(with: native.nsRange), "한")
+
+        let piece = try XCTUnwrap(editor.writingProjectionCapture.sourceProjection.sourcePiece(containing: caretOffset))
+        XCTAssertEqual(piece.block.segments.count, 1)
+        XCTAssertEqual(piece.block.segments.first?.eligible, true)
+    }
+
+    func testNativeRowIndexSourceIntervalsCoalescesContiguousEligibleAndBlockedRanges() throws {
+        func plainRow(_ text: String, newline: Bool = true) -> WritingSerializedRow {
+            let length = text.utf16.count
+            let span = InlineMarkdown.SerializedSpan(
+                source: NSRange(location: 0, length: length),
+                body: NSRange(location: 0, length: length),
+                native: NSRange(location: 0, length: length),
+                style: .init()
+            )
+            return WritingSerializedRow(
+                text: text,
+                textLength: length,
+                nativeContentLength: length,
+                hasLineFeed: newline,
+                isCode: false,
+                eligible: true,
+                spans: [span]
+            )
+        }
+        func codeRow(_ text: String, newline: Bool = true) -> WritingSerializedRow {
+            let length = text.utf16.count
+            return WritingSerializedRow(
+                text: text,
+                textLength: length,
+                nativeContentLength: length,
+                hasLineFeed: newline,
+                isCode: true,
+                eligible: false,
+                spans: []
+            )
+        }
+
+        let leadingRows = (0..<50).map { _ in plainRow("가나다라.") } // 50 * 6 = 300 UTF-16
+        let fenceBody = codeRow("let x = 1") // 9 + 1 = 10 UTF-16, flanked by 4-char ```\n fences
+        let trailingRows = (0..<50).map { _ in plainRow("마바사아.") } // 50 * 6 = 300 UTF-16
+
+        let index = WritingNativeRowIndex()
+        index.reset(rows: leadingRows + [fenceBody] + trailingRows)
+        XCTAssertEqual(index.sourceLength, 618)
+
+        let full = index.sourceIntervals(in: NSRange(location: 0, length: index.sourceLength))
+        XCTAssertEqual(full.eligible, [NSRange(location: 0, length: 300), NSRange(location: 318, length: 300)])
+        XCTAssertEqual(full.blocked, [NSRange(location: 304, length: 10)])
+
+        let acrossCode = index.sourceIntervals(in: NSRange(location: 296, length: 26))
+        XCTAssertEqual(acrossCode.eligible, [NSRange(location: 296, length: 4), NSRange(location: 318, length: 4)])
+        XCTAssertEqual(acrossCode.blocked, [NSRange(location: 304, length: 10)])
+
+        let openingBoundary = index.sourceIntervals(in: NSRange(location: 298, length: 9))
+        XCTAssertEqual(openingBoundary.eligible, [NSRange(location: 298, length: 2)])
+        XCTAssertEqual(openingBoundary.blocked, [NSRange(location: 304, length: 3)])
+
+        let closingBoundary = index.sourceIntervals(in: NSRange(location: 309, length: 12))
+        XCTAssertEqual(closingBoundary.eligible, [NSRange(location: 318, length: 3)])
+        XCTAssertEqual(closingBoundary.blocked, [NSRange(location: 309, length: 5)])
+
+        let openingFenceOnly = index.sourceIntervals(in: NSRange(location: 300, length: 4))
+        XCTAssertTrue(openingFenceOnly.eligible.isEmpty)
+        XCTAssertTrue(openingFenceOnly.blocked.isEmpty)
+
+        let closingFenceOnly = index.sourceIntervals(in: NSRange(location: 314, length: 4))
+        XCTAssertTrue(closingFenceOnly.eligible.isEmpty)
+        XCTAssertTrue(closingFenceOnly.blocked.isEmpty)
+    }
 }
 
 @MainActor

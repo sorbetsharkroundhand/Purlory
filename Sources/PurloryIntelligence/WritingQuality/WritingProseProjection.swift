@@ -24,6 +24,12 @@ package struct WritingProseBlock: Sendable {
         sourceLength = sourceText.utf16.count; proseLength = proseText.utf16.count
     }
     package var hasValidMap: Bool {
+        if segments.count == 1, let segment = segments.first,
+           segment.eligible, !segment.unsupported, proseLength > 0,
+           segment.source == NSRange(location: 0, length: sourceLength),
+           segment.prose == NSRange(location: 0, length: proseLength) {
+            return sourceLength == proseLength && sourceText.utf16.elementsEqual(proseText.utf16)
+        }
         var sourceEnd = 0, proseEnd = 0
         func valid(_ range: NSRange, length: Int) -> Bool {
             range.location >= 0 && range.location <= length && range.length >= 0 && range.length <= length - range.location
@@ -131,21 +137,54 @@ package enum WritingProseProjection {
                 continue
             }
             while firstRun < runs.count && runs[firstRun].source.upperBound <= bounds.location { firstRun += 1 }
-            var prose = "", segments: [WritingProseSegment] = [], i = firstRun
+            var segments: [WritingProseSegment] = [], proseOffset = 0, i = firstRun
             while i < runs.count && runs[i].source.location < bounds.upperBound {
                 guard admission() else { throw CancellationError() }
                 let run = runs[i], clipped = NSIntersectionRange(run.source, bounds)
                 if clipped.length > 0 {
-                    let text = run.eligible ? ns.substring(with: clipped) : (clipped.location == run.source.location ? "\n" : "")
-                    if !text.isEmpty {
-                        segments.append(WritingProseSegment(source: NSRange(location: clipped.location - bounds.location, length: clipped.length),
-                            prose: NSRange(location: prose.utf16.count, length: text.utf16.count), eligible: run.eligible))
-                        prose += text
+                    let localSource = NSRange(location: clipped.location - bounds.location, length: clipped.length)
+                    if run.eligible {
+                        if !run.unsupported, let last = segments.last, last.eligible, !last.unsupported,
+                           last.source.upperBound == localSource.location, last.prose.upperBound == proseOffset {
+                            segments[segments.count - 1] = WritingProseSegment(
+                                source: NSRange(location: last.source.location, length: last.source.length + localSource.length),
+                                prose: NSRange(location: last.prose.location, length: last.prose.length + clipped.length),
+                                eligible: true,
+                                unsupported: false
+                            )
+                        } else {
+                            segments.append(WritingProseSegment(
+                                source: localSource,
+                                prose: NSRange(location: proseOffset, length: clipped.length),
+                                eligible: true,
+                                unsupported: run.unsupported
+                            ))
+                        }
+                        proseOffset += clipped.length
+                    } else if clipped.location == run.source.location {
+                        segments.append(WritingProseSegment(
+                            source: localSource,
+                            prose: NSRange(location: proseOffset, length: 1),
+                            eligible: false,
+                            unsupported: run.unsupported
+                        ))
+                        proseOffset += 1
                     }
                 }
                 i += 1
             }
-            result.append(WritingProseBlock(sourceText: ns.substring(with: bounds), proseText: prose, segments: segments))
+            let sourceText = ns.substring(with: bounds)
+            if segments.count == 1, let only = segments.first, only.eligible, !only.unsupported,
+               only.source == NSRange(location: 0, length: bounds.length) {
+                result.append(WritingProseBlock(sourceText: sourceText, proseText: sourceText, segments: segments))
+            } else {
+                let localNS = sourceText as NSString
+                var prose = ""
+                for segment in segments {
+                    prose += segment.eligible ? localNS.substring(with: segment.source) : "\n"
+                }
+                result.append(WritingProseBlock(sourceText: sourceText, proseText: prose, segments: segments))
+            }
         }
         return result
     }
