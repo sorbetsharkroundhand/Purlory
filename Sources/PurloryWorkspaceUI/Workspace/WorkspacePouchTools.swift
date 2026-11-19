@@ -200,11 +200,18 @@ struct WorkspacePouchTools: View {
         })
         .onPreferenceChange(PouchContentHeightKey.self) { model.setPouchContentHeight($0, for: model.selectedTile) }
         .onAppear { markedText = editor?.hasMarkedText() == true }
+        .onChange(of: model.pouchSection) { _, section in
+            guard section != nil else { return }
+            let next = editor?.hasMarkedText() == true
+            if markedText != next { markedText = next }
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSTextView.didChangeSelectionNotification)) { _ in
+            guard model.pouchSection != nil else { return }
             let next = editor?.hasMarkedText() == true
             if markedText != next { markedText = next }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSText.didChangeNotification)) { _ in
+            guard model.pouchSection != nil else { return }
             let next = editor?.hasMarkedText() == true
             if markedText != next { markedText = next }
         }

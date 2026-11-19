@@ -1,6 +1,14 @@
 import AppKit
 
 final class WorkspacePouchIndexView: NSView {
+    private struct ActionSnapshot: Equatable {
+        let id: String
+        let label: String
+        let symbol: String
+        let enabled: Bool
+        let selected: Bool
+    }
+
     weak var controller: WorkspacePouchIndexController?
     private let grip = WorkspacePouchIndexGrip(frame: .zero)
     private let scroll = NSScrollView()
@@ -16,6 +24,15 @@ final class WorkspacePouchIndexView: NSView {
     private var reduceTransparency = false
     private var materialTheme: PurloryTheme?
     private var materialOpaque: Bool?
+    private var renderedTheme: PurloryTheme?
+    private var renderedReduceTransparency: Bool?
+    private var renderedController: ObjectIdentifier?
+    private var renderedActions: [ActionSnapshot] = []
+    private var renderedExpanded: Bool?
+    private var renderedBoundsSize: CGSize?
+    private var lastPathGeometry: WorkspacePouchIndexGeometry?
+    private var lastPathBounds: CGRect?
+    private var lastPathProgress: CGFloat?
     override var isFlipped: Bool { true }
     override var mouseDownCanMoveWindow: Bool { false }
 
@@ -40,34 +57,100 @@ final class WorkspacePouchIndexView: NSView {
     }
     required init?(coder: NSCoder) { nil }
 
-    func configure(theme: PurloryTheme, actions: [WorkspacePouchAction], reduceTransparency: Bool = false) {
+    @discardableResult
+    func configure(theme: PurloryTheme, actions: [WorkspacePouchAction], reduceTransparency: Bool = false) -> Bool {
+        self.actions = actions
+        let snapshots = actions.map {
+            ActionSnapshot(id: $0.id, label: $0.label, symbol: $0.symbol, enabled: $0.enabled(), selected: $0.selected())
+        }
+        let controllerID = controller.map(ObjectIdentifier.init)
+        if renderedTheme == theme,
+           renderedReduceTransparency == reduceTransparency,
+           renderedController == controllerID,
+           renderedActions == snapshots {
+            return false
+        }
+
+        let themeChanged = renderedTheme != theme
+        let chromeChanged = themeChanged || renderedController != controllerID || renderedReduceTransparency != reduceTransparency
         self.reduceTransparency = reduceTransparency
-        self.theme = theme; self.actions = actions; grip.theme = theme; grip.index = controller; grip.refresh()
-        contour.strokeColor = WorkspacePouchStyle.border(theme).cgColor
-        updateMaterial()
-        while buttons.count > actions.count { buttons.removeLast().removeFromSuperview() }
-        while buttons.count < actions.count {
-            let button = WorkspaceHTMLButton(frame: .zero)
-            button.target = self; button.action = #selector(invoke(_:)); button.radius = 12
-            list.addSubview(button); buttons.append(button)
+        self.theme = theme
+        var layoutChanged = themeChanged
+        var visualsChanged = chromeChanged
+        if chromeChanged {
+            grip.theme = theme
+            grip.index = controller
+            grip.refresh()
+            contour.strokeColor = WorkspacePouchStyle.border(theme).cgColor
+            updateMaterial()
+        }
+        if buttons.count != actions.count {
+            while buttons.count > actions.count { buttons.removeLast().removeFromSuperview() }
+            while buttons.count < actions.count {
+                let button = WorkspaceHTMLButton(frame: .zero)
+                button.target = self; button.action = #selector(invoke(_:)); button.radius = 12
+                list.addSubview(button); buttons.append(button)
+            }
+            layoutChanged = true
+            visualsChanged = true
         }
         for (i, action) in actions.enumerated() {
-            let button = buttons[i]; button.tag = i; button.theme = theme
-            button.image = WorkspaceIcons.image(action.symbol, size: 20)?
-                .withSymbolConfiguration(.init(pointSize: 18, weight: .regular))
-            button.setAccessibilityIdentifier(action.id); button.setAccessibilityLabel(action.label)
-            button.toolTip = action.label; button.isEnabled = action.enabled(); button.selected = action.selected()
-            button.setAccessibilityValue(NSNumber(value: button.selected)); button.refresh()
+            let button = buttons[i]
+            let snapshot = snapshots[i]
+            let previous = i < renderedActions.count ? renderedActions[i] : nil
+            button.tag = i
+            if previous == nil || themeChanged || previous?.id != snapshot.id || previous?.label != snapshot.label || previous?.symbol != snapshot.symbol {
+                if previous == nil || themeChanged { button.theme = theme }
+                if previous?.symbol != snapshot.symbol {
+                    button.image = WorkspaceIcons.image(action.symbol, size: 20)?
+                        .withSymbolConfiguration(.init(pointSize: 18, weight: .regular))
+                }
+                if previous?.id != snapshot.id {
+                    button.setAccessibilityIdentifier(action.id)
+                }
+                if previous?.label != snapshot.label {
+                    button.setAccessibilityLabel(action.label)
+                    button.toolTip = action.label
+                }
+                visualsChanged = true
+            }
+            if previous == nil || themeChanged || previous?.enabled != snapshot.enabled || previous?.selected != snapshot.selected {
+                button.isEnabled = snapshot.enabled
+                button.selected = snapshot.selected
+                button.setAccessibilityValue(NSNumber(value: snapshot.selected))
+                button.refresh()
+                visualsChanged = true
+            }
         }
-        needsLayout = true; needsDisplay = true
+        renderedTheme = theme
+        renderedReduceTransparency = reduceTransparency
+        renderedController = controllerID
+        renderedActions = snapshots
+        if layoutChanged { needsLayout = true }
+        if visualsChanged { needsDisplay = true }
+        return layoutChanged || visualsChanged
+    }
+
+    func matches(geometry: WorkspacePouchIndexGeometry, progress: CGFloat, expanded: Bool) -> Bool {
+        self.geometry == geometry
+            && self.progress == progress
+            && self.renderedExpanded == expanded
+            && self.renderedBoundsSize == bounds.size
     }
 
     func update(geometry: WorkspacePouchIndexGeometry, progress: CGFloat, expanded: Bool) {
-        self.geometry = geometry; self.progress = progress
+        guard !matches(geometry: geometry, progress: progress, expanded: expanded) else { return }
+        let expandedChanged = renderedExpanded != expanded
+        self.geometry = geometry
+        self.progress = progress
+        self.renderedExpanded = expanded
+        self.renderedBoundsSize = bounds.size
         updateMaterial()
-        grip.setAccessibilityLabel(expanded ? "주머니 접기" : "주머니 열기")
-        grip.toolTip = expanded ? "주머니 접기 · Esc" : "주머니 열기 · 드래그하여 펼치기"
-        grip.setAccessibilityValue(NSNumber(value: expanded))
+        if expandedChanged {
+            grip.setAccessibilityLabel(expanded ? "주머니 접기" : "주머니 열기")
+            grip.toolTip = expanded ? "주머니 접기 · Esc" : "주머니 열기 · 드래그하여 펼치기"
+            grip.setAccessibilityValue(NSNumber(value: expanded))
+        }
         scroll.isHidden = progress < 0.8
         scroll.alphaValue = min(1, max(0, (progress - 0.8) / 0.2))
         needsLayout = true; needsDisplay = true; layoutSubtreeIfNeeded()
@@ -76,16 +159,21 @@ final class WorkspacePouchIndexView: NSView {
     override func layout() {
         super.layout()
         guard let geometry else { return }
-        CATransaction.begin(); CATransaction.setDisableActions(true)
-        material.frame = geometry.materialFrame; material.layoutSubtreeIfNeeded()
-        silhouette.frame = bounds; silhouette.path = geometry.path.cgPath
-        let edge = geometry.outerEdge
-        if progress > 0.98 {
-            edge.move(to: CGPoint(x: geometry.controlsMidX - 10, y: 72 + 5 * 52 + 2))
-            edge.line(to: CGPoint(x: geometry.controlsMidX + 10, y: 72 + 5 * 52 + 2))
+        if lastPathGeometry != geometry || lastPathBounds != bounds || lastPathProgress != progress {
+            CATransaction.begin(); CATransaction.setDisableActions(true)
+            material.frame = geometry.materialFrame; material.layoutSubtreeIfNeeded()
+            silhouette.frame = bounds; silhouette.path = geometry.path.cgPath
+            let edge = geometry.outerEdge
+            if progress > 0.98 {
+                edge.move(to: CGPoint(x: geometry.controlsMidX - 10, y: 72 + 5 * 52 + 2))
+                edge.line(to: CGPoint(x: geometry.controlsMidX + 10, y: 72 + 5 * 52 + 2))
+            }
+            contour.frame = bounds; contour.path = edge.cgPath
+            CATransaction.commit()
+            lastPathGeometry = geometry
+            lastPathBounds = bounds
+            lastPathProgress = progress
         }
-        contour.frame = bounds; contour.path = edge.cgPath
-        CATransaction.commit()
         let center = geometry.controlsMidX
         let gripWidth = min(44, geometry.exposedWidth)
         grip.frame = CGRect(x: center - gripWidth / 2, y: 8, width: gripWidth, height: 44)
