@@ -7,29 +7,28 @@ enum WorkspacePouchStyle {
     static let bodyInsets: CGFloat = 54
     static let shadowInset: CGFloat = 28
     static func surface(_ theme: PurloryTheme) -> NSColor { theme.pill.withAlphaComponent(1) }
-    static func border(_ theme: PurloryTheme) -> NSColor {
-        theme.ink.withAlphaComponent(NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast ? 0.3 : 0.10)
+    static func border(
+        _ theme: PurloryTheme,
+        increaseContrast: Bool = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+    ) -> NSColor {
+        theme.ink.withAlphaComponent(increaseContrast ? 0.3 : 0.10)
+    }
+    static func estimatedContentHeight(for section: WorkspacePouchSection) -> CGFloat {
+        section == .note ? 44 : 360
     }
 }
 
 final class WorkspacePouchView: NSView {
-    private struct ActionSnapshot: Equatable {
-        let id: String
-        let label: String
-        let symbol: String
-        let enabled: Bool
-        let selected: Bool
-    }
-
     private struct RenderedConfiguration: Equatable {
         let orb: Bool
         let horizontal: Bool
         let attached: Bool
         let theme: PurloryTheme
+        let increaseContrast: Bool
         let toolsExpanded: Bool
         let appearanceName: NSAppearance.Name?
         let controllerID: ObjectIdentifier?
-        let actions: [ActionSnapshot]
+        let actions: [WorkspacePouchAction.Snapshot]
     }
 
     weak var controller: WorkspacePouchController?
@@ -65,6 +64,7 @@ final class WorkspacePouchView: NSView {
         }
     }
     private var theme: PurloryTheme = .light
+    private var increaseContrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
     private(set) var hovered = false
     override var isFlipped: Bool { true }
     override var mouseDownCanMoveWindow: Bool { false }
@@ -116,6 +116,10 @@ final class WorkspacePouchView: NSView {
             host.frame = CGRect(x: 0, y: 0, width: WorkspacePouchStyle.width - 12, height: 1)
             host.appearance = appearance
             addSubview(host, positioned: .below, relativeTo: dismissButton); toolsHost = host
+            let measuredHeight = host.fittingSize.height
+            if measuredHeight.isFinite, measuredHeight > 0 {
+                controller?.seedInitialPouchContentHeight(measuredHeight)
+            }
         }
         needsLayout = true
     }
@@ -141,16 +145,22 @@ final class WorkspacePouchView: NSView {
     }
 
     @discardableResult
-    func configure(orb: Bool, horizontal: Bool, actions: [WorkspacePouchAction], theme: PurloryTheme, attached: Bool = false) -> Bool {
+    func configure(
+        orb: Bool,
+        horizontal: Bool,
+        actions: [WorkspacePouchAction],
+        theme: PurloryTheme,
+        attached: Bool = false,
+        increaseContrast: Bool = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+    ) -> Bool {
         self.actions = actions
-        let snapshots = actions.map {
-            ActionSnapshot(id: $0.id, label: $0.label, symbol: $0.symbol, enabled: $0.enabled(), selected: $0.selected())
-        }
+        let snapshots = actions.map(\.snapshot)
         let nextConfig = RenderedConfiguration(
             orb: orb,
             horizontal: horizontal,
             attached: attached,
             theme: theme,
+            increaseContrast: increaseContrast,
             toolsExpanded: toolsExpanded,
             appearanceName: appearance?.name,
             controllerID: controller.map(ObjectIdentifier.init),
@@ -160,16 +170,19 @@ final class WorkspacePouchView: NSView {
 
         let previous = renderedConfiguration
         let themeChanged = previous?.theme != theme
+        let contrastChanged = previous?.increaseContrast != increaseContrast
+        let styleChanged = themeChanged || contrastChanged
         let appearanceChanged = previous?.appearanceName != appearance?.name
         let modeChanged = previous == nil || previous?.orb != orb || previous?.attached != attached
         let gripChanged = previous == nil
             || modeChanged
-            || themeChanged
+            || styleChanged
             || previous?.toolsExpanded != toolsExpanded
             || previous?.controllerID != nextConfig.controllerID
 
         self.orb = orb; self.horizontal = horizontal; self.theme = theme; self.attached = attached
-        if themeChanged {
+        self.increaseContrast = increaseContrast
+        if styleChanged {
             titleField.textColor = theme.ink
             moreButton.theme = theme; moreButton.refresh()
             dismissButton.theme = theme; dismissButton.refresh()
@@ -206,7 +219,7 @@ final class WorkspacePouchView: NSView {
             let previousAction = index < previousActions.count ? previousActions[index] : nil
             button.controller = controller; button.tag = index
             button.isHidden = orb || attached
-            if previousAction == nil || themeChanged || previousAction?.id != snapshot.id || previousAction?.label != snapshot.label || previousAction?.symbol != snapshot.symbol {
+            if previousAction == nil || styleChanged || previousAction?.id != snapshot.id || previousAction?.label != snapshot.label || previousAction?.symbol != snapshot.symbol {
                 if previousAction?.symbol != snapshot.symbol {
                     button.image = WorkspaceIcons.image(action.symbol, size: 14)
                 }
@@ -218,7 +231,7 @@ final class WorkspacePouchView: NSView {
                 }
                 button.theme = theme
             }
-            if previousAction == nil || themeChanged || previousAction?.enabled != snapshot.enabled || previousAction?.selected != snapshot.selected {
+            if previousAction == nil || styleChanged || previousAction?.enabled != snapshot.enabled || previousAction?.selected != snapshot.selected {
                 button.isEnabled = snapshot.enabled
                 button.selected = snapshot.selected
                 button.setAccessibilityValue(NSNumber(value: snapshot.selected))
@@ -271,7 +284,7 @@ final class WorkspacePouchView: NSView {
                 shadow.set()
                 WorkspacePouchStyle.surface(theme).setFill(); card.fill()
                 NSGraphicsContext.restoreGraphicsState()
-                WorkspacePouchStyle.border(theme).setStroke(); card.lineWidth = 1; card.stroke()
+                WorkspacePouchStyle.border(theme, increaseContrast: increaseContrast).setStroke(); card.lineWidth = 1; card.stroke()
             }
             return
         }
@@ -323,13 +336,30 @@ final class WorkspacePouchView: NSView {
     private func screenPoint(_ event: NSEvent) -> CGPoint { window?.convertPoint(toScreen: event.locationInWindow) ?? event.locationInWindow }
 }
 
-final class WorkspacePouchButton: WorkspaceHTMLButton {
+final class WorkspacePouchButton: WorkspaceHTMLButton, NSMenuDelegate {
     weak var controller: WorkspacePouchController?
     var draggable = false
-    var buildsContextMenu = false
+    var buildsContextMenu = false {
+        didSet {
+            guard buildsContextMenu != oldValue else { return }
+            if buildsContextMenu {
+                let contextMenu = NSMenu()
+                contextMenu.autoenablesItems = false
+                contextMenu.delegate = self
+                menu = contextMenu
+            } else {
+                menu?.delegate = nil
+                menu = nil
+            }
+        }
+    }
     override var mouseDownCanMoveWindow: Bool { false }
-    override func menu(for event: NSEvent) -> NSMenu? {
-        buildsContextMenu ? (controller?.moreMenu() ?? super.menu(for: event)) : super.menu(for: event)
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard buildsContextMenu else {
+            menu.removeAllItems()
+            return
+        }
+        controller?.populateMoreMenu(menu)
     }
     override func mouseDown(with event: NSEvent) {
         guard draggable else { super.mouseDown(with: event); return }

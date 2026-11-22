@@ -830,8 +830,13 @@ final class SpatialWorkspaceCanvasView: NSView {
     func pouchPlacement() -> WorkspacePouchPlacement? {
         guard let button = model?.pouchAnchor, button.window === window else { return nil }
         let measured = model?.pouchContentHeight ?? 0
-        let height: CGFloat = model?.pouchSection == nil ? 0
-            : max(80, measured + WorkspacePouchStyle.bodyInsets)
+        let height: CGFloat
+        if let section = model?.pouchSection {
+            let contentHeight = measured > 0 ? measured : WorkspacePouchStyle.estimatedContentHeight(for: section)
+            height = max(80, contentHeight + WorkspacePouchStyle.bodyInsets)
+        } else {
+            height = 0
+        }
         var anchor = button.convert(button.bounds, to: self)
         if let index = model?.pouchController?.index, index.isExpanded, index.geometry?.opensInward == true {
             // Keep the detail card beside the rail when the display edge makes it open inward.

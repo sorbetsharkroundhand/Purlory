@@ -35,7 +35,11 @@ struct WorkspaceEntityEvent: Equatable {
     var whisperTyping = false { willSet { presentationWillChange.send(); _whisperTypingEvents.send(newValue) } }
     var expandedItem: String? { willSet { presentationWillChange.send() } }
     private(set) var selectedTile: WorkspaceTileID? { willSet { presentationWillChange.send() } }
-    var pouchSection: WorkspacePouchSection? { willSet { presentationWillChange.send() } }
+    var pouchSection: WorkspacePouchSection? {
+        willSet { presentationWillChange.send() }
+        didSet { if pouchSection != nil { pouchOpenSequence &+= 1 } }
+    }
+    private(set) var pouchOpenSequence = 0
     var searchRequest = WorkspaceSearchRequest() { willSet { presentationWillChange.send() } }
     private(set) var revealSequence = 0 { willSet { presentationWillChange.send() } }
     private(set) var tileToReveal: WorkspaceTileID?
@@ -47,6 +51,10 @@ struct WorkspaceEntityEvent: Equatable {
         guard height.isFinite, height > 0, abs(pouchContentHeight - ceil(height)) > 0.5 else { return }
         pouchContentHeight = ceil(height)
         pouchGeometryDidChange?()
+    }
+    func seedPouchContentHeightIfNeeded(_ height: CGFloat) {
+        guard pouchContentHeight == 0, height.isFinite, height > 0 else { return }
+        pouchContentHeight = ceil(height)
     }
     @ObservationIgnored var pouchGeometryDidChange: (() -> Void)?
     @ObservationIgnored var dismissObject: ((WorkspaceTileID) -> Void)?

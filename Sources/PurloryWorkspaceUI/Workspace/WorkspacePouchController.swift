@@ -4,12 +4,24 @@ import QuartzCore
 import SwiftUI
 
 struct WorkspacePouchAction {
+    struct Snapshot: Equatable {
+        let id: String
+        let label: String
+        let symbol: String
+        let enabled: Bool
+        let selected: Bool
+    }
+
     let id: String
     let label: String
     let symbol: String
     var selected: () -> Bool = { false }
     var enabled: () -> Bool = { true }
     let perform: () -> Void
+
+    var snapshot: Snapshot {
+        Snapshot(id: id, label: label, symbol: symbol, enabled: enabled(), selected: selected())
+    }
 }
 
 /// A collapsed workspace is still an open workspace, even without a visible
@@ -157,6 +169,8 @@ struct WorkspacePouchAction {
                 self.workspaceView = workspaceView
                 syncPresentation()
             }
+        } else if self.window != nil {
+            syncPresentation()
         }
     }
 
@@ -407,10 +421,6 @@ struct WorkspacePouchAction {
             panel.orderOut(nil)
             changed = true
         }
-        if viewChanged {
-            content.needsLayout = true
-            content.needsDisplay = true
-        }
         if changed {
             refreshCount += 1
         }
@@ -483,7 +493,7 @@ struct WorkspacePouchAction {
     }
 
     /// The card is always anchored to window chrome, independently of tile selection.
-    func syncAttachment(includeRefresh: Bool = true) {
+    func syncAttachment() {
         let indexChanged = updateIndex()
         guard !isCollapsed, !isDragging, window?.isVisible == true,
               let destination = attachmentFrame(), let content, let panel else {
@@ -496,14 +506,14 @@ struct WorkspacePouchAction {
             content.autoresizingMask = []
         }
         if panel.isVisible { panel.orderOut(nil) }
-        if includeRefresh {
-            if !refresh(includeIndex: false), indexChanged {
-                refreshCount += 1
-            }
-        } else if indexChanged {
+        if !refresh(includeIndex: false), indexChanged {
             refreshCount += 1
         }
         updateAttachedFrame()
+    }
+
+    func seedInitialPouchContentHeight(_ height: CGFloat) {
+        model.seedPouchContentHeightIfNeeded(height)
     }
 
     private func syncPresentation() {
@@ -568,7 +578,13 @@ struct WorkspacePouchAction {
         moreMenu().popUp(positioning: nil, at: CGPoint(x: view.bounds.maxX, y: view.bounds.midY), in: view)
     }
     func moreMenu() -> NSMenu {
-        let menu = NSMenu(); menu.autoenablesItems = false
+        let menu = NSMenu()
+        populateMoreMenu(menu)
+        return menu
+    }
+    func populateMoreMenu(_ menu: NSMenu) {
+        menu.autoenablesItems = false
+        menu.removeAllItems()
         for (index, action) in menuActions.enumerated() {
             let item = NSMenuItem(title: action.label, action: #selector(invokeExtra(_:)), keyEquivalent: "")
             item.target = self; item.tag = index
@@ -576,7 +592,6 @@ struct WorkspacePouchAction {
             item.state = action.selected() ? .on : .off; item.isEnabled = action.enabled()
             item.setAccessibilityIdentifier(action.id); menu.addItem(item)
         }
-        return menu
     }
     @objc private func invokeExtra(_ item: NSMenuItem) {
         guard menuActions.indices.contains(item.tag), menuActions[item.tag].enabled() else { return }; menuActions[item.tag].perform()

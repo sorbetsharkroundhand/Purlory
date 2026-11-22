@@ -128,23 +128,28 @@ package final class WritingNativeRowIndex {
         root = merge(merge(before, replacement), after)
         return true
     }
+    private func rowSourceBounds(for node: Node, source: Int, previousCode: Bool) -> (rowSource: Int, textStart: Int, textEnd: Int) {
+        let leftSource = node.left?.sourceLength(previousCode: previousCode) ?? 0
+        let rowSource = source + leftSource
+        let previous = node.left?.lastCode ?? previousCode
+        let rowOpenLength = node.row.isCode ? 4 + (node.row.blockStyle.codeLang?.utf16.count ?? 0) : 0
+        let textStart = rowSource + (previous != node.row.isCode ? (node.row.isCode ? rowOpenLength : 4) : 0)
+        return (rowSource, textStart, textStart + node.row.baseSourceLength)
+    }
     package func row(containingNative offset: Int) -> Located? {
         guard nativeLength > 0, offset >= 0, offset <= nativeLength else { return nil }
         let point = min(offset, nativeLength - 1)
         var next = root, source = 0, native = 0, previousCode = false
         while let current = next {
             let leftNative = current.left?.nativeLength ?? 0
-            let leftSource = current.left?.sourceLength(previousCode: previousCode) ?? 0
-            let rowNative = native + leftNative, rowSource = source + leftSource
-            let previous = current.left?.lastCode ?? previousCode
-            let rowOpenLength = current.row.isCode ? 4 + (current.row.blockStyle.codeLang?.utf16.count ?? 0) : 0
-            let textStart = rowSource + (previous != current.row.isCode ? (current.row.isCode ? rowOpenLength : 4) : 0)
+            let rowNative = native + leftNative
+            let bounds = rowSourceBounds(for: current, source: source, previousCode: previousCode)
             if point < rowNative { next = current.left }
             else if point < rowNative + current.row.nativeLength {
                 return Located(row: current.row, nativeRange: NSRange(location: rowNative, length: current.row.nativeLength),
-                               sourceStart: rowSource, textStart: textStart)
+                               sourceStart: bounds.rowSource, textStart: bounds.textStart)
             } else {
-                source = textStart + current.row.baseSourceLength; native = rowNative + current.row.nativeLength
+                source = bounds.textEnd; native = rowNative + current.row.nativeLength
                 previousCode = current.row.isCode; next = current.right
             }
         }
@@ -154,27 +159,25 @@ package final class WritingNativeRowIndex {
         guard point >= 0, point < sourceLength else { return nil }
         var next = root, source = 0, native = 0, previousCode = false
         while let current = next {
-            let leftSource = current.left?.sourceLength(previousCode: previousCode) ?? 0
             let leftNative = current.left?.nativeLength ?? 0
-            let rowSource = source + leftSource, rowNative = native + leftNative
-            let previous = current.left?.lastCode ?? previousCode
-            let rowOpenLength = current.row.isCode ? 4 + (current.row.blockStyle.codeLang?.utf16.count ?? 0) : 0
-            let textStart = rowSource + (previous != current.row.isCode ? (current.row.isCode ? rowOpenLength : 4) : 0)
-            if point < rowSource { next = current.left }
-            else if point < textStart + current.row.baseSourceLength {
+            let rowNative = native + leftNative
+            let bounds = rowSourceBounds(for: current, source: source, previousCode: previousCode)
+            if point < bounds.rowSource { next = current.left }
+            else if point < bounds.textEnd {
                 return Located(row: current.row, nativeRange: NSRange(location: rowNative, length: current.row.nativeLength),
-                               sourceStart: rowSource, textStart: textStart)
+                               sourceStart: bounds.rowSource, textStart: bounds.textStart)
             } else {
-                source = textStart + current.row.baseSourceLength; native = rowNative + current.row.nativeLength
+                source = bounds.textEnd; native = rowNative + current.row.nativeLength
                 previousCode = current.row.isCode; next = current.right
             }
         }
         return nil
     }
     package func sourceIntervals(in range: NSRange) -> (eligible: [NSRange], blocked: [NSRange]) {
-        guard range.location >= 0, range.length > 0 else { return ([], []) }
+        guard range.location >= 0, range.length > 0, range.location < sourceLength else { return ([], []) }
+        let clamped = NSRange(location: range.location, length: min(range.length, sourceLength - range.location))
         var eligible: [NSRange] = [], blocked: [NSRange] = []
-        collectSourceIntervals(node: root, source: 0, previousCode: false, range: range,
+        collectSourceIntervals(node: root, source: 0, previousCode: false, range: clamped,
                                eligible: &eligible, blocked: &blocked)
         return (eligible, blocked)
     }
@@ -190,14 +193,9 @@ package final class WritingNativeRowIndex {
         let subtreeEnd = source + node.sourceLength(previousCode: previousCode)
         guard source < range.upperBound, subtreeEnd > range.location else { return }
 
-        let leftSource = node.left?.sourceLength(previousCode: previousCode) ?? 0
-        let rowSource = source + leftSource
-        let previous = node.left?.lastCode ?? previousCode
-        let rowOpenLength = node.row.isCode ? 4 + (node.row.blockStyle.codeLang?.utf16.count ?? 0) : 0
-        let textStart = rowSource + (previous != node.row.isCode ? (node.row.isCode ? rowOpenLength : 4) : 0)
-        let textEnd = textStart + node.row.baseSourceLength
+        let bounds = rowSourceBounds(for: node, source: source, previousCode: previousCode)
 
-        if rowSource > range.location {
+        if bounds.rowSource > range.location {
             collectSourceIntervals(
                 node: node.left,
                 source: source,
@@ -208,12 +206,19 @@ package final class WritingNativeRowIndex {
             )
         }
 
-        if textStart < range.upperBound && textEnd > range.location {
+        if bounds.textStart < range.upperBound && bounds.textEnd > range.location {
             if node.row.eligible && !node.row.isCode {
                 for span in node.row.spans {
-                    let isEligibleSpan = span.body != nil && !span.style.code
-                    let local = isEligibleSpan ? span.body! : span.source
-                    let global = NSRange(location: textStart + local.location, length: local.length)
+                    let isEligibleSpan: Bool
+                    let local: NSRange
+                    if let body = span.body, !span.style.code {
+                        isEligibleSpan = true
+                        local = body
+                    } else {
+                        isEligibleSpan = false
+                        local = span.source
+                    }
+                    let global = NSRange(location: bounds.textStart + local.location, length: local.length)
                     let clipped = NSIntersectionRange(global, range)
                     if clipped.length > 0 {
                         if isEligibleSpan {
@@ -224,23 +229,23 @@ package final class WritingNativeRowIndex {
                     }
                 }
                 if node.row.hasLineFeed {
-                    let newline = NSIntersectionRange(NSRange(location: textStart + node.row.textLength, length: 1), range)
+                    let newline = NSIntersectionRange(NSRange(location: bounds.textStart + node.row.textLength, length: 1), range)
                     if newline.length > 0 {
                         appendCoalescedInterval(newline, to: &eligible)
                     }
                 }
             } else {
-                let opaque = NSIntersectionRange(NSRange(location: textStart, length: node.row.baseSourceLength), range)
+                let opaque = NSIntersectionRange(NSRange(location: bounds.textStart, length: node.row.baseSourceLength), range)
                 if opaque.length > 0 {
                     appendCoalescedInterval(opaque, to: &blocked)
                 }
             }
         }
 
-        if textEnd < range.upperBound {
+        if bounds.textEnd < range.upperBound {
             collectSourceIntervals(
                 node: node.right,
-                source: textEnd,
+                source: bounds.textEnd,
                 previousCode: node.row.isCode,
                 range: range,
                 eligible: &eligible,

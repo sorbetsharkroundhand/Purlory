@@ -1,12 +1,12 @@
 import AppKit
 
 final class WorkspacePouchIndexView: NSView {
-    private struct ActionSnapshot: Equatable {
-        let id: String
-        let label: String
-        let symbol: String
-        let enabled: Bool
-        let selected: Bool
+    private struct RenderedConfiguration: Equatable {
+        let theme: PurloryTheme
+        let reduceTransparency: Bool
+        let increaseContrast: Bool
+        let controllerID: ObjectIdentifier?
+        let actions: [WorkspacePouchAction.Snapshot]
     }
 
     weak var controller: WorkspacePouchIndexController?
@@ -24,10 +24,7 @@ final class WorkspacePouchIndexView: NSView {
     private var reduceTransparency = false
     private var materialTheme: PurloryTheme?
     private var materialOpaque: Bool?
-    private var renderedTheme: PurloryTheme?
-    private var renderedReduceTransparency: Bool?
-    private var renderedController: ObjectIdentifier?
-    private var renderedActions: [ActionSnapshot] = []
+    private var renderedConfiguration: RenderedConfiguration?
     private var renderedExpanded: Bool?
     private var renderedBoundsSize: CGSize?
     private var lastPathGeometry: WorkspacePouchIndexGeometry?
@@ -58,21 +55,33 @@ final class WorkspacePouchIndexView: NSView {
     required init?(coder: NSCoder) { nil }
 
     @discardableResult
-    func configure(theme: PurloryTheme, actions: [WorkspacePouchAction], reduceTransparency: Bool = false) -> Bool {
+    func configure(
+        theme: PurloryTheme,
+        actions: [WorkspacePouchAction],
+        reduceTransparency: Bool = false,
+        increaseContrast: Bool = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+    ) -> Bool {
         self.actions = actions
-        let snapshots = actions.map {
-            ActionSnapshot(id: $0.id, label: $0.label, symbol: $0.symbol, enabled: $0.enabled(), selected: $0.selected())
-        }
+        let snapshots = actions.map(\.snapshot)
         let controllerID = controller.map(ObjectIdentifier.init)
-        if renderedTheme == theme,
-           renderedReduceTransparency == reduceTransparency,
-           renderedController == controllerID,
-           renderedActions == snapshots {
+        let nextConfig = RenderedConfiguration(
+            theme: theme,
+            reduceTransparency: reduceTransparency,
+            increaseContrast: increaseContrast,
+            controllerID: controllerID,
+            actions: snapshots
+        )
+        if renderedConfiguration == nextConfig {
             return false
         }
 
-        let themeChanged = renderedTheme != theme
-        let chromeChanged = themeChanged || renderedController != controllerID || renderedReduceTransparency != reduceTransparency
+        let previous = renderedConfiguration
+        let themeChanged = previous?.theme != theme
+        let contrastChanged = previous?.increaseContrast != increaseContrast
+        let styleChanged = themeChanged || contrastChanged
+        let chromeChanged = styleChanged
+            || previous?.controllerID != controllerID
+            || previous?.reduceTransparency != reduceTransparency
         self.reduceTransparency = reduceTransparency
         self.theme = theme
         var layoutChanged = themeChanged
@@ -81,7 +90,7 @@ final class WorkspacePouchIndexView: NSView {
             grip.theme = theme
             grip.index = controller
             grip.refresh()
-            contour.strokeColor = WorkspacePouchStyle.border(theme).cgColor
+            contour.strokeColor = WorkspacePouchStyle.border(theme, increaseContrast: increaseContrast).cgColor
             updateMaterial()
         }
         if buttons.count != actions.count {
@@ -94,27 +103,28 @@ final class WorkspacePouchIndexView: NSView {
             layoutChanged = true
             visualsChanged = true
         }
+        let previousActions = previous?.actions ?? []
         for (i, action) in actions.enumerated() {
             let button = buttons[i]
             let snapshot = snapshots[i]
-            let previous = i < renderedActions.count ? renderedActions[i] : nil
+            let previousAction = i < previousActions.count ? previousActions[i] : nil
             button.tag = i
-            if previous == nil || themeChanged || previous?.id != snapshot.id || previous?.label != snapshot.label || previous?.symbol != snapshot.symbol {
-                if previous == nil || themeChanged { button.theme = theme }
-                if previous?.symbol != snapshot.symbol {
+            if previousAction == nil || styleChanged || previousAction?.id != snapshot.id || previousAction?.label != snapshot.label || previousAction?.symbol != snapshot.symbol {
+                if previousAction == nil || styleChanged { button.theme = theme }
+                if previousAction?.symbol != snapshot.symbol {
                     button.image = WorkspaceIcons.image(action.symbol, size: 20)?
                         .withSymbolConfiguration(.init(pointSize: 18, weight: .regular))
                 }
-                if previous?.id != snapshot.id {
+                if previousAction?.id != snapshot.id {
                     button.setAccessibilityIdentifier(action.id)
                 }
-                if previous?.label != snapshot.label {
+                if previousAction?.label != snapshot.label {
                     button.setAccessibilityLabel(action.label)
                     button.toolTip = action.label
                 }
                 visualsChanged = true
             }
-            if previous == nil || themeChanged || previous?.enabled != snapshot.enabled || previous?.selected != snapshot.selected {
+            if previousAction == nil || styleChanged || previousAction?.enabled != snapshot.enabled || previousAction?.selected != snapshot.selected {
                 button.isEnabled = snapshot.enabled
                 button.selected = snapshot.selected
                 button.setAccessibilityValue(NSNumber(value: snapshot.selected))
@@ -122,10 +132,7 @@ final class WorkspacePouchIndexView: NSView {
                 visualsChanged = true
             }
         }
-        renderedTheme = theme
-        renderedReduceTransparency = reduceTransparency
-        renderedController = controllerID
-        renderedActions = snapshots
+        renderedConfiguration = nextConfig
         if layoutChanged { needsLayout = true }
         if visualsChanged { needsDisplay = true }
         return layoutChanged || visualsChanged

@@ -3,6 +3,8 @@ import Combine
 import QuartzCore
 import SwiftUI
 import XCTest
+@testable import PurloryCore
+@testable import PurloryInference
 @testable import PurloryWorkspaceUI
 
 @MainActor final class WorkspacePouchRefreshTests: XCTestCase {
@@ -275,10 +277,13 @@ import XCTest
         XCTAssertEqual(pouch.refreshCount, initialRefreshCount, "Consecutive typing commits before outline settles must not refresh pouch")
         XCTAssertEqual(canvas.layoutTilesCount, initialLayoutTilesCount, "Consecutive typing commits before outline settles must not relayout canvas")
 
-        try await Task.sleep(for: .milliseconds(450))
-        await h.layout()
-        XCTAssertEqual(pouch.refreshCount, initialRefreshCount, "Outline preparation completion must not refresh pouch")
-        XCTAssertEqual(canvas.layoutTilesCount, initialLayoutTilesCount, "Outline preparation completion must not relayout canvas")
+        // Poll well past the 350ms outline debounce so slow runners cannot produce a vacuous pass.
+        for _ in 0..<10 {
+            try await Task.sleep(for: .milliseconds(100))
+            await h.layout()
+            XCTAssertEqual(pouch.refreshCount, initialRefreshCount, "Outline preparation completion must not refresh pouch")
+            XCTAssertEqual(canvas.layoutTilesCount, initialLayoutTilesCount, "Outline preparation completion must not relayout canvas")
+        }
 
         for character in ["f", "g", "h", "i", "j"] {
             h.window.testUndo.beginUndoGrouping()
@@ -310,6 +315,313 @@ import XCTest
         XCTAssertGreaterThan(requested.maxY, visible.maxY)
         let constrained = index.panel.constrainFrameRect(requested, to: screen)
         XCTAssertEqual(constrained, requested, "IndexPanel must preserve top alignment even when parent exceeds visibleFrame.maxY")
+    }
+
+    func testPouchToolsSyncsMarkedTextAcrossSameSectionReopenAndDocumentSwitch() async throws {
+        let fixture = try await LegacyBoundaryFixture(mode: .general)
+        defer { fixture.cleanUp() }
+        let firstDocID = try XCTUnwrap(fixture.session.selectedDocumentID)
+        let secondDocID = try XCTUnwrap(fixture.session.createDocument(title: "Second", kind: .manuscript))
+        fixture.session.selectDocument(firstDocID)
+
+        let requests = ProjectEditorRequests()
+        let firstEditor = BlockTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
+        firstEditor.load(markdown: "First")
+        let secondEditor = BlockTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
+        secondEditor.load(markdown: "Second")
+        requests.register(firstEditor, for: .init(projectID: fixture.project.id, documentID: firstDocID), session: fixture.session)
+        requests.register(secondEditor, for: .init(projectID: fixture.project.id, documentID: secondDocID), session: fixture.session)
+
+        let model = SpatialWorkspaceController(defaults: fixture.defaults)
+        model.pouchSection = .overview
+        let settings = CompletionSettings(defaults: fixture.defaults)
+        let completion = CompletionController(settings: settings, engine: CompletionEngine())
+        defer { completion.shutdown() }
+
+        var observedMarkedText: [Bool] = []
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 320, height: 600),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        let host = NSHostingView(rootView: WorkspacePouchTools(
+            session: fixture.session,
+            requests: requests,
+            model: model,
+            completion: completion,
+            settings: settings,
+            theme: .light,
+            openCoauthor: {},
+            openSettings: {},
+            onMarkedTextSync: { observedMarkedText.append($0) }
+        ).defaultAppStorage(fixture.defaults))
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.contentView = nil; window.close() }
+
+        func layoutTools() async {
+            for _ in 0..<15 {
+                host.layoutSubtreeIfNeeded()
+                await Task.yield()
+            }
+        }
+
+        await layoutTools()
+        XCTAssertEqual(observedMarkedText.last, false, "Initial markedText state should be false")
+
+        // Simulate hidden NSHostingView coalescing .overview -> nil -> .overview while Hangul composition begins.
+        model.pouchSection = nil
+        firstEditor.setMarkedText("한", selectedRange: NSRange(location: 1, length: 0), replacementRange: NSRange(location: 0, length: 0))
+        model.pouchSection = .overview
+        await layoutTools()
+
+        XCTAssertEqual(
+            observedMarkedText.last,
+            true,
+            "Reopening the same pouch section after composition started while hidden must sync markedText to true"
+        )
+
+        // Switching active document while the pouch remains open must re-sync markedText to the new editor.
+        fixture.session.selectDocument(secondDocID)
+        await layoutTools()
+
+        XCTAssertEqual(
+            observedMarkedText.last,
+            false,
+            "Switching to a document without marked text while the pouch is open must sync markedText to false"
+        )
+        firstEditor.unmarkText()
+    }
+
+    func testCollapsedOrbContextMenuPreservesAccessibilityAndPopulatesLazily() throws {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        let suite = UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let pouch = WorkspacePouchController(model: SpatialWorkspaceController(defaults: defaults), defaults: defaults)
+        pouch.reduceMotion = true
+        defer { pouch.detach(); window.close() }
+
+        var selectedQueries = 0
+        var enabledQueries = 0
+        var selected = false
+        var enabled = true
+        pouch.extraActions = [
+            WorkspacePouchAction(
+                id: "extra.context",
+                label: "Context Action",
+                symbol: "sparkles",
+                selected: { selectedQueries += 1; return selected },
+                enabled: { enabledQueries += 1; return enabled },
+                perform: {}
+            )
+        ]
+
+        pouch.attach(to: window)
+        pouch.collapse()
+        pouch.syncAttachment()
+
+        let content = try XCTUnwrap(pouch.panel?.contentView as? WorkspacePouchView)
+        let grip = try XCTUnwrap(content.subviews.compactMap { $0 as? WorkspacePouchButton }.first {
+            $0.accessibilityIdentifier() == "purlory.workspace.pouch.restore"
+        })
+        XCTAssertEqual(selectedQueries, 0, "Attaching and collapsing to the orb must not evaluate unopened menu selected closures")
+        XCTAssertEqual(enabledQueries, 0, "Attaching and collapsing to the orb must not evaluate unopened menu enabled closures")
+
+        let menu = try XCTUnwrap(grip.menu, "Collapsed orb must install an NSMenu so VoiceOver AXShowMenu remains available")
+        XCTAssertTrue(menu.items.isEmpty, "Installed context menu must stay empty until opened")
+        XCTAssertEqual(selectedQueries, 0)
+        XCTAssertEqual(enabledQueries, 0)
+
+        selected = true
+        enabled = false
+        menu.delegate?.menuNeedsUpdate?(menu)
+        let item = try XCTUnwrap(menu.items.first { $0.accessibilityIdentifier() == "extra.context" })
+        XCTAssertEqual(item.state, .on)
+        XCTAssertFalse(item.isEnabled)
+        XCTAssertEqual(selectedQueries, 1)
+        XCTAssertEqual(enabledQueries, 1)
+    }
+
+    func testInitialPouchOpenAvoidsEightyPointHeightFlash() async throws {
+        let h = try await FramedWorkspaceHarness(width: 960, reduceMotion: true)
+        defer { h.close() }
+        h.window.makeKeyAndOrderFront(nil)
+        await h.layout()
+
+        let pouch = try XCTUnwrap(h.requests.pouch)
+        let spatial = try XCTUnwrap(h.requests.spatialWorkspace)
+        let canvas = try XCTUnwrap(spatial.canvas)
+        XCTAssertEqual(spatial.pouchContentHeight, 0)
+
+        pouch.showTools(.overview)
+        let initialPlacement = try XCTUnwrap(canvas.pouchPlacement())
+        XCTAssertGreaterThan(
+            initialPlacement.card.height,
+            120,
+            "Initial pouch open must not flash an 80pt card before SwiftUI preference measurement completes"
+        )
+    }
+
+    func testBridgeUpdateWhileCollapsedRefreshesFloatingOrbWithoutWindow() throws {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        let suite = UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = SpatialWorkspaceController(defaults: defaults)
+        let pouch = WorkspacePouchController(model: model, defaults: defaults)
+        pouch.reduceMotion = true
+        defer { pouch.detach(); window.close() }
+
+        let probe = NSView(frame: .zero)
+        let requests = ProjectEditorRequests()
+        pouch.attach(to: window, from: probe)
+        pouch.collapse()
+        pouch.detachFromWorkspaceView(probe)
+        XCTAssertTrue(pouch.isCollapsed)
+
+        let panel = try XCTUnwrap(pouch.panel)
+        XCTAssertEqual(panel.appearance?.name, .aqua)
+        let beforeRefreshCount = pouch.refreshCount
+
+        pouch.applyBridgeUpdate(
+            window: nil,
+            workspaceView: probe,
+            reduceMotion: true,
+            accessibilityOptions: WorkspaceAccessibilityOptions(),
+            reduceTransparency: false,
+            theme: .dark,
+            actions: [],
+            indexActions: [],
+            extraActions: [],
+            targetTitle: "Purlory",
+            requests: requests,
+            tools: AnyView(EmptyView())
+        )
+
+        XCTAssertGreaterThan(
+            pouch.refreshCount,
+            beforeRefreshCount,
+            "Bridge updates delivered with window == nil while collapsed must still sync the floating orb"
+        )
+        XCTAssertEqual(panel.appearance?.name, .darkAqua)
+    }
+
+    func testHiddenIndexUpdateBeforeParentIsVisibleDetachesChildPanel() throws {
+        let window = NSWindow(
+            contentRect: NSRect(x: 100, y: 100, width: 500, height: 600),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        XCTAssertFalse(window.isVisible)
+
+        let index = WorkspacePouchIndexController(parent: window)
+        defer { index.detach(); window.close() }
+        XCTAssertTrue(index.panel.parent === window)
+
+        let changed = index.update(theme: .light, actions: [], visible: false)
+        XCTAssertTrue(changed)
+        XCTAssertNil(
+            index.panel.parent,
+            "Updating an index with visible == false while parent is hidden must detach the child panel"
+        )
+        XCTAssertFalse(index.panel.isVisible)
+
+        window.orderFront(nil)
+        XCTAssertFalse(index.panel.isVisible, "Ordering the parent front must not reveal a hidden detached index")
+
+        index.update(theme: .light, actions: [], visible: true)
+        XCTAssertTrue(index.panel.parent === window)
+        XCTAssertTrue(index.panel.isVisible)
+    }
+
+    func testPouchOpenSequenceIncrementsOnEveryNonNilSectionAssignment() throws {
+        let suite = UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = SpatialWorkspaceController(defaults: defaults)
+        XCTAssertEqual(model.pouchOpenSequence, 0)
+
+        model.pouchSection = .overview
+        XCTAssertEqual(model.pouchOpenSequence, 1)
+
+        model.pouchSection = nil
+        XCTAssertEqual(model.pouchOpenSequence, 1, "Closing the pouch must not increment pouchOpenSequence")
+
+        model.pouchSection = .overview
+        XCTAssertEqual(model.pouchOpenSequence, 2, "Reopening the same section must increment pouchOpenSequence")
+
+        model.pouchSection = .note
+        XCTAssertEqual(model.pouchOpenSequence, 3, "Switching directly to another section must increment pouchOpenSequence")
+    }
+
+    func testActionSnapshotEqualityAndIncreaseContrastRestylesPouchViews() throws {
+        var enabled = true
+        var selected = false
+        let actionA = WorkspacePouchAction(
+            id: "tool.a",
+            label: "Tool A",
+            symbol: "sparkles",
+            selected: { selected },
+            enabled: { enabled },
+            perform: {}
+        )
+        let actionB = WorkspacePouchAction(
+            id: "tool.a",
+            label: "Tool A",
+            symbol: "sparkles",
+            selected: { selected },
+            enabled: { enabled },
+            perform: {}
+        )
+        XCTAssertEqual(actionA.snapshot, actionB.snapshot)
+        selected = true
+        XCTAssertNotEqual(
+            actionA.snapshot,
+            WorkspacePouchAction.Snapshot(id: "tool.a", label: "Tool A", symbol: "sparkles", enabled: true, selected: false)
+        )
+        enabled = false
+        XCTAssertNotEqual(
+            actionA.snapshot,
+            WorkspacePouchAction.Snapshot(id: "tool.a", label: "Tool A", symbol: "sparkles", enabled: true, selected: true)
+        )
+
+        let pouchView = WorkspacePouchView(frame: NSRect(x: 0, y: 0, width: 304, height: 200))
+        XCTAssertTrue(pouchView.configure(orb: false, horizontal: false, actions: [actionA], theme: .light, attached: false, increaseContrast: false))
+        XCTAssertFalse(pouchView.configure(orb: false, horizontal: false, actions: [actionA], theme: .light, attached: false, increaseContrast: false))
+        XCTAssertTrue(
+            pouchView.configure(orb: false, horizontal: false, actions: [actionA], theme: .light, attached: false, increaseContrast: true),
+            "Toggling increaseContrast must invalidate WorkspacePouchView rendered configuration"
+        )
+        XCTAssertFalse(pouchView.configure(orb: false, horizontal: false, actions: [actionA], theme: .light, attached: false, increaseContrast: true))
+
+        let indexView = WorkspacePouchIndexView(frame: NSRect(x: 0, y: 0, width: 84, height: 400))
+        XCTAssertTrue(indexView.configure(theme: .light, actions: [actionA], reduceTransparency: false, increaseContrast: false))
+        let contour = try XCTUnwrap(indexView.layer?.sublayers?.compactMap { $0 as? CAShapeLayer }.first)
+        XCTAssertEqual(contour.strokeColor, WorkspacePouchStyle.border(.light, increaseContrast: false).cgColor)
+        XCTAssertFalse(indexView.configure(theme: .light, actions: [actionA], reduceTransparency: false, increaseContrast: false))
+        XCTAssertTrue(
+            indexView.configure(theme: .light, actions: [actionA], reduceTransparency: false, increaseContrast: true),
+            "Toggling increaseContrast must restyle WorkspacePouchIndexView contour and controls"
+        )
+        XCTAssertEqual(contour.strokeColor, WorkspacePouchStyle.border(.light, increaseContrast: true).cgColor)
+        XCTAssertFalse(indexView.configure(theme: .light, actions: [actionA], reduceTransparency: false, increaseContrast: true))
     }
 }
 

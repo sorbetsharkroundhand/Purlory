@@ -39,7 +39,7 @@ import AppKit
         }
         guard visible, parent?.isVisible == true, parent?.isMiniaturized == false,
               parent?.attachedSheet == nil else {
-            if panel.isVisible || drag != nil || hovered || clock != nil || expansion.value != (isExpanded ? 1 : 0) || hover.value != 0 {
+            if panel.isVisible || panel.parent != nil || drag != nil || hovered || clock != nil || expansion.value != (isExpanded ? 1 : 0) || hover.value != 0 {
                 hide()
                 changed = true
             }
@@ -129,6 +129,7 @@ import AppKit
         parent?.removeChildWindow(panel); panel.orderOut(nil); panel.close(); parent = nil
     }
     func hide() {
+        parent?.removeChildWindow(panel)
         panel.orderOut(nil); drag = nil; hovered = false; settle()
     }
     private func settle() {

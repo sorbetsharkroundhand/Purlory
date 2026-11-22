@@ -263,6 +263,23 @@ final class WritingEditorProjectionCapture {
         }
         return true
     }
+    private static let syntaxPunctuation = CharacterSet(charactersIn: "[](){}!$`*_~=<>\\\n")
+    private static let linkSyntaxSensitive = CharacterSet(charactersIn: " \t\"'")
+    private static let boundarySensitive = CharacterSet(charactersIn: "[](){}!$`*_~=<>\\\n \t\"'")
+
+    private static func isBoundarySensitive(_ unit: UInt16) -> Bool {
+        UnicodeScalar(unit).map { boundarySensitive.contains($0) } ?? false
+    }
+
+    private func projectionFootprint(for range: NSRange) -> NSRange? {
+        if sourceProjection.sourceLength == 0 { return NSRange(location: 0, length: 0) }
+        guard let a = sourceProjection.sourcePiece(containing: range.location),
+              let b = sourceProjection.sourcePiece(containing: max(range.location, range.upperBound - 1)) else {
+            return nil
+        }
+        return NSRange(location: a.range.location, length: b.range.location + b.range.length - a.range.location)
+    }
+
     private func updateProjection(storage: NSAttributedString, ownerChanged: Bool) -> Bool {
         lastInputUTF16 = 0
         guard oldDirty != nil else {
@@ -283,8 +300,7 @@ final class WritingEditorProjectionCapture {
         let draft = nativeRows.snapshot()
         guard draft.replace(oldNative, with: capturedRows.map(\.row)), draft.nativeLength == storage.length else { return false }
         var replacement: (range: NSRange, text: String)?
-        var literalReplacement = false
-        let punctuation = CharacterSet(charactersIn: "[]()!$`*_~=<>\\\n")
+        var literalContext: (footprint: NSRange, context: String, removed: String, inherited: [WritingProseProjection.Run])?
         if projectionTask == nil, deferred.isEmpty, changes.count == 1, capturedRows.count == 1, let change = changes.first,
            change.new.length <= 4096, change.old.length <= 4096,
            let oldRow = nativeRows.row(containingNative: change.old.location),
@@ -297,9 +313,15 @@ final class WritingEditorProjectionCapture {
            draft.sourceLength - nativeRows.sourceLength == change.delta {
             let range = NSRange(location: a, length: b - a)
             let inserted = (storage.string as NSString).substring(with: change.new)
-            if inserted.rangeOfCharacter(from: punctuation) == nil, let removed = readSource(range),
-               removed.rangeOfCharacter(from: punctuation) == nil {
-                replacement = (range, inserted); literalReplacement = true
+            if inserted.rangeOfCharacter(from: Self.syntaxPunctuation) == nil,
+               let removed = readSource(range),
+               removed.rangeOfCharacter(from: Self.syntaxPunctuation) == nil,
+               let footprint = projectionFootprint(for: range),
+               footprint.length <= 8192,
+               let context = readSource(footprint),
+               let inherited = inheritedRuns(in: footprint, context: context, replacing: range, removed: removed, inserted: inserted) {
+                replacement = (range, inserted)
+                literalContext = (footprint, context, removed, inherited)
             }
         }
         if replacement == nil {
@@ -335,22 +357,34 @@ final class WritingEditorProjectionCapture {
             guard text.utf16.count - coverage.length == draft.sourceLength - nativeRows.sourceLength else { return false }
             replacement = (coverage, text)
         }
-        guard let replacement, let oldText = readSource(replacement.range) else { return false }
+        guard let replacement else { return false }
+        let oldText: String
+        if let literal = literalContext {
+            oldText = literal.removed
+        } else {
+            guard let resolvedOldText = readSource(replacement.range) else { return false }
+            oldText = resolvedOldText
+        }
         let sourceChanged = needsCanonicalLoadCompletion || !oldText.utf16.elementsEqual(replacement.text.utf16)
         guard ownerChanged || !sourceChanged else { return false }
         let footprint: NSRange
-        if sourceProjection.sourceLength == 0 { footprint = NSRange(location: 0, length: 0) }
-        else {
-            guard let a = sourceProjection.sourcePiece(containing: replacement.range.location),
-                  let b = sourceProjection.sourcePiece(containing: max(replacement.range.location, replacement.range.upperBound - 1)) else { return false }
-            footprint = NSRange(location: a.range.location, length: b.range.location + b.range.length - a.range.location)
+        let context: String
+        let inherited: [WritingProseProjection.Run]?
+        if let literal = literalContext {
+            footprint = literal.footprint
+            context = literal.context
+            inherited = literal.inherited
+        } else {
+            guard let resolvedFootprint = projectionFootprint(for: replacement.range),
+                  resolvedFootprint.length <= 8192,
+                  let resolvedContext = readSource(resolvedFootprint) else { return false }
+            footprint = resolvedFootprint
+            context = resolvedContext
+            inherited = nil
         }
-        guard footprint.length <= 8192, let context = readSource(footprint) else { return false }
         let changed = (context as NSString).replacingCharacters(in: NSRange(location: replacement.range.location - footprint.location,
                                                                           length: replacement.range.length), with: replacement.text)
         lastInputUTF16 = changed.utf16.count
-        let inherited = literalReplacement ? inheritedRuns(in: footprint, replacing: replacement.range,
-                                                          length: replacement.text.utf16.count) : nil
         let blocks = projectedPieces(changed, sourceOffset: footprint.location, rows: draft, inherited: inherited)
         guard sourceProjection.sourceLength + changed.utf16.count - footprint.length == draft.sourceLength,
               sourceProjection.apply(.init(oldSourceRange: .init(footprint), replacement: blocks)) else { return false }
@@ -381,38 +415,45 @@ final class WritingEditorProjectionCapture {
 
     private func inheritedState(
         atInsertion offset: Int,
-        in footprint: NSRange,
-        states: [InheritedStateInterval]
+        states: [InheritedStateInterval],
+        context: String,
+        footprintStart: Int
     ) -> InheritedState? {
+        let eligibleProse = InheritedState.segment(eligible: true, unsupported: false)
+
         if let interior = states.first(where: { $0.range.location < offset && offset < $0.range.upperBound }) {
+            if interior.state == eligibleProse {
+                return eligibleProse
+            }
+            if case .segment(_, true) = interior.state {
+                return nil
+            }
+            let local = offset - footprintStart
+            let ns = context as NSString
+            guard local > 0, local < ns.length else { return nil }
+            let beforeUnit = ns.character(at: local - 1)
+            let afterUnit = ns.character(at: local)
+            guard !Self.isBoundarySensitive(beforeUnit), !Self.isBoundarySensitive(afterUnit) else {
+                return nil
+            }
             return interior.state
         }
+
         let left = states.first(where: { $0.range.upperBound == offset })
         let right = states.first(where: { $0.range.location == offset })
+
         if let left, let right {
-            if left.state == .segment(eligible: true, unsupported: false)
-                || right.state == .segment(eligible: true, unsupported: false) {
-                return .segment(eligible: true, unsupported: false)
+            if left.state == eligibleProse || right.state == eligibleProse {
+                return eligibleProse
             }
-            if case .segment(eligible: false, unsupported: let leftUnsupported) = left.state {
-                if case .segment(eligible: false, unsupported: let rightUnsupported) = right.state {
-                    return .segment(eligible: false, unsupported: leftUnsupported || rightUnsupported)
-                }
-                return .segment(eligible: false, unsupported: leftUnsupported)
-            }
-            if case .segment(eligible: false, unsupported: let rightUnsupported) = right.state {
-                return .segment(eligible: false, unsupported: rightUnsupported)
-            }
-            return .omitted
+            return nil
         }
+
         if let right, left == nil {
-            if right.state == .segment(eligible: true, unsupported: false) {
-                return right.state
+            if right.state == eligibleProse {
+                return eligibleProse
             }
-            if offset == 0 {
-                return .segment(eligible: true, unsupported: false)
-            }
-            if let previousPiece = sourceProjection.sourcePiece(containing: offset - 1) {
+            if offset > 0, let previousPiece = sourceProjection.sourcePiece(containing: offset - 1) {
                 let trailingState: InheritedState
                 if let last = previousPiece.block.segments.last,
                    last.source.upperBound == previousPiece.range.length {
@@ -420,29 +461,39 @@ final class WritingEditorProjectionCapture {
                 } else {
                     trailingState = .omitted
                 }
-                if trailingState == .segment(eligible: true, unsupported: false) {
-                    return trailingState
+                if trailingState == eligibleProse {
+                    return eligibleProse
+                }
+                if right.state == .omitted,
+                   trailingState == .omitted || trailingState == .segment(eligible: false, unsupported: false),
+                   let lastUnit = previousPiece.block.sourceText.utf16.last,
+                   let firstUnit = context.utf16.first,
+                   !Self.isBoundarySensitive(lastUnit),
+                   !Self.isBoundarySensitive(firstUnit) {
+                    return .omitted
                 }
             }
-            return right.state
+            return nil
         }
+
         if let left, right == nil {
-            if left.state == .segment(eligible: true, unsupported: false) {
-                return left.state
-            }
-            if offset > 0, let previousPiece = sourceProjection.sourcePiece(containing: offset - 1),
-               let lastUnit = previousPiece.block.sourceText.utf16.last,
-               lastUnit == 41 || lastUnit == 36 || lastUnit == 96 {
-                return .segment(eligible: true, unsupported: false)
-            }
-            return left.state
+            return left.state == eligibleProse ? eligibleProse : nil
         }
+
         return nil
     }
 
     /// Reuse proven grammar scopes for a literal edit, including an excluded URL spanning pieces.
-    private func inheritedRuns(in footprint: NSRange, replacing old: NSRange, length: Int) -> [WritingProseProjection.Run]? {
+    /// Returns nil when syntax boundaries or link-sensitive characters require a full-row reparse.
+    private func inheritedRuns(
+        in footprint: NSRange,
+        context: String,
+        replacing old: NSRange,
+        removed: String,
+        inserted: String
+    ) -> [WritingProseProjection.Run]? {
         guard footprint.length > 0 else { return nil }
+        let length = inserted.utf16.count
         var rawRuns: [WritingProseProjection.Run] = []
         var states: [InheritedStateInterval] = []
         var cursor = footprint.location
@@ -496,11 +547,26 @@ final class WritingEditorProjectionCapture {
         }
         guard cursor == footprint.upperBound else { return nil }
 
+        let eligibleProse = InheritedState.segment(eligible: true, unsupported: false)
+        if inserted.rangeOfCharacter(from: Self.linkSyntaxSensitive) != nil
+            || removed.rangeOfCharacter(from: Self.linkSyntaxSensitive) != nil {
+            let hasNonProseState = states.contains { $0.state != eligibleProse }
+            if hasNonProseState || (context as NSString).range(of: "](", options: .literal).location != NSNotFound {
+                return nil
+            }
+        }
+
         var resolved: InheritedState?
         if old.length > 0 {
             let overlapping = states.filter { NSIntersectionRange($0.range, old).length > 0 }
             guard let first = overlapping.first, let last = overlapping.last,
                   first.range.location <= old.location, old.upperBound <= last.range.upperBound else {
+                return nil
+            }
+            if overlapping.contains(where: {
+                if case .segment(_, true) = $0.state { return true }
+                return false
+            }) {
                 return nil
             }
             if overlapping.count == 1 {
@@ -513,16 +579,17 @@ final class WritingEditorProjectionCapture {
                     if case .segment = $0.state { return true }
                     return false
                 }
-                let hasUnsupported = overlapping.contains {
-                    if case .segment(_, true) = $0.state { return true }
-                    return false
-                }
-                resolved = hasSegment ? .segment(eligible: false, unsupported: hasUnsupported) : .omitted
+                resolved = hasSegment ? .segment(eligible: false, unsupported: false) : .omitted
             } else {
                 return nil
             }
         } else if length > 0 {
-            guard let state = inheritedState(atInsertion: old.location, in: footprint, states: states) else {
+            guard let state = inheritedState(
+                atInsertion: old.location,
+                states: states,
+                context: context,
+                footprintStart: footprint.location
+            ) else {
                 return nil
             }
             resolved = state
@@ -768,13 +835,7 @@ final class WritingEditorProjectionCapture {
             while !deferred.isEmpty {
                 guard !Task.isCancelled, collectionEpoch == epoch, knownIdentity == runtimeIdentity?() else { return }
                 let edit = deferred.removeFirst()
-                let footprint: NSRange
-                if sourceProjection.sourceLength == 0 { footprint = NSRange(location: 0, length: 0) }
-                else {
-                    guard let a = sourceProjection.sourcePiece(containing: edit.range.location),
-                          let b = sourceProjection.sourcePiece(containing: max(edit.range.location, edit.range.upperBound - 1)) else { return }
-                    footprint = NSRange(location: a.range.location, length: b.range.location + b.range.length - a.range.location)
-                }
+                guard let footprint = projectionFootprint(for: edit.range) else { return }
                 guard let prefix = readSource(NSRange(location: footprint.location, length: edit.range.location - footprint.location)),
                       let suffix = readSource(NSRange(location: edit.range.upperBound, length: footprint.upperBound - edit.range.upperBound)) else { return }
                 var blocks: [WritingProseBlock] = [], buffer = "", size = 0, offset = footprint.location

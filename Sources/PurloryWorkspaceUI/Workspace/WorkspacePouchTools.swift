@@ -38,6 +38,7 @@ struct WorkspacePouchTools: View {
     let openCoauthor: () -> Void
     let openSettings: () -> Void
     var openVersions: () -> Void = {}
+    var onMarkedTextSync: ((Bool) -> Void)? = nil
     @AppStorage("purlory.appearance") private var appearance = ""
     @Environment(\.colorScheme) private var colorScheme
     @State private var markedText = false
@@ -199,23 +200,34 @@ struct WorkspacePouchTools: View {
             Color.clear.preference(key: PouchContentHeightKey.self, value: geometry.size.height)
         })
         .onPreferenceChange(PouchContentHeightKey.self) { model.setPouchContentHeight($0, for: model.selectedTile) }
-        .onAppear { markedText = editor?.hasMarkedText() == true }
-        .onChange(of: model.pouchSection) { _, section in
-            guard section != nil else { return }
-            let next = editor?.hasMarkedText() == true
-            if markedText != next { markedText = next }
+        .onAppear {
+            syncMarkedText()
+            onMarkedTextSync?(markedText)
+        }
+        .onChange(of: markedText) { _, next in
+            onMarkedTextSync?(next)
+        }
+        .onChange(of: model.pouchOpenSequence) { _, _ in
+            guard model.pouchSection != nil else { return }
+            syncMarkedText()
+        }
+        .onChange(of: session.selectedDocumentID) { _, _ in
+            guard model.pouchSection != nil else { return }
+            syncMarkedText()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSTextView.didChangeSelectionNotification)) { _ in
             guard model.pouchSection != nil else { return }
-            let next = editor?.hasMarkedText() == true
-            if markedText != next { markedText = next }
+            syncMarkedText()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSText.didChangeNotification)) { _ in
             guard model.pouchSection != nil else { return }
-            let next = editor?.hasMarkedText() == true
-            if markedText != next { markedText = next }
+            syncMarkedText()
         }
         .accessibilityElement(children: .contain)
+    }
+    private func syncMarkedText() {
+        let next = editor?.hasMarkedText() == true
+        if markedText != next { markedText = next }
     }
     private func submitQuickNote() {
         let text = quickNote.trimmingCharacters(in: .whitespacesAndNewlines)
