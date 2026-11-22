@@ -431,6 +431,242 @@ final class WritingEditorProjectionTests: XCTestCase {
         XCTAssertTrue(closingFenceOnly.eligible.isEmpty)
         XCTAssertTrue(closingFenceOnly.blocked.isEmpty)
     }
+
+    func testKoreanIMECompositionReplacingSelectionAcrossSourcePieceBoundaryPreservesProjectionAndLookup() throws {
+        let harness = WritingEditorHarness(String(repeating: "가", count: 3_000))
+        defer { harness.close() }
+        let editor = harness.editor
+        let firstPiece = try XCTUnwrap(editor.writingProjectionCapture.sourceProjection.sourcePiece(containing: 0))
+        XCTAssertEqual(firstPiece.range.location, 0)
+        XCTAssertEqual(firstPiece.range.length, 2_048)
+
+        editor.setSelectedRange(NSRange(location: 2_047, length: 2))
+        harness.window.testUndo.beginUndoGrouping()
+        editor.setMarkedText("ㅎ", selectedRange: NSRange(location: 1, length: 0), replacementRange: editor.selectedRange())
+        XCTAssertTrue(editor.hasMarkedText())
+        editor.setMarkedText("하", selectedRange: NSRange(location: 1, length: 0), replacementRange: editor.markedRange())
+        XCTAssertTrue(editor.hasMarkedText())
+        editor.insertText("한", replacementRange: editor.markedRange())
+        harness.window.testUndo.endUndoGrouping()
+
+        XCTAssertFalse(editor.hasMarkedText())
+        XCTAssertEqual(harness.projectedSource, harness.body)
+        XCTAssertEqual(harness.body.utf16.count, 2_999)
+
+        let rebuilt = WritingEditorHarness(harness.body)
+        defer { rebuilt.close() }
+        XCTAssertEqual(editor.writingProjectionCapture.sourceProjection.proseLength, 2_999)
+        XCTAssertEqual(
+            editor.writingProjectionCapture.sourceProjection.proseLength,
+            rebuilt.editor.writingProjectionCapture.sourceProjection.proseLength
+        )
+
+        let native = try XCTUnwrap(editor.nativeRange(
+            forSource: .init(location: 2_047, length: 1),
+            revision: editor.writingNativeRevision,
+            expectedQuote: "한"
+        ))
+        XCTAssertEqual((editor.string as NSString).substring(with: native.nsRange), "한")
+
+        harness.window.testUndo.undo()
+        XCTAssertEqual(harness.projectedSource, harness.body)
+        let afterUndo = WritingEditorHarness(harness.body)
+        defer { afterUndo.close() }
+        XCTAssertEqual(
+            editor.writingProjectionCapture.sourceProjection.proseLength,
+            afterUndo.editor.writingProjectionCapture.sourceProjection.proseLength
+        )
+
+        harness.window.testUndo.redo()
+        XCTAssertEqual(harness.projectedSource, harness.body)
+        let afterRedo = WritingEditorHarness(harness.body)
+        defer { afterRedo.close() }
+        XCTAssertEqual(
+            editor.writingProjectionCapture.sourceProjection.proseLength,
+            afterRedo.editor.writingProjectionCapture.sourceProjection.proseLength
+        )
+    }
+
+    func testSingleStepLatinGrowingReplacementAndDeletionAcrossPieceBoundaryKeepExactProjection() throws {
+        let latinHarness = WritingEditorHarness(String(repeating: "가", count: 3_000))
+        defer { latinHarness.close() }
+        latinHarness.edit("a", range: NSRange(location: 2_047, length: 2))
+        XCTAssertEqual(latinHarness.projectedSource, latinHarness.body)
+        let latinRebuilt = WritingEditorHarness(latinHarness.body)
+        defer { latinRebuilt.close() }
+        XCTAssertEqual(latinHarness.editor.writingProjectionCapture.sourceProjection.proseLength, 2_999)
+        XCTAssertEqual(
+            latinHarness.editor.writingProjectionCapture.sourceProjection.proseLength,
+            latinRebuilt.editor.writingProjectionCapture.sourceProjection.proseLength
+        )
+        let latinNative = try XCTUnwrap(latinHarness.editor.nativeRange(
+            forSource: .init(location: 2_047, length: 1),
+            revision: latinHarness.editor.writingNativeRevision,
+            expectedQuote: "a"
+        ))
+        XCTAssertEqual((latinHarness.editor.string as NSString).substring(with: latinNative.nsRange), "a")
+
+        let growingHarness = WritingEditorHarness(String(repeating: "가", count: 3_000))
+        defer { growingHarness.close() }
+        growingHarness.edit("가나다라", range: NSRange(location: 2_047, length: 2))
+        XCTAssertEqual(growingHarness.projectedSource, growingHarness.body)
+        let growingRebuilt = WritingEditorHarness(growingHarness.body)
+        defer { growingRebuilt.close() }
+        XCTAssertEqual(growingHarness.editor.writingProjectionCapture.sourceProjection.proseLength, 3_002)
+        XCTAssertEqual(
+            growingHarness.editor.writingProjectionCapture.sourceProjection.proseLength,
+            growingRebuilt.editor.writingProjectionCapture.sourceProjection.proseLength
+        )
+        let growingNative = try XCTUnwrap(growingHarness.editor.nativeRange(
+            forSource: .init(location: 2_047, length: 4),
+            revision: growingHarness.editor.writingNativeRevision,
+            expectedQuote: "가나다라"
+        ))
+        XCTAssertEqual((growingHarness.editor.string as NSString).substring(with: growingNative.nsRange), "가나다라")
+
+        let deleteHarness = WritingEditorHarness(String(repeating: "가", count: 3_000))
+        defer { deleteHarness.close() }
+        deleteHarness.edit("", range: NSRange(location: 2_047, length: 2))
+        XCTAssertEqual(deleteHarness.projectedSource, deleteHarness.body)
+        let deleteRebuilt = WritingEditorHarness(deleteHarness.body)
+        defer { deleteRebuilt.close() }
+        XCTAssertEqual(deleteHarness.editor.writingProjectionCapture.sourceProjection.proseLength, 2_998)
+        XCTAssertEqual(
+            deleteHarness.editor.writingProjectionCapture.sourceProjection.proseLength,
+            deleteRebuilt.editor.writingProjectionCapture.sourceProjection.proseLength
+        )
+        let deleteNative = try XCTUnwrap(deleteHarness.editor.nativeRange(
+            forSource: .init(location: 2_046, length: 2),
+            revision: deleteHarness.editor.writingNativeRevision
+        ))
+        XCTAssertEqual((deleteHarness.editor.string as NSString).substring(with: deleteNative.nsRange), "가가")
+    }
+
+    func testReplacingSelectionAcrossPieceBoundaryInsideExcludedURLKeepsURLExcluded() throws {
+        let url = "https://example.test/" + String(repeating: "a", count: 6_000)
+        let source = "앞 [이름](" + url + ") 끝"
+        let harness = WritingEditorHarness(source)
+        defer { harness.close() }
+        let editor = harness.editor
+        let firstPiece = try XCTUnwrap(editor.writingProjectionCapture.sourceProjection.sourcePiece(containing: 0))
+        let pieceEnd = firstPiece.range.location + firstPiece.range.length
+        let sourceNS = source as NSString
+        let urlRange = sourceNS.range(of: url)
+        XCTAssertNotEqual(urlRange.location, NSNotFound)
+        let aStart = urlRange.location + "https://example.test/".utf16.count
+        XCTAssertGreaterThan(pieceEnd - 1, aStart)
+        XCTAssertLessThan(pieceEnd + 1, urlRange.upperBound)
+        XCTAssertEqual(sourceNS.substring(with: NSRange(location: pieceEnd - 1, length: 2)), "aa")
+
+        let nativeURL = (editor.string as NSString).range(of: "aaaa")
+        XCTAssertNotEqual(nativeURL.location, NSNotFound)
+        let nativeSelectionStart = nativeURL.location + (pieceEnd - 1 - aStart)
+        editor.setSelectedRange(NSRange(location: nativeSelectionStart, length: 2))
+
+        harness.window.testUndo.beginUndoGrouping()
+        editor.setMarkedText("ㅎ", selectedRange: NSRange(location: 1, length: 0), replacementRange: editor.selectedRange())
+        XCTAssertTrue(editor.hasMarkedText())
+        editor.setMarkedText("하", selectedRange: NSRange(location: 1, length: 0), replacementRange: editor.markedRange())
+        XCTAssertTrue(editor.hasMarkedText())
+        editor.insertText("한", replacementRange: editor.markedRange())
+        harness.window.testUndo.endUndoGrouping()
+
+        XCTAssertFalse(editor.hasMarkedText())
+        XCTAssertEqual(harness.projectedSource, harness.body)
+        XCTAssertNil(editor.nativeRange(
+            forSource: .init(location: pieceEnd - 1, length: 1),
+            revision: editor.writingNativeRevision
+        ))
+        let rebuilt = WritingEditorHarness(harness.body)
+        defer { rebuilt.close() }
+        XCTAssertEqual(
+            editor.writingProjectionCapture.sourceProjection.proseLength,
+            rebuilt.editor.writingProjectionCapture.sourceProjection.proseLength
+        )
+        let tailSource = (harness.body as NSString).range(of: "끝", options: .backwards)
+        let tailNative = try XCTUnwrap(editor.nativeRange(
+            forSource: .init(tailSource),
+            revision: editor.writingNativeRevision,
+            expectedQuote: "끝"
+        ))
+        XCTAssertEqual((editor.string as NSString).substring(with: tailNative.nsRange), "끝")
+    }
+
+    func testPureInsertionAdjacentToExcludedSyntaxRemainsEligibleProse() throws {
+        let mathHarness = WritingEditorHarness("앞 $x$ 뒤")
+        defer { mathHarness.close() }
+        let afterMathNative = (mathHarness.editor.string as NSString).range(of: " 뒤").location
+        XCTAssertNotEqual(afterMathNative, NSNotFound)
+        mathHarness.edit("가", range: NSRange(location: afterMathNative, length: 0))
+        XCTAssertEqual(mathHarness.body, "앞 $x$가 뒤")
+        XCTAssertEqual(mathHarness.projectedSource, mathHarness.body)
+        let mathRebuilt = WritingEditorHarness(mathHarness.body)
+        defer { mathRebuilt.close() }
+        XCTAssertEqual(
+            mathHarness.editor.writingProjectionCapture.sourceProjection.proseLength,
+            mathRebuilt.editor.writingProjectionCapture.sourceProjection.proseLength
+        )
+        let insertedAfterMath = (mathHarness.body as NSString).range(of: "가")
+        let afterMathLookup = try XCTUnwrap(mathHarness.editor.nativeRange(
+            forSource: .init(insertedAfterMath),
+            revision: mathHarness.editor.writingNativeRevision,
+            expectedQuote: "가"
+        ))
+        XCTAssertEqual((mathHarness.editor.string as NSString).substring(with: afterMathLookup.nsRange), "가")
+        let mathSource = (mathHarness.body as NSString).range(of: "$x$")
+        XCTAssertNil(mathHarness.editor.nativeRange(
+            forSource: .init(mathSource),
+            revision: mathHarness.editor.writingNativeRevision
+        ))
+
+        let prefixHarness = WritingEditorHarness("[이름](https://example.test/a)")
+        defer { prefixHarness.close() }
+        prefixHarness.edit("가", range: NSRange(location: 0, length: 0))
+        XCTAssertEqual(prefixHarness.body, "가[이름](https://example.test/a)")
+        XCTAssertEqual(prefixHarness.projectedSource, prefixHarness.body)
+        let prefixRebuilt = WritingEditorHarness(prefixHarness.body)
+        defer { prefixRebuilt.close() }
+        XCTAssertEqual(
+            prefixHarness.editor.writingProjectionCapture.sourceProjection.proseLength,
+            prefixRebuilt.editor.writingProjectionCapture.sourceProjection.proseLength
+        )
+        let prefixLookup = try XCTUnwrap(prefixHarness.editor.nativeRange(
+            forSource: .init(location: 0, length: 1),
+            revision: prefixHarness.editor.writingNativeRevision,
+            expectedQuote: "가"
+        ))
+        XCTAssertEqual((prefixHarness.editor.string as NSString).substring(with: prefixLookup.nsRange), "가")
+        let prefixURL = (prefixHarness.body as NSString).range(of: "https://example.test/a")
+        XCTAssertNil(prefixHarness.editor.nativeRange(
+            forSource: .init(prefixURL),
+            revision: prefixHarness.editor.writingNativeRevision
+        ))
+
+        let suffixHarness = WritingEditorHarness("[이름](https://example.test/a)")
+        defer { suffixHarness.close() }
+        let eofNative = suffixHarness.editor.string.utf16.count
+        suffixHarness.edit("가", range: NSRange(location: eofNative, length: 0))
+        XCTAssertEqual(suffixHarness.body, "[이름](https://example.test/a)가")
+        XCTAssertEqual(suffixHarness.projectedSource, suffixHarness.body)
+        let suffixRebuilt = WritingEditorHarness(suffixHarness.body)
+        defer { suffixRebuilt.close() }
+        XCTAssertEqual(
+            suffixHarness.editor.writingProjectionCapture.sourceProjection.proseLength,
+            suffixRebuilt.editor.writingProjectionCapture.sourceProjection.proseLength
+        )
+        let insertedEOF = (suffixHarness.body as NSString).range(of: "가", options: .backwards)
+        let suffixLookup = try XCTUnwrap(suffixHarness.editor.nativeRange(
+            forSource: .init(insertedEOF),
+            revision: suffixHarness.editor.writingNativeRevision,
+            expectedQuote: "가"
+        ))
+        XCTAssertEqual((suffixHarness.editor.string as NSString).substring(with: suffixLookup.nsRange), "가")
+        let suffixURL = (suffixHarness.body as NSString).range(of: "https://example.test/a")
+        XCTAssertNil(suffixHarness.editor.nativeRange(
+            forSource: .init(suffixURL),
+            revision: suffixHarness.editor.writingNativeRevision
+        ))
+    }
 }
 
 @MainActor

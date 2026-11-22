@@ -107,6 +107,93 @@ import XCTest
         XCTAssertEqual(publicationCount, 0, "Repeated updates while already .checking with nil prepared/currentHeadingID must not republish")
     }
 
+    func testDocumentOutlineHolderDoesNotForwardControllerPublicationsAndInitializesLazily() async throws {
+        var createdControllers: [DocumentOutlineController] = []
+        defer { createdControllers.forEach { $0.stop() } }
+
+        func makeIsolatedController() -> DocumentOutlineController {
+            let controller = DocumentOutlineController(observeEnergy: false, sleep: {
+                try await Task.sleep(for: .seconds(10))
+            })
+            createdControllers.append(controller)
+            return controller
+        }
+
+        let holder = DocumentOutlineHolder(controller: makeIsolatedController())
+        func observeObjectWillChange<Object: ObservableObject>(
+            _ object: Object,
+            onChange: @escaping () -> Void
+        ) -> AnyCancellable {
+            object.objectWillChange.sink { _ in onChange() }
+        }
+
+        var holderPublications = 0
+        let holderCancellable = observeObjectWillChange(holder) {
+            holderPublications += 1
+        }
+        defer { holderCancellable.cancel() }
+
+        var controllerPublications = 0
+        let controllerCancellable = holder.controller.objectWillChange.sink { _ in
+            controllerPublications += 1
+        }
+        defer { controllerCancellable.cancel() }
+
+        let key = ProjectDocumentKey(projectID: WritingProjectID(), documentID: WritingDocumentID())
+        let snapshot1 = ProjectDocumentSnapshot(
+            identity: .init(key: key, generation: 1),
+            title: "Draft",
+            body: "# One\nFirst",
+            kind: .manuscript,
+            mode: .general
+        )
+        holder.controller.update(snapshot1)
+        XCTAssertEqual(holder.controller.status, .checking)
+        XCTAssertEqual(controllerPublications, 1)
+        XCTAssertEqual(holderPublications, 0, "DocumentOutlineHolder must not forward controller objectWillChange publications")
+
+        let driver = OutlineProbeDriver()
+        var makeControllerCount = 0
+        var observedRevisions: [Int] = []
+        var observedControllerIDs: [ObjectIdentifier] = []
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 200, height: 120),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        let host = NSHostingView(rootView: OutlineHolderParentProbe(
+            driver: driver,
+            makeController: {
+                makeControllerCount += 1
+                return makeIsolatedController()
+            },
+            onEvaluate: { revision, controller in
+                observedRevisions.append(revision)
+                observedControllerIDs.append(ObjectIdentifier(controller))
+            }
+        ))
+        window.contentView = host
+        defer { window.contentView = nil; window.close() }
+
+        for _ in 0..<5 { host.layoutSubtreeIfNeeded(); await Task.yield() }
+        XCTAssertEqual(makeControllerCount, 1)
+        XCTAssertEqual(observedRevisions.last, 0)
+
+        driver.revision = 1
+        for _ in 0..<5 { host.layoutSubtreeIfNeeded(); await Task.yield() }
+        driver.revision = 2
+        for _ in 0..<5 { host.layoutSubtreeIfNeeded(); await Task.yield() }
+
+        XCTAssertEqual(makeControllerCount, 1, "StateObject holder must lazily create DocumentOutlineController only once across parent re-evaluations")
+        XCTAssertTrue(observedRevisions.contains(1))
+        XCTAssertEqual(observedRevisions.last, 2)
+        let firstID = try XCTUnwrap(observedControllerIDs.first)
+        XCTAssertTrue(observedControllerIDs.allSatisfy { $0 == firstID }, "Controller instance must stay alive across parent re-evaluations")
+    }
+
     func testCollapsedPouchToolsDefersRootViewUpdatesUntilExpanded() async throws {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
@@ -238,5 +325,48 @@ private struct ToolsVersionProbe: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSView, context: Context) {
         onApply(version)
+    }
+}
+
+@MainActor
+private final class OutlineProbeDriver: ObservableObject {
+    @Published var revision = 0
+}
+
+@MainActor
+private struct OutlineHolderParentProbe: View {
+    @ObservedObject var driver: OutlineProbeDriver
+    let makeController: () -> DocumentOutlineController
+    let onEvaluate: (Int, DocumentOutlineController) -> Void
+
+    var body: some View {
+        OutlineHolderChildProbe(
+            revision: driver.revision,
+            makeHolder: { DocumentOutlineHolder(controller: makeController()) },
+            onEvaluate: onEvaluate
+        )
+    }
+}
+
+@MainActor
+private struct OutlineHolderChildProbe: View {
+    @StateObject private var holder: DocumentOutlineHolder
+    let revision: Int
+    let onEvaluate: (Int, DocumentOutlineController) -> Void
+
+    init(
+        revision: Int,
+        makeHolder: @escaping () -> DocumentOutlineHolder,
+        onEvaluate: @escaping (Int, DocumentOutlineController) -> Void
+    ) {
+        self.revision = revision
+        self._holder = StateObject(wrappedValue: makeHolder())
+        self.onEvaluate = onEvaluate
+    }
+
+    var body: some View {
+        onEvaluate(revision, holder.controller)
+        return Text("\(revision)")
+            .frame(width: 40, height: 20)
     }
 }

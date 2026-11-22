@@ -370,24 +370,172 @@ final class WritingEditorProjectionCapture {
             runs.append(run)
         }
     }
+    private enum InheritedState: Equatable {
+        case omitted
+        case segment(eligible: Bool, unsupported: Bool)
+    }
+    private struct InheritedStateInterval {
+        let range: NSRange
+        let state: InheritedState
+    }
+
+    private func inheritedState(
+        atInsertion offset: Int,
+        in footprint: NSRange,
+        states: [InheritedStateInterval]
+    ) -> InheritedState? {
+        if let interior = states.first(where: { $0.range.location < offset && offset < $0.range.upperBound }) {
+            return interior.state
+        }
+        let left = states.first(where: { $0.range.upperBound == offset })
+        let right = states.first(where: { $0.range.location == offset })
+        if let left, let right {
+            if left.state == .segment(eligible: true, unsupported: false)
+                || right.state == .segment(eligible: true, unsupported: false) {
+                return .segment(eligible: true, unsupported: false)
+            }
+            if case .segment(eligible: false, unsupported: let leftUnsupported) = left.state {
+                if case .segment(eligible: false, unsupported: let rightUnsupported) = right.state {
+                    return .segment(eligible: false, unsupported: leftUnsupported || rightUnsupported)
+                }
+                return .segment(eligible: false, unsupported: leftUnsupported)
+            }
+            if case .segment(eligible: false, unsupported: let rightUnsupported) = right.state {
+                return .segment(eligible: false, unsupported: rightUnsupported)
+            }
+            return .omitted
+        }
+        if let right, left == nil {
+            if right.state == .segment(eligible: true, unsupported: false) {
+                return right.state
+            }
+            if offset == 0 {
+                return .segment(eligible: true, unsupported: false)
+            }
+            if let previousPiece = sourceProjection.sourcePiece(containing: offset - 1) {
+                let trailingState: InheritedState
+                if let last = previousPiece.block.segments.last,
+                   last.source.upperBound == previousPiece.range.length {
+                    trailingState = .segment(eligible: last.eligible, unsupported: last.unsupported)
+                } else {
+                    trailingState = .omitted
+                }
+                if trailingState == .segment(eligible: true, unsupported: false) {
+                    return trailingState
+                }
+            }
+            return right.state
+        }
+        if let left, right == nil {
+            if left.state == .segment(eligible: true, unsupported: false) {
+                return left.state
+            }
+            if offset > 0, let previousPiece = sourceProjection.sourcePiece(containing: offset - 1),
+               let lastUnit = previousPiece.block.sourceText.utf16.last,
+               lastUnit == 41 || lastUnit == 36 || lastUnit == 96 {
+                return .segment(eligible: true, unsupported: false)
+            }
+            return left.state
+        }
+        return nil
+    }
+
     /// Reuse proven grammar scopes for a literal edit, including an excluded URL spanning pieces.
-    private func inheritedRuns(in footprint: NSRange, replacing old: NSRange, length: Int) -> [WritingProseProjection.Run] {
-        var rawRuns: [WritingProseProjection.Run] = [], cursor = footprint.location, inserted = false
+    private func inheritedRuns(in footprint: NSRange, replacing old: NSRange, length: Int) -> [WritingProseProjection.Run]? {
+        guard footprint.length > 0 else { return nil }
+        var rawRuns: [WritingProseProjection.Run] = []
+        var states: [InheritedStateInterval] = []
+        var cursor = footprint.location
         let delta = length - old.length
+
+        func appendState(_ range: NSRange, _ state: InheritedState) {
+            guard range.length > 0 else { return }
+            if let last = states.last, last.state == state, last.range.upperBound == range.location {
+                states[states.count - 1] = InheritedStateInterval(
+                    range: NSRange(location: last.range.location, length: last.range.length + range.length),
+                    state: state
+                )
+            } else {
+                states.append(InheritedStateInterval(range: range, state: state))
+            }
+        }
+
         while cursor < footprint.upperBound, let piece = sourceProjection.sourcePiece(containing: cursor) {
+            guard piece.range.length > 0 else { return nil }
+            var localCursor = piece.range.location
+            let pieceEnd = piece.range.location + piece.range.length
             for segment in piece.block.segments {
                 let global = NSRange(location: piece.range.location + segment.source.location, length: segment.source.length)
+                if global.location > localCursor {
+                    appendState(NSRange(location: localCursor, length: global.location - localCursor), .omitted)
+                }
+                appendState(global, .segment(eligible: segment.eligible, unsupported: segment.unsupported))
+                localCursor = global.upperBound
+
                 let before = NSIntersectionRange(global, NSRange(location: footprint.location, length: old.location - footprint.location))
-                if before.length > 0 { rawRuns.append(.init(source: NSRange(location: before.location - footprint.location, length: before.length), eligible: segment.eligible, unsupported: segment.unsupported)) }
-                if !inserted, length > 0, old.location >= global.location, old.upperBound <= global.upperBound {
-                    rawRuns.append(.init(source: NSRange(location: old.location - footprint.location, length: length), eligible: segment.eligible, unsupported: segment.unsupported))
-                    inserted = true
+                if before.length > 0 {
+                    rawRuns.append(.init(
+                        source: NSRange(location: before.location - footprint.location, length: before.length),
+                        eligible: segment.eligible,
+                        unsupported: segment.unsupported
+                    ))
                 }
                 let after = NSIntersectionRange(global, NSRange(location: old.upperBound, length: footprint.upperBound - old.upperBound))
-                if after.length > 0 { rawRuns.append(.init(source: NSRange(location: after.location + delta - footprint.location, length: after.length), eligible: segment.eligible, unsupported: segment.unsupported)) }
+                if after.length > 0 {
+                    rawRuns.append(.init(
+                        source: NSRange(location: after.location + delta - footprint.location, length: after.length),
+                        eligible: segment.eligible,
+                        unsupported: segment.unsupported
+                    ))
+                }
             }
-            cursor = piece.range.location + piece.range.length
+            if pieceEnd > localCursor {
+                appendState(NSRange(location: localCursor, length: pieceEnd - localCursor), .omitted)
+            }
+            cursor = pieceEnd
         }
+        guard cursor == footprint.upperBound else { return nil }
+
+        var resolved: InheritedState?
+        if old.length > 0 {
+            let overlapping = states.filter { NSIntersectionRange($0.range, old).length > 0 }
+            guard let first = overlapping.first, let last = overlapping.last,
+                  first.range.location <= old.location, old.upperBound <= last.range.upperBound else {
+                return nil
+            }
+            if overlapping.count == 1 {
+                resolved = first.state
+            } else if !overlapping.contains(where: {
+                if case .segment(eligible: true, _) = $0.state { return true }
+                return false
+            }) {
+                let hasSegment = overlapping.contains {
+                    if case .segment = $0.state { return true }
+                    return false
+                }
+                let hasUnsupported = overlapping.contains {
+                    if case .segment(_, true) = $0.state { return true }
+                    return false
+                }
+                resolved = hasSegment ? .segment(eligible: false, unsupported: hasUnsupported) : .omitted
+            } else {
+                return nil
+            }
+        } else if length > 0 {
+            guard let state = inheritedState(atInsertion: old.location, in: footprint, states: states) else {
+                return nil
+            }
+            resolved = state
+        }
+
+        if length > 0, case .segment(let eligible, let unsupported) = resolved {
+            rawRuns.append(.init(
+                source: NSRange(location: old.location - footprint.location, length: length),
+                eligible: eligible,
+                unsupported: unsupported
+            ))
+        }
+
         rawRuns.sort { $0.source.location < $1.source.location }
         var runs: [WritingProseProjection.Run] = []
         runs.reserveCapacity(rawRuns.count)

@@ -167,7 +167,7 @@ struct WorkspaceSurface: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.openSettings) private var openSettings
     @StateObject private var palette = PaletteSettings.shared
-    @State private var outlineBox = DocumentOutlineHolder()
+    @StateObject private var outlineBox = DocumentOutlineHolder()
     private var outline: DocumentOutlineController { outlineBox.controller }
     @State private var spatial = SpatialWorkspaceController()
     @State private var seededSpatialProject: WritingProjectID?
@@ -667,9 +667,14 @@ enum LivingMarginWorkspaceBridge {
     }
 }
 
+/// Lazily owns the outline controller without republishing its changes to `WorkspaceSurface`.
 @MainActor
-private final class DocumentOutlineHolder {
-    let controller = DocumentOutlineController()
+final class DocumentOutlineHolder: ObservableObject {
+    let controller: DocumentOutlineController
+
+    init(controller: DocumentOutlineController = DocumentOutlineController()) {
+        self.controller = controller
+    }
 }
 
 /// Keep source revision observation out of the workspace container and its chrome.
