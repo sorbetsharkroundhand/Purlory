@@ -380,7 +380,23 @@ final class WritingEditorProjectionCapture {
                   let resolvedContext = readSource(resolvedFootprint) else { return false }
             footprint = resolvedFootprint
             context = resolvedContext
-            inherited = nil
+            let prefixRange = NSRange(location: footprint.location,
+                                      length: replacement.range.location - footprint.location)
+            let suffixRange = NSRange(location: replacement.range.upperBound,
+                                      length: footprint.upperBound - replacement.range.upperBound)
+            let delta = replacement.text.utf16.count - replacement.range.length
+            guard let prefixRuns = existingRuns(in: prefixRange, shift: -footprint.location),
+                  let suffixRuns = existingRuns(in: suffixRange, shift: -footprint.location + delta) else {
+                return false
+            }
+            var combined: [WritingProseProjection.Run] = []
+            combined.reserveCapacity(prefixRuns.count + suffixRuns.count + 4)
+            for run in prefixRuns { appendCoalescedRun(run, to: &combined) }
+            for run in inlineRunsForCompleteLines(replacement.text, offset: prefixRange.length) {
+                appendCoalescedRun(run, to: &combined)
+            }
+            for run in suffixRuns { appendCoalescedRun(run, to: &combined) }
+            inherited = combined
         }
         let changed = (context as NSString).replacingCharacters(in: NSRange(location: replacement.range.location - footprint.location,
                                                                           length: replacement.range.length), with: replacement.text)
@@ -550,8 +566,33 @@ final class WritingEditorProjectionCapture {
         let eligibleProse = InheritedState.segment(eligible: true, unsupported: false)
         if inserted.rangeOfCharacter(from: Self.linkSyntaxSensitive) != nil
             || removed.rangeOfCharacter(from: Self.linkSyntaxSensitive) != nil {
-            let hasNonProseState = states.contains { $0.state != eligibleProse }
-            if hasNonProseState || (context as NSString).range(of: "](", options: .literal).location != NSNotFound {
+            let contextNS = context as NSString
+            let localOldStart = old.location - footprint.location
+            let localOldEnd = old.upperBound - footprint.location
+            let prevNL = localOldStart > 0
+                ? contextNS.range(of: "\n", options: .backwards, range: NSRange(location: 0, length: localOldStart)).location
+                : NSNotFound
+            let lineStartLocal = prevNL == NSNotFound ? 0 : prevNL + 1
+            let nextNL = localOldEnd < contextNS.length
+                ? contextNS.range(of: "\n", options: [], range: NSRange(location: localOldEnd, length: contextNS.length - localOldEnd)).location
+                : NSNotFound
+            let lineEndLocal = nextNL == NSNotFound ? contextNS.length : nextNL
+            let lineLocal = NSRange(location: lineStartLocal, length: lineEndLocal - lineStartLocal)
+            let lineGlobal = NSRange(location: footprint.location + lineStartLocal, length: lineLocal.length)
+            let lineHasNonProse = states.contains {
+                $0.state != eligibleProse && NSIntersectionRange($0.range, lineGlobal).length > 0
+            }
+            let lineHasLinkOpen = contextNS.range(of: "](", options: .literal, range: lineLocal).location != NSNotFound
+            let startsMidLine: Bool
+            if lineStartLocal == 0 && footprint.location > 0,
+               let prevPiece = sourceProjection.sourcePiece(containing: footprint.location - 1) {
+                startsMidLine = prevPiece.block.sourceText.utf16.last != 10
+            } else {
+                startsMidLine = false
+            }
+            let midLineHasClosingParen = startsMidLine
+                && contextNS.range(of: ")", options: .literal, range: lineLocal).location != NSNotFound
+            if lineHasNonProse || lineHasLinkOpen || midLineHasClosingParen {
                 return nil
             }
         }
@@ -609,23 +650,59 @@ final class WritingEditorProjectionCapture {
         for run in rawRuns { appendCoalescedRun(run, to: &runs) }
         return runs
     }
+    private func existingRuns(in range: NSRange, shift: Int) -> [WritingProseProjection.Run]? {
+        guard range.length > 0 else { return [] }
+        var runs: [WritingProseProjection.Run] = []
+        var cursor = range.location
+        while cursor < range.upperBound {
+            guard let piece = sourceProjection.sourcePiece(containing: cursor), piece.range.length > 0 else {
+                return nil
+            }
+            let pieceEnd = piece.range.location + piece.range.length
+            for segment in piece.block.segments {
+                let global = NSRange(location: piece.range.location + segment.source.location, length: segment.source.length)
+                let clipped = NSIntersectionRange(global, range)
+                if clipped.length > 0 {
+                    appendCoalescedRun(
+                        .init(
+                            source: NSRange(location: clipped.location + shift, length: clipped.length),
+                            eligible: segment.eligible,
+                            unsupported: segment.unsupported
+                        ),
+                        to: &runs
+                    )
+                }
+            }
+            cursor = min(range.upperBound, pieceEnd)
+        }
+        return runs
+    }
+
+    private func inlineRunsForCompleteLines(_ text: String, offset: Int) -> [WritingProseProjection.Run] {
+        let ns = text as NSString
+        var runs: [WritingProseProjection.Run] = []
+        var cursor = 0
+        while cursor < ns.length {
+            let newline = ns.range(of: "\n", range: NSRange(location: cursor, length: ns.length - cursor))
+            let end = newline.location == NSNotFound ? ns.length : newline.location
+            var lineRuns = WritingProseProjection.inlineRuns(
+                ns.substring(with: NSRange(location: cursor, length: end - cursor)),
+                offset: offset + cursor
+            )
+            if lineRuns.count > 1 { lineRuns.sort { $0.source.location < $1.source.location } }
+            for run in lineRuns { appendCoalescedRun(run, to: &runs) }
+            if end < ns.length {
+                appendCoalescedRun(.init(source: NSRange(location: offset + end, length: 1), eligible: true), to: &runs)
+            }
+            cursor = end + 1
+        }
+        return runs
+    }
+
     private func projectedPieces(_ source: String, sourceOffset: Int, rows: WritingNativeRowIndex,
                                  inherited: [WritingProseProjection.Run]? = nil, unresolved: [NSRange] = []) -> [WritingProseBlock] {
         let ns = source as NSString
-        var boundedSyntax: [WritingProseProjection.Run] = [], cursor = 0
-        if inherited == nil {
-            while cursor < ns.length {
-                let newline = ns.range(of: "\n", range: NSRange(location: cursor, length: ns.length - cursor))
-                let end = newline.location == NSNotFound ? ns.length : newline.location
-                var lineRuns = WritingProseProjection.inlineRuns(ns.substring(with: NSRange(location: cursor, length: end - cursor)), offset: cursor)
-                if lineRuns.count > 1 { lineRuns.sort { $0.source.location < $1.source.location } }
-                for run in lineRuns { appendCoalescedRun(run, to: &boundedSyntax) }
-                if end < ns.length {
-                    appendCoalescedRun(.init(source: NSRange(location: end, length: 1), eligible: true), to: &boundedSyntax)
-                }
-                cursor = end + 1
-            }
-        }
+        let boundedSyntax = inherited == nil ? inlineRunsForCompleteLines(source, offset: 0) : []
         var result: [WritingProseBlock] = []
         for piece in WritingWindowSplitter.pieces(in: source, maximum: 2048) {
             let bounds = piece.nsRange, text = ns.substring(with: bounds)
@@ -705,25 +782,183 @@ final class WritingEditorProjectionCapture {
         }
         return result
     }
-    /// An unbounded raw reference is unassessed through its line, never guessed from a URL tail.
-    /// Complete references inside a bounded piece still use the shared exact grammar.
-    private func unresolvedReferences(in text: String, carried: inout Bool) -> [NSRange] {
-        let ns = text as NSString, links = WritingProseProjection.links(in: text)
-        var cursor = 0, start: Int? = carried ? 0 : nil, result: [NSRange] = []
-        while cursor < ns.length {
-            if ns.character(at: cursor) == 10 {
-                if let begin = start, cursor > begin { result.append(NSRange(location: begin, length: cursor - begin)) }
-                carried = false; start = nil
-            } else if start == nil && ns.character(at: cursor) == 91 {
-                if let complete = links.first(where: { NSLocationInRange(cursor, $0.source) }) {
-                    cursor = complete.source.upperBound; continue
-                }
-                start = cursor; carried = true
+    /// Stream a single long (>2048 UTF-16) deferred line in bounded, yielding pieces without
+    /// cutting across complete Markdown links/images or poisoning prose after a closed link.
+    private func projectLongDeferredLine(
+        _ line: String,
+        sourceOffset: Int,
+        rows: WritingNativeRowIndex,
+        epoch: UInt64
+    ) async -> [WritingProseBlock]? {
+        let body = line[...]
+        let totalLength = line.utf16.count
+        var blocks: [WritingProseBlock] = []
+        var cursorIdx = body.startIndex
+        var cursorOffset = 0
+
+        func advanceChunk(from start: Substring.Index, maxUTF16: Int) -> (end: Substring.Index, length: Int) {
+            var idx = start
+            var length = 0
+            while idx < body.endIndex {
+                let next = body.index(after: idx)
+                let width = body[idx..<next].utf16.count
+                if length > 0 && length + width > maxUTF16 { break }
+                length += width
+                idx = next
+                if length >= maxUTF16 { break }
             }
-            cursor += 1
+            return (idx, length)
         }
-        if let start, ns.length > start { result.append(NSRange(location: start, length: ns.length - start)) }
-        return result
+
+        func emitUnresolved(from startIdx: Substring.Index, startOffset: Int) async -> Bool {
+            var idx = startIdx
+            var offset = startOffset
+            while idx < body.endIndex {
+                guard !Task.isCancelled, collectionEpoch == epoch, knownIdentity == runtimeIdentity?() else { return false }
+                let (nextIdx, len) = advanceChunk(from: idx, maxUTF16: 2048)
+                let text = String(body[idx..<nextIdx])
+                blocks += projectedPieces(
+                    text,
+                    sourceOffset: sourceOffset + offset,
+                    rows: rows,
+                    unresolved: [NSRange(location: 0, length: len)]
+                )
+                idx = nextIdx
+                offset += len
+                if idx < body.endIndex {
+                    await Task.yield()
+                }
+            }
+            return true
+        }
+
+        func emitMegaLink(
+            source: Range<Substring.Index>,
+            label: Range<Substring.Index>,
+            image: Bool,
+            startOffset: Int
+        ) async -> Int? {
+            var idx = source.lowerBound
+            var offset = startOffset
+            var isFirstPiece = true
+            while idx < source.upperBound {
+                guard !Task.isCancelled, collectionEpoch == epoch, knownIdentity == runtimeIdentity?() else { return nil }
+                var nextIdx = idx
+                var len = 0
+                while nextIdx < source.upperBound {
+                    let candidate = body.index(after: nextIdx)
+                    let width = body[nextIdx..<candidate].utf16.count
+                    if len > 0 && len + width > 2048 { break }
+                    len += width
+                    nextIdx = candidate
+                    if len >= 2048 { break }
+                }
+                let text = String(body[idx..<nextIdx])
+                let pieceRuns: [WritingProseProjection.Run]
+                if image {
+                    pieceRuns = isFirstPiece ? [.init(source: NSRange(location: 0, length: len), eligible: false)] : []
+                } else if idx < label.upperBound && nextIdx > label.lowerBound {
+                    let clipStart = idx > label.lowerBound ? idx : label.lowerBound
+                    let clipEnd = nextIdx < label.upperBound ? nextIdx : label.upperBound
+                    let localLabelOffset = body.utf16.distance(from: idx, to: clipStart)
+                    pieceRuns = WritingProseProjection.inlineRuns(String(body[clipStart..<clipEnd]), offset: localLabelOffset)
+                } else {
+                    pieceRuns = []
+                }
+                blocks += projectedPieces(
+                    text,
+                    sourceOffset: sourceOffset + offset,
+                    rows: rows,
+                    inherited: pieceRuns
+                )
+                idx = nextIdx
+                offset += len
+                isFirstPiece = false
+                if idx < source.upperBound {
+                    await Task.yield()
+                }
+            }
+            return offset
+        }
+
+        while cursorIdx < body.endIndex {
+            guard !Task.isCancelled, collectionEpoch == epoch, knownIdentity == runtimeIdentity?() else { return nil }
+            var (chunkEndIdx, chunkLen) = advanceChunk(from: cursorIdx, maxUTF16: 2048)
+
+            // Never split `![` across a chunk boundary so an image isn't misread as `!` + link.
+            if chunkEndIdx < body.endIndex, body[chunkEndIdx] == "[", chunkEndIdx > cursorIdx {
+                let lastIdx = body.index(before: chunkEndIdx)
+                if lastIdx > cursorIdx, body[lastIdx] == "!", !WritingProseProjection.isEscaped(lastIdx, in: body) {
+                    chunkLen -= body[lastIdx..<chunkEndIdx].utf16.count
+                    chunkEndIdx = lastIdx
+                }
+            }
+
+            let chunkEndOffset = cursorOffset + chunkLen
+            var scanIdx = cursorIdx
+            var handled = false
+
+            while scanIdx < chunkEndIdx {
+                if body[scanIdx] == "[" {
+                    switch WritingProseProjection.scanLink(in: body, from: scanIdx) {
+                    case .complete(let source, let label, let image):
+                        if source.upperBound <= chunkEndIdx {
+                            scanIdx = source.upperBound
+                            continue
+                        }
+                        if source.lowerBound > cursorIdx {
+                            let prefixText = String(body[cursorIdx..<source.lowerBound])
+                            let prefixLen = prefixText.utf16.count
+                            blocks += projectedPieces(prefixText, sourceOffset: sourceOffset + cursorOffset, rows: rows)
+                            cursorOffset += prefixLen
+                            cursorIdx = source.lowerBound
+                        } else {
+                            guard let nextOffset = await emitMegaLink(
+                                source: source,
+                                label: label,
+                                image: image,
+                                startOffset: cursorOffset
+                            ) else { return nil }
+                            cursorOffset = nextOffset
+                            cursorIdx = source.upperBound
+                        }
+                        handled = true
+                    case .unclosedDestination(let unclosedStart):
+                        if chunkEndOffset < totalLength {
+                            if unclosedStart > cursorIdx {
+                                let prefixText = String(body[cursorIdx..<unclosedStart])
+                                let prefixLen = prefixText.utf16.count
+                                blocks += projectedPieces(prefixText, sourceOffset: sourceOffset + cursorOffset, rows: rows)
+                                cursorOffset += prefixLen
+                                cursorIdx = unclosedStart
+                                await Task.yield()
+                            }
+                            guard await emitUnresolved(from: cursorIdx, startOffset: cursorOffset) else { return nil }
+                            return blocks
+                        }
+                        scanIdx = body.index(after: scanIdx)
+                        continue
+                    case .none:
+                        scanIdx = body.index(after: scanIdx)
+                        continue
+                    }
+                    break
+                }
+                scanIdx = body.index(after: scanIdx)
+            }
+
+            if !handled {
+                let chunkText = String(body[cursorIdx..<chunkEndIdx])
+                blocks += projectedPieces(chunkText, sourceOffset: sourceOffset + cursorOffset, rows: rows)
+                cursorIdx = chunkEndIdx
+                cursorOffset = chunkEndOffset
+            }
+
+            if cursorIdx < body.endIndex {
+                await Task.yield()
+            }
+        }
+        return blocks
     }
     func storageChanged(mask: NSTextStorageEditActions, range: NSRange, delta: Int, storage: NSAttributedString) {
         guard let identity = runtimeIdentity?(), !mask.isEmpty else { return }
@@ -836,27 +1071,55 @@ final class WritingEditorProjectionCapture {
                 guard !Task.isCancelled, collectionEpoch == epoch, knownIdentity == runtimeIdentity?() else { return }
                 let edit = deferred.removeFirst()
                 guard let footprint = projectionFootprint(for: edit.range) else { return }
-                guard let prefix = readSource(NSRange(location: footprint.location, length: edit.range.location - footprint.location)),
-                      let suffix = readSource(NSRange(location: edit.range.upperBound, length: footprint.upperBound - edit.range.upperBound)) else { return }
+                let prefixRange = NSRange(location: footprint.location, length: edit.range.location - footprint.location)
+                let suffixRange = NSRange(location: edit.range.upperBound, length: footprint.upperBound - edit.range.upperBound)
+                guard let prefix = readSource(prefixRange),
+                      let suffix = readSource(suffixRange),
+                      let prefixRuns = existingRuns(in: prefixRange, shift: -footprint.location),
+                      let suffixRuns = existingRuns(in: suffixRange, shift: -suffixRange.location) else { return }
                 var blocks: [WritingProseBlock] = [], buffer = "", size = 0, offset = footprint.location
-                var unresolvedReference = false
+                if !prefix.isEmpty {
+                    blocks += projectedPieces(prefix, sourceOffset: offset, rows: edit.rows, inherited: prefixRuns)
+                    offset += prefix.utf16.count
+                }
                 // Source strings are shared with the existing serialization cache. Never join a giant row.
-                for fragment in [prefix] + edit.fragments + [suffix] {
-                    for character in fragment {
-                        let text = String(character), width = text.utf16.count
-                        if size > 0 && size + width > 2048 {
-                            let unresolved = unresolvedReferences(in: buffer, carried: &unresolvedReference)
-                            blocks += projectedPieces(buffer, sourceOffset: offset, rows: edit.rows, unresolved: unresolved)
+                for fragment in edit.fragments {
+                    let fragmentLength = fragment.utf16.count
+                    guard fragmentLength > 0 else { continue }
+                    if fragmentLength > 2048 {
+                        if size > 0 {
+                            blocks += projectedPieces(buffer, sourceOffset: offset, rows: edit.rows)
                             offset += size; buffer = ""; size = 0
                             await Task.yield()
                             guard !Task.isCancelled, collectionEpoch == epoch, knownIdentity == runtimeIdentity?() else { return }
                         }
-                        buffer += text; size += width
+                        guard let lineBlocks = await projectLongDeferredLine(
+                            fragment,
+                            sourceOffset: offset,
+                            rows: edit.rows,
+                            epoch: epoch
+                        ) else { return }
+                        blocks += lineBlocks
+                        offset += fragmentLength
+                        await Task.yield()
+                        guard !Task.isCancelled, collectionEpoch == epoch, knownIdentity == runtimeIdentity?() else { return }
+                        continue
                     }
+                    if size > 0 && size + fragmentLength > 2048 {
+                        blocks += projectedPieces(buffer, sourceOffset: offset, rows: edit.rows)
+                        offset += size; buffer = ""; size = 0
+                        await Task.yield()
+                        guard !Task.isCancelled, collectionEpoch == epoch, knownIdentity == runtimeIdentity?() else { return }
+                    }
+                    buffer += fragment
+                    size += fragmentLength
                 }
                 if size > 0 {
-                    let unresolved = unresolvedReferences(in: buffer, carried: &unresolvedReference)
-                    blocks += projectedPieces(buffer, sourceOffset: offset, rows: edit.rows, unresolved: unresolved)
+                    blocks += projectedPieces(buffer, sourceOffset: offset, rows: edit.rows)
+                    offset += size
+                }
+                if !suffix.isEmpty {
+                    blocks += projectedPieces(suffix, sourceOffset: offset, rows: edit.rows, inherited: suffixRuns)
                 }
                 guard sourceProjection.apply(.init(oldSourceRange: .init(footprint), replacement: blocks)) else { return }
             }

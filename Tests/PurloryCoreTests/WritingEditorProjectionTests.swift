@@ -1127,6 +1127,206 @@ final class WritingEditorProjectionTests: XCTestCase {
         XCTAssertTrue(outOfBounds.eligible.isEmpty)
         XCTAssertTrue(outOfBounds.blocked.isEmpty)
     }
+
+    func testPrecedingParagraphSplitURLStaysExcludedOnNextParagraphSpaceAndFallbackEdit() throws {
+        // Test both long and short URLs straddling a 2048-UTF-16 piece boundary.
+        let cases: [(name: String, url: String, leadCount: Int)] = [
+            ("preceding-short-url", "https://ex.co/tail", 2_030),
+            ("preceding-long-url", "https://example.test/" + String(repeating: "a", count: 800) + "/tail", 1_700),
+        ]
+        for testCase in cases {
+            let lead = String(repeating: "가", count: testCase.leadCount)
+            let source = lead + "[참고](" + testCase.url + ")\n다음 문단의 일반단어입니다."
+            let harness = WritingEditorHarness(source)
+            defer { harness.close() }
+
+            let initialBodyNS = harness.body as NSString
+            let initialTail = initialBodyNS.range(of: "tail")
+            XCTAssertNotEqual(initialTail.location, NSNotFound)
+            XCTAssertNil(
+                harness.editor.nativeRange(
+                    forSource: .init(initialTail),
+                    revision: harness.editor.writingNativeRevision
+                ),
+                "\(testCase.name): URL tail must start excluded"
+            )
+
+            // 1. Insert a space inside a plain word in the next paragraph.
+            let wordRange = (harness.editor.string as NSString).range(of: "일반단어")
+            XCTAssertNotEqual(wordRange.location, NSNotFound)
+            harness.edit(" ", range: NSRange(location: wordRange.location + 2, length: 0))
+            XCTAssertEqual(harness.projectedSource, harness.body)
+
+            let afterSpaceNS = harness.body as NSString
+            let afterSpaceTail = afterSpaceNS.range(of: "tail")
+            XCTAssertNil(
+                harness.editor.nativeRange(
+                    forSource: .init(afterSpaceTail),
+                    revision: harness.editor.writingNativeRevision
+                ),
+                "\(testCase.name): URL tail must stay excluded after inserting space in next paragraph"
+            )
+
+            // 2. Also exercise an explicit syntax fallback edit (`*`) in the next paragraph.
+            let endOffset = harness.editor.string.utf16.count
+            harness.edit("*", range: NSRange(location: endOffset, length: 0))
+            XCTAssertEqual(harness.projectedSource, harness.body)
+
+            let afterFallbackNS = harness.body as NSString
+            let afterFallbackTail = afterFallbackNS.range(of: "tail")
+            XCTAssertNil(
+                harness.editor.nativeRange(
+                    forSource: .init(afterFallbackTail),
+                    revision: harness.editor.writingNativeRevision
+                ),
+                "\(testCase.name): URL tail must stay excluded after full-row fallback edit in next paragraph"
+            )
+
+            let rebuilt = WritingEditorHarness(harness.body)
+            defer { rebuilt.close() }
+            XCTAssertEqual(
+                eligibleProseText(of: harness.editor.writingProjectionCapture.sourceProjection),
+                eligibleProseText(of: rebuilt.editor.writingProjectionCapture.sourceProjection),
+                "\(testCase.name): live eligible prose must match fresh reload"
+            )
+        }
+    }
+
+    func testFollowingParagraphSplitURLStaysExcludedOnPreviousParagraphFallbackEdit() throws {
+        // Place the start of a link right before the 2048-UTF-16 piece boundary in the second paragraph.
+        let firstParagraph = "앞 문단의 평문입니다."
+        let secondLead = String(repeating: "나", count: 2_048 - firstParagraph.utf16.count - 1 - 16)
+        let source = firstParagraph + "\n" + secondLead + "[참고](https://example.test/tail) 끝"
+        let harness = WritingEditorHarness(source)
+        defer { harness.close() }
+
+        // Trigger a fallback edit (`*`) in the first paragraph, whose piece suffix ends mid-link.
+        harness.edit("*", range: NSRange(location: 2, length: 0))
+        XCTAssertEqual(harness.projectedSource, harness.body)
+
+        let bodyNS = harness.body as NSString
+        let urlPart = bodyNS.range(of: "example")
+        XCTAssertNotEqual(urlPart.location, NSNotFound)
+        XCTAssertNil(
+            harness.editor.nativeRange(
+                forSource: .init(urlPart),
+                revision: harness.editor.writingNativeRevision
+            ),
+            "Split URL head in untouched suffix paragraph must remain excluded"
+        )
+
+        let rebuilt = WritingEditorHarness(harness.body)
+        defer { rebuilt.close() }
+        XCTAssertEqual(
+            eligibleProseText(of: harness.editor.writingProjectionCapture.sourceProjection),
+            eligibleProseText(of: rebuilt.editor.writingProjectionCapture.sourceProjection)
+        )
+    }
+
+    func testLongParagraphLinksPreserveFollowingProseAfterSpaceBeforeLink() async throws {
+        let cases: [(name: String, prefix: String, leadCount: Int, url: String, tailCount: Int)] = [
+            // >4096-char paragraph with short URL straddling a 2048-char chunk boundary.
+            ("short-url-following-prose", "", 2_032, "https://ex.co/a", 2_500),
+            // >4096-char paragraph with longer URL straddling a 2048-char chunk boundary.
+            ("following-prose", "앞 문단.\n", 1_900, "https://example.test/" + String(repeating: "u", count: 600), 2_600),
+            // >4096-char paragraph containing a plain `[주석]` bracket before a link.
+            ("plain-bracket-before-link", "", 500, "https://ex.co/b", 3_800),
+        ]
+
+        for testCase in cases {
+            let lead = testCase.name == "plain-bracket-before-link"
+                ? "[주석] " + String(repeating: "가", count: testCase.leadCount)
+                : String(repeating: "가", count: testCase.leadCount)
+            let tail = " 정상단어 " + String(repeating: "다", count: testCase.tailCount)
+            let source = testCase.prefix + lead + "[참고](" + testCase.url + ")" + tail
+            let harness = WritingEditorHarness(source)
+            defer { harness.close() }
+
+            let initialBodyNS = harness.body as NSString
+            let initialFollowing = initialBodyNS.range(of: "정상단어")
+            XCTAssertNotEqual(initialFollowing.location, NSNotFound)
+            XCTAssertNotNil(
+                harness.editor.nativeRange(
+                    forSource: .init(initialFollowing),
+                    revision: harness.editor.writingNativeRevision,
+                    expectedQuote: "정상단어"
+                ),
+                "\(testCase.name): following prose must start eligible"
+            )
+
+            // Insert a space before the link in the same piece as the link (triggering fallback -> deferred).
+            let linkStart = (harness.editor.string as NSString).range(of: "[참고](").location
+            XCTAssertNotEqual(linkStart, NSNotFound)
+            let insertAt = max(testCase.prefix.utf16.count + 1, linkStart - 10)
+            harness.edit(" ", range: NSRange(location: insertAt, length: 0))
+            await waitForDeferredProjection(harness)
+            XCTAssertEqual(harness.projectedSource, harness.body)
+
+            let bodyNS = harness.body as NSString
+            let following = bodyNS.range(of: "정상단어")
+            XCTAssertNotNil(
+                harness.editor.nativeRange(
+                    forSource: .init(following),
+                    revision: harness.editor.writingNativeRevision,
+                    expectedQuote: "정상단어"
+                ),
+                "\(testCase.name): prose after link must remain eligible after deferred projection"
+            )
+            let urlHost = bodyNS.range(of: "https://")
+            XCTAssertNil(
+                harness.editor.nativeRange(
+                    forSource: .init(urlHost),
+                    revision: harness.editor.writingNativeRevision
+                ),
+                "\(testCase.name): link URL must remain excluded"
+            )
+
+            let rebuilt = WritingEditorHarness(harness.body)
+            defer { rebuilt.close() }
+            XCTAssertEqual(
+                eligibleProseText(of: harness.editor.writingProjectionCapture.sourceProjection),
+                eligibleProseText(of: rebuilt.editor.writingProjectionCapture.sourceProjection),
+                "\(testCase.name): live eligible prose must match fresh reload"
+            )
+        }
+    }
+
+    func testLongParagraphSplitImageBangAtChunkBoundaryMatchesFreshRebuild() async throws {
+        // After inserting `*` at offset 10, `!` sits at UTF-16 offset 2047 and `[` sits at 2048.
+        let source = String(repeating: "가", count: 2_046) + "![그림](https://ex.co/img.png) 정상단어 " + String(repeating: "다", count: 2_200)
+        let harness = WritingEditorHarness(source)
+        defer { harness.close() }
+
+        harness.edit("*", range: NSRange(location: 10, length: 0))
+        await waitForDeferredProjection(harness)
+        XCTAssertEqual(harness.projectedSource, harness.body)
+
+        let bodyNS = harness.body as NSString
+        let imageAlt = bodyNS.range(of: "그림")
+        XCTAssertNil(
+            harness.editor.nativeRange(
+                forSource: .init(imageAlt),
+                revision: harness.editor.writingNativeRevision
+            ),
+            "Image alt must stay excluded even when `!` and `[` straddle a 2048 boundary"
+        )
+        let following = bodyNS.range(of: "정상단어")
+        XCTAssertNotNil(
+            harness.editor.nativeRange(
+                forSource: .init(following),
+                revision: harness.editor.writingNativeRevision,
+                expectedQuote: "정상단어"
+            ),
+            "Prose after image must remain eligible"
+        )
+
+        let rebuilt = WritingEditorHarness(harness.body)
+        defer { rebuilt.close() }
+        XCTAssertEqual(
+            eligibleProseText(of: harness.editor.writingProjectionCapture.sourceProjection),
+            eligibleProseText(of: rebuilt.editor.writingProjectionCapture.sourceProjection)
+        )
+    }
 }
 
 @MainActor

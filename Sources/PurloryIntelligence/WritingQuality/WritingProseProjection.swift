@@ -231,55 +231,83 @@ package enum WritingProseProjection {
     }
 
     package struct Link { package let source: NSRange; package let label: NSRange; package let image: Bool }
+    package enum LinkScan {
+        case complete(source: Range<Substring.Index>, label: Range<Substring.Index>, image: Bool)
+        case unclosedDestination(start: Substring.Index)
+        case none
+    }
+
+    package static func isEscaped(_ index: Substring.Index, in body: Substring) -> Bool {
+        var previous = index, count = 0
+        while previous > body.startIndex {
+            previous = body.index(before: previous)
+            guard body[previous] == "\\" else { break }
+            count += 1
+        }
+        return count % 2 == 1
+    }
+
+    /// Inspect a potential Markdown link/image starting at `[` (`start`).
+    /// Reuses Purlory's balanced/escaped destination grammar as the single source of truth.
+    package static func scanLink(in body: Substring, from start: Substring.Index) -> LinkScan {
+        guard start < body.endIndex, body[start] == "[", !isEscaped(start, in: body) else { return .none }
+        let labelStart = body.index(after: start)
+        guard let close = ImageReferenceParser.scanAlt(body, from: labelStart) else { return .none }
+        let open = body.index(after: close)
+        guard open < body.endIndex, body[open] == "(" else { return .none }
+        let preceding = start > body.startIndex ? body.index(before: start) : start
+        let image = preceding != start && body[preceding] == "!" && !isEscaped(preceding, in: body)
+        let sourceStart = image ? preceding : start
+        func skipSpaces(_ index: inout Substring.Index) {
+            while index < body.endIndex && (body[index] == " " || body[index] == "\t") {
+                index = body.index(after: index)
+            }
+        }
+        var end = body.index(after: open)
+        skipSpaces(&end)
+        if end < body.endIndex, body[end] == "<" {
+            guard let angle = ImageReferenceParser.scanUntilUnescaped(body, from: body.index(after: end), stoppingAt: ">") else {
+                return .unclosedDestination(start: sourceStart)
+            }
+            end = body.index(after: angle)
+        } else {
+            guard let destination = ImageReferenceParser.scanPlainDestination(body, from: end) else {
+                return .unclosedDestination(start: sourceStart)
+            }
+            end = destination
+        }
+        let beforeSpace = end
+        skipSpaces(&end)
+        if beforeSpace != end, let (_, after) = ImageReferenceParser.scanTitle(body, from: end) {
+            end = after
+            skipSpaces(&end)
+        }
+        guard end < body.endIndex else {
+            return .unclosedDestination(start: sourceStart)
+        }
+        guard body[end] == ")" else { return .none }
+        end = body.index(after: end)
+        if image, end < body.endIndex, body[end] == "{",
+           let options = ImageReferenceParser.scanUntilUnescaped(body, from: body.index(after: end), stoppingAt: "}") {
+            end = body.index(after: options)
+        }
+        return .complete(source: sourceStart..<end, label: labelStart..<close, image: image)
+    }
+
     /// Reuse Purlory's balanced/escaped destination grammar; never expose a URL tail as prose.
     package static func links(in text: String) -> [Link] {
         guard (text as NSString).range(of: "](", options: .literal).location != NSNotFound else { return [] }
         let body = text[...]
         var cursor = body.startIndex, result: [Link] = []
-        func skipSpaces(_ index: inout String.Index) {
-            while index < body.endIndex && (body[index] == " " || body[index] == "\t") { index = body.index(after: index) }
-        }
-        func escaped(_ index: String.Index) -> Bool {
-            var previous = index, count = 0
-            while previous > body.startIndex {
-                previous = body.index(before: previous)
-                guard body[previous] == "\\" else { break }
-                count += 1
-            }
-            return count % 2 == 1
-        }
         while cursor < body.endIndex {
             let start = cursor
             cursor = body.index(after: cursor)
-            guard body[start] == "[", !escaped(start),
-                  let close = ImageReferenceParser.scanAlt(body, from: cursor) else { continue }
-            let open = body.index(after: close)
-            guard open < body.endIndex, body[open] == "(" else { continue }
-            var end = body.index(after: open)
-            skipSpaces(&end)
-            if end < body.endIndex, body[end] == "<" {
-                guard let angle = ImageReferenceParser.scanUntilUnescaped(body, from: body.index(after: end), stoppingAt: ">") else { continue }
-                end = body.index(after: angle)
-            } else {
-                guard let destination = ImageReferenceParser.scanPlainDestination(body, from: end) else { continue }
-                end = destination
+            guard body[start] == "[" else { continue }
+            if case .complete(let source, let label, let image) = scanLink(in: body, from: start) {
+                result.append(Link(source: NSRange(source, in: text),
+                                   label: NSRange(label, in: text), image: image))
+                cursor = source.upperBound
             }
-            let beforeSpace = end
-            skipSpaces(&end)
-            if beforeSpace != end, let (_, after) = ImageReferenceParser.scanTitle(body, from: end) {
-                end = after; skipSpaces(&end)
-            }
-            guard end < body.endIndex, body[end] == ")" else { continue }
-            end = body.index(after: end)
-            let preceding = start > body.startIndex ? body.index(before: start) : start
-            let image = preceding != start && body[preceding] == "!" && !escaped(preceding)
-            if image, end < body.endIndex, body[end] == "{",
-               let options = ImageReferenceParser.scanUntilUnescaped(body, from: body.index(after: end), stoppingAt: "}") {
-                end = body.index(after: options)
-            }
-            result.append(Link(source: NSRange((image ? preceding : start)..<end, in: text),
-                               label: NSRange(cursor..<close, in: text), image: image))
-            cursor = end
         }
         return result
     }
