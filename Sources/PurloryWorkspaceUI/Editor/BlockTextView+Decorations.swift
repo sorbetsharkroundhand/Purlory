@@ -33,7 +33,7 @@ extension BlockTextView {
             }
             // setAttributes는 인라인 서식 키까지 지운다 — 코드·수식·구분선·이미지가
             // 아니면 보존했다가 되살린 뒤 폰트·색을 다시 조립한다.
-            let keepInline = ![PurloryBlock.code, .math, .divider, .image].contains(block)
+            let keepInline = block.supportsInlineFormatting
             let preserved = keepInline ? inlineSnapshot(in: paragraph) : []
             storage.beginEditing()
             storage.setAttributes(attrs, range: paragraph)
@@ -172,7 +172,7 @@ extension BlockTextView {
             let para = ns.paragraphRange(for: NSRange(location: match.location, length: 0))
             defer { loc = max(para.upperBound, match.upperBound) }
             let info = storageBlockInfo(in: para)
-            guard ![PurloryBlock.code, .math, .divider, .image].contains(info.block) else { continue }
+            guard info.block.supportsInlineFormatting else { continue }
             let text = paragraphContent(para)
             for link in WritingProseProjection.links(in: text) where !link.image {
                 let fullRange = NSRange(location: para.location + link.source.location, length: link.source.length)

@@ -15,16 +15,6 @@ import UniformTypeIdentifiers
 /// - DropDelegate 콜백은 nonisolated지만 실제로는 메인 스레드에서 온다 —
 ///   델리게이트를 `@MainActor` + `@preconcurrency` 적합으로 선언해 동적
 ///   격리 검증에 맡긴다 (Swift 6).
-enum SidebarDnD {
-    /// 드롭 존 계산용 행 높이 — 행 레이아웃(패딩 9/7 + 내용 20)에서 온 상수.
-    /// 행 구조가 바뀌면 함께 조정한다.
-    static let entryRowHeight: CGFloat = 38
-    static let folderRowHeight: CGFloat = 34
-    /// 상/하단 몇 %를 "사이 삽입" 존으로 볼지 (나머지 가운데는 "안으로").
-    static let edgeZoneFraction: CGFloat = 0.25
-    /// 접힌 폴더 위에 머무르면 펼치기까지의 대기 (Finder 스프링 로딩 관용).
-    static let springLoadDelay: Duration = .milliseconds(600)
-}
 
 /// 드래그 중인 항목 — 저널·폴더가 UUID 공간을 공유하므로 종류를 함께 든다.
 enum SidebarDragNode: Equatable, Sendable {

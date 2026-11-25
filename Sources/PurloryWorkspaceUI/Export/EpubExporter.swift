@@ -1,4 +1,5 @@
 import AppKit
+import PurloryDocumentEngine
 import SwiftMath
 import UniformTypeIdentifiers
 
@@ -896,10 +897,9 @@ public enum EpubExporter {
         return s.replacingOccurrences(of: "\u{2028}", with: "<br />")
     }
 
-    /// 제목용 — 마커·태그를 벗겨 순수 글자만 남긴다 (nav·opf에 들어간다).
-    /// EntryStore의 태그 스트리퍼(비격리 순수 정규식)를 재사용한다.
+    /// Plain title for nav/OPF — strips inline wrapper tags and Markdown markers.
     private static func plainTitle(_ text: String) -> String {
-        let stripped = EntryStore.strippedInlineTags(text)
+        let stripped = InlineMarkdownText.stripTags(text)
             .replacingOccurrences(of: #"[*`~=#]+"#, with: "", options: .regularExpression)
             .trimmingCharacters(in: .whitespaces)
         return stripped.isEmpty ? "제목 없음" : stripped

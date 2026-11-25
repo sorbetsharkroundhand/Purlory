@@ -708,9 +708,7 @@ public final class EntryStore: ObservableObject {
     /// 인라인 래퍼 태그(<font …>·</font>·<p align="…">·</p>)만 벗긴다 —
     /// 안의 글자는 남는다. 제목 파생·마이그레이션 공용.
     nonisolated static func strippedInlineTags(_ text: String) -> String {
-        text.replacingOccurrences(
-            of: #"</?(?:font|p)\b[^>]*>"#,
-            with: "", options: .regularExpression)
+        InlineMarkdownText.stripTags(text)
     }
 
     static func derivedTitle(from body: String) -> String {

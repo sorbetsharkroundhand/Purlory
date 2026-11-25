@@ -448,7 +448,7 @@ extension BlockTextView {
             } else { blockPrefix = 0 }
         }
         guard let storage = textStorage,
-            ![PurloryBlock.code, .math, .divider, .image].contains(info.block) else {
+            info.block.supportsInlineFormatting else {
             return baseSourceOffset + blockPrefix + length
         }
         var prefixLength = InlineMarkdown.serialize(storage,
@@ -557,7 +557,7 @@ extension BlockTextView {
                     codeLang: String? = nil, literal: Bool = false) -> (text: String, isCode: Bool, codeLang: String?) {
             let text = prefix + (literal ? "" : content) + suffix
             writingProjectionCapture.finishLine(text: text, prefix: prefix, suffix: suffix, isCode: code,
-                eligible: ![PurloryBlock.code, .math, .divider, .image].contains(info.block), literal: literal)
+                eligible: info.block.supportsInlineFormatting, literal: literal)
             return (text, code, codeLang)
         }
         let indentPrefix = info.indent > 0 ? String(repeating: "  ", count: info.indent) : ""
@@ -967,7 +967,7 @@ extension BlockTextView {
     func serializedContent(of paragraph: NSRange, block: PurloryBlock) -> String {
         let plain = paragraphContent(paragraph)
         guard let storage = textStorage,
-            ![PurloryBlock.code, .math, .divider, .image].contains(block)
+            block.supportsInlineFormatting
         else {
             writingProjectionCapture.recordRawBody()
             return plain

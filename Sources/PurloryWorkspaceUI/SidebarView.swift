@@ -2,19 +2,6 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// 사이드바 섹션 (M6-8) — VSCode의 활동 바처럼 사이드바가 여러 패널을 담는다.
-/// 문자열 raw값은 `@AppStorage("purlory.sidebarSection")` 키의 값 — 툴바(소설 배지)와
-/// 사이드바가 같은 키로 섹션을 전환한다.
-enum SidebarSection: String {
-    case files  // 문서(폴더 트리) — 기존 사이드바
-    case bible  // 스토리 바이블 (PLAN §7)
-    /// 서사 (v5 통합) — 이해 타임라인 + 서사 그래프가 하나의 화면이 됐다
-    /// (PLAN §6.6). raw값 "timeline" 유지 — 기존 사용자의 저장된 섹션이 살아남는다.
-    case narrative = "timeline"
-    case context  // AI 컨텍스트 인스펙터 (v4, 요구사항 §17)
-    case margin  // shared General/Fiction intelligence presentation (#105)
-}
-
 /// 일관성 경고 존재 표시 점 (M7) — indexer를 관찰해 경고가 생기는 즉시 뜬다.
 ///
 /// 상태 의미는 색 하나에만 맡기지 않는다 (#38): 점은 시각 신호일 뿐, VoiceOver에는

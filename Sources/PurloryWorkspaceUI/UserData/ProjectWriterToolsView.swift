@@ -238,7 +238,7 @@ struct ProjectWriterToolsView: View {
                     } else if let quote = item.jumpQuery {
                         evidence(EvidenceAnchor(documentID: writer.documentID, quote: quote), snapshot)
                     } else if let offset = item.jumpUTF16,
-                        let quote = NarrativeView.jumpSnippet(in: snapshot.body, atUTF16: offset) {
+                        let quote = SourceAnchor.jumpSnippet(in: snapshot.body, atUTF16: offset) {
                         evidence(EvidenceAnchor(documentID: writer.documentID, quote: quote, utf16Hint: offset), snapshot)
                     }
                 }
@@ -250,7 +250,7 @@ struct ProjectWriterToolsView: View {
             Text("제외한 항목").purloryUIFont(12, .semibold)
             ForEach(Array(excluded.enumerated()), id: \.offset) { _, value in
                 HStack {
-                    Text(ContextInspectorView.readableExclusion(value.key)); Spacer()
+                    Text(WriterContextFormatting.readableExclusion(value.key)); Spacer()
                     Button("복원") { apply(.removeOverride(.contextExclude, value.key), identity: snapshot.identity) }
                 }
             }

@@ -1,6 +1,6 @@
 import Foundation
 
-public final class KoreanNativeWorker: @unchecked Sendable {
+public final class KoreanNativeWorker: Sendable {
     public static let maximumInputUTF16 = 1024
     public static var bundledResourcesURL: URL {
         if Bundle.main.bundleURL.pathExtension == "app",

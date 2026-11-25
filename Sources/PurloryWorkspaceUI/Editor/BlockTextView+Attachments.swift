@@ -297,7 +297,7 @@ extension BlockTextView {
             let sel = selectedRange()
             let ns = string as NSString
             let para = ns.paragraphRange(for: sel)
-            if ![PurloryBlock.code, .math, .divider, .image].contains(blockInfo(in: para).block),
+            if blockInfo(in: para).block.supportsInlineFormatting,
                sel.upperBound <= para.upperBound - (ns.substring(with: para).hasSuffix("\n") ? 1 : 0) {
                 let selectedText = ns.substring(with: sel)
                 let replacement = "[\(selectedText)](\(raw))"
@@ -562,7 +562,7 @@ extension BlockTextView {
         let selected = ns.substring(with: range)
         guard !selected.contains("\n") else { return false }
         let para = ns.paragraphRange(for: range)
-        guard ![PurloryBlock.code, .math, .divider, .image].contains(blockInfo(in: para).block) else {
+        guard blockInfo(in: para).block.supportsInlineFormatting else {
             return false
         }
         switch typed {
@@ -1275,7 +1275,7 @@ extension BlockTextView {
     @discardableResult
     func convertInlineMath(in paragraph: NSRange, registersUndo: Bool = true) -> Int {
         guard let storage = textStorage,
-            ![PurloryBlock.code, .math, .divider, .image].contains(blockInfo(in: paragraph).block)
+            blockInfo(in: paragraph).block.supportsInlineFormatting
         else { return 0 }
         let content = paragraphContent(paragraph)
         // 인라인 원자는 **inlineText**만 대상이다. 산문 한가운데의 `$$…$$`는

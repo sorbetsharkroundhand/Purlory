@@ -760,7 +760,7 @@ public struct PurloryBlockEditor: NSViewRepresentable {
             // 코드·수식·구분선 블록에서는 제안하지 않는다 (디자인 v3 게이트).
             let paragraph = storage.paragraphRange(for: NSRange(location: caret, length: 0))
             let block = textView.blockInfo(in: paragraph).block
-            let allowed = ![.code, .math, .divider, .image].contains(block)
+            let allowed = block.supportsInlineFormatting
 
             controller.noteEdit(
                 prefix: Self.prefix(

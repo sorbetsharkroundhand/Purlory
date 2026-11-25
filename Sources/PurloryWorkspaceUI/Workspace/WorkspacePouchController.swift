@@ -78,7 +78,6 @@ struct WorkspacePouchAction {
     private weak var workspaceView: NSView?
     private weak var previousResponder: NSResponder?
     private let model: SpatialWorkspaceController
-    private let defaults: UserDefaults
     private var content: WorkspacePouchView?
     private var latestTools: AnyView?
     private var isBatchUpdating = false
@@ -127,8 +126,8 @@ struct WorkspacePouchAction {
     var snapshotAnimationTime: () -> Double = { ProcessInfo.processInfo.systemUptime }
     private var isAttached: Bool { content?.superview === model.canvas && model.canvas != nil }
 
-    init(model: SpatialWorkspaceController, defaults: UserDefaults = .standard) {
-        self.model = model; self.defaults = defaults
+    init(model: SpatialWorkspaceController, defaults _: UserDefaults = .standard) {
+        self.model = model
         super.init()
         subscription = model.presentationWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { [weak self] in

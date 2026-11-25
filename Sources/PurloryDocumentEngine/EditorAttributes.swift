@@ -2,6 +2,14 @@ import Foundation
 
 package enum PurloryBlock: String {
     case p, h1, h2, h3, h4, h5, h6, quote, bullet, number, todo, code, math, divider, image
+
+    /// Whether prose-level inline formatting, inline links, inline math, and Ghost completion apply.
+    package var supportsInlineFormatting: Bool {
+        switch self {
+        case .code, .math, .divider, .image: return false
+        case .p, .h1, .h2, .h3, .h4, .h5, .h6, .quote, .bullet, .number, .todo: return true
+        }
+    }
 }
 
 package extension NSAttributedString.Key {
