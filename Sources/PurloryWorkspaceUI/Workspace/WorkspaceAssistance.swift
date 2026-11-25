@@ -56,7 +56,10 @@ import Combine
             .combineLatest(Publishers.CombineLatest(completion.settings.$modelID, completion.settings.$autocompleteEnabled))
             .dropFirst().sink { [weak self] _, _ in self?.cancel() }.store(in: &subscriptions)
         for name in [Notification.Name.NSProcessInfoPowerStateDidChange, ProcessInfo.thermalStateDidChangeNotification] {
-            NotificationCenter.default.publisher(for: name).sink { [weak self] _ in self?.cancel() }.store(in: &subscriptions)
+            NotificationCenter.default.publisher(for: name)
+                .receive(on: RunLoop.main)
+                .sink { [weak self] _ in self?.cancel() }
+                .store(in: &subscriptions)
         }
     }
     init(session: ProjectSession, requests: ProjectEditorRequests, margin: LivingMarginModel, generate: @escaping Generator) {

@@ -254,11 +254,19 @@ struct ProjectNavigatorTrashView: View {
         navigator.organization.trashBundles.values.reduce(into: Set<WritingDocumentID>()) { $0.formUnion($1.documents) }
     }
 
+    static func standaloneDocuments(
+        in project: WritingProject,
+        trashBundles: [UUID: ProjectNavigation.TrashBundle]
+    ) -> [WritingDocument] {
+        let bundled = trashBundles.values.reduce(into: Set<WritingDocumentID>()) { $0.formUnion($1.documents) }
+        return project.documents.filter {
+            project.trashedDocumentIDs.contains($0.id) && !bundled.contains($0.id)
+        }
+    }
+
     private var standaloneTrashedDocuments: [WritingDocument] {
         guard let project = session.activeProject else { return [] }
-        return project.documents.filter {
-            project.trashedDocumentIDs.contains($0.id) && !bundledDocuments.contains($0.id)
-        }
+        return Self.standaloneDocuments(in: project, trashBundles: navigator.organization.trashBundles)
     }
 
     private var allTrashedDocuments: [WritingDocument] {
@@ -305,7 +313,7 @@ struct ProjectNavigatorTrashView: View {
                         ForEach(trashedRootFolders) { folder in
                             folderTrashRow(folder)
                         }
-                        ForEach(allTrashedDocuments) { document in
+                        ForEach(standaloneTrashedDocuments) { document in
                             documentTrashRow(document)
                         }
                     }

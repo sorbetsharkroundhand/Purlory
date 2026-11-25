@@ -13,9 +13,11 @@ public struct PurloryTheme: Equatable, @unchecked Sendable {  // NSColor 불변 
     public var cardSurface: NSColor { sidebarTint.withAlphaComponent(1) }
     public var cardSurfaceC: Color { Color(nsColor: cardSurface) }
     var workspaceTerracotta: NSColor {
-        NSColor(hex: (editorSurface.usingColorSpace(.sRGB)?.redComponent ?? 1) < 0.5 ? 0xE07A5F : 0xC86446)
+        NSColor(hex: isDark ? 0xE07A5F : 0xC86446)
     }
 
+    /// Whether this theme represents a dark appearance, including custom dark palettes.
+    public let isDark: Bool
     public let ink: NSColor
     public let ink2: NSColor
     public let ink3: NSColor
@@ -65,6 +67,7 @@ public struct PurloryTheme: Equatable, @unchecked Sendable {  // NSColor 불변 
     static let accentLight = NSColor(hex: 0x0F6E63)
 
     public static let light = PurloryTheme(
+        isDark: false,
         ink: NSColor(hex: 0x191816),
         ink2: NSColor(hex: 0x57544E),
         ink3: NSColor(hex: 0x716D65),
@@ -99,6 +102,7 @@ public struct PurloryTheme: Equatable, @unchecked Sendable {  // NSColor 불변 
     )
 
     public static let dark = PurloryTheme(
+        isDark: true,
         ink: NSColor(hex: 0xF2EFE9),
         ink2: NSColor(hex: 0xA8A39A),
         ink3: NSColor(hex: 0x969188),
@@ -354,6 +358,7 @@ extension PurloryTheme {
         let suggestion = readableSuggestion(on: surface, coveredBy: lineTint, toward: foreground)
 
         return PurloryTheme(
+            isDark: dark,
             // 글자 계열 — 그대로.
             ink: ink, ink2: ink2, ink3: ink3, ghost: ghost,
             ghostSuggestion: suggestion, blue: accent,
@@ -413,12 +418,17 @@ extension PurloryTheme {
 public final class PaletteSettings: ObservableObject {
     public static let shared = PaletteSettings()
 
+    private let defaults: UserDefaults
+
     /// 커스터마이징 사용 여부 — **기본은 꺼짐**이다.
     ///
     /// Disabled customization uses the default release theme. Saved custom colors
     /// remain available for the writer to enable explicitly.
     @Published public var enabled: Bool {
-        didSet { UserDefaults.standard.set(enabled, forKey: Keys.enabled) }
+        didSet {
+            defaults.set(enabled, forKey: Keys.enabled)
+            evaluateContrast()
+        }
     }
 
     @Published public var light: PurloryPalette {
@@ -467,8 +477,8 @@ public final class PaletteSettings: ObservableObject {
                 return (max(l, inkLum) + 0.05) / (min(l, inkLum) + 0.05)
             }.min() ?? 10
         }
-        let lightWorst = worstContrast(light, ink: 0x1C1C1E)
-        let darkWorst = worstContrast(dark, ink: 0xF2F2F0)
+        let lightWorst = worstContrast(light, ink: 0x191816)
+        let darkWorst = worstContrast(dark, ink: 0xF2EFE9)
         if lightWorst < 4.5 || darkWorst < 4.5 {
             contrastWarning = String(
                 format: "이 팔레트는 본문 글자와 배경 대비가 %.1f:1이에요 — 작은 글자가 읽기 어려울 수 있어요 (권장 4.5:1 이상).",
@@ -494,10 +504,11 @@ public final class PaletteSettings: ObservableObject {
         static let dark = "purlory.palette.dark"
     }
 
-    private init() {
-        enabled = UserDefaults.standard.bool(forKey: Keys.enabled)
-        light = Self.load(Keys.light) ?? .lightDefault
-        dark = Self.load(Keys.dark) ?? .darkDefault
+    public init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        enabled = defaults.bool(forKey: Keys.enabled)
+        light = Self.load(Keys.light, from: defaults) ?? .lightDefault
+        dark = Self.load(Keys.dark, from: defaults) ?? .darkDefault
         evaluateContrast()
     }
 
@@ -505,26 +516,23 @@ public final class PaletteSettings: ObservableObject {
         scheme == .dark ? dark : light
     }
 
-    /// 파생 테마 캐시 — SwiftUI 패스마다 돌던 색변환 루프(tinted의 20여 회
-    /// NSColor 생성+대비 보정)를 팔레트가 바뀔 때 1회로 묶는다 (#54).
+    /// Derived theme cache avoids rebuilding tinted colors on every SwiftUI body evaluation.
     private var themeCache: (
-        lightHexKey: String, darkHexKey: String, enabled: Bool,
+        lightPalette: PurloryPalette, darkPalette: PurloryPalette, enabled: Bool,
         light: PurloryTheme, dark: PurloryTheme
     )?
 
     /// 화면이 쓸 테마 — 꺼져 있으면 기본 테마 그대로, 켜져 있으면 팔레트를 입힌다.
     public func theme(for scheme: ColorScheme) -> PurloryTheme {
-        let lightKey = light.hexes.map { String($0, radix: 16) }.joined(separator: "|")
-        let darkKey = dark.hexes.map { String($0, radix: 16) }.joined(separator: "|")
         if let cache = themeCache,
-            cache.lightHexKey == lightKey, cache.darkHexKey == darkKey,
+            cache.lightPalette == light, cache.darkPalette == dark,
             cache.enabled == enabled
         {
             return scheme == .dark ? cache.dark : cache.light
         }
         let lightTheme = enabled ? PurloryTheme.of(.light, palette: light) : PurloryTheme.of(.light)
         let darkTheme = enabled ? PurloryTheme.of(.dark, palette: dark) : PurloryTheme.of(.dark)
-        themeCache = (lightKey, darkKey, enabled, lightTheme, darkTheme)
+        themeCache = (light, dark, enabled, lightTheme, darkTheme)
         return scheme == .dark ? darkTheme : lightTheme
     }
 
@@ -533,8 +541,8 @@ public final class PaletteSettings: ObservableObject {
         if isDark { dark = .darkDefault } else { light = .lightDefault }
     }
 
-    private static func load(_ key: String) -> PurloryPalette? {
-        guard let raw = UserDefaults.standard.array(forKey: key) as? [String] else {
+    private static func load(_ key: String, from defaults: UserDefaults) -> PurloryPalette? {
+        guard let raw = defaults.array(forKey: key) as? [String] else {
             return nil
         }
         let hexes = raw.compactMap { UInt32($0, radix: 16) }
@@ -543,7 +551,7 @@ public final class PaletteSettings: ObservableObject {
     }
 
     private func save(_ palette: PurloryPalette, key: String) {
-        UserDefaults.standard.set(
+        defaults.set(
             palette.hexes.map { String(format: "%06X", $0) }, forKey: key)
     }
 }

@@ -205,6 +205,7 @@ struct WorkspaceSurface: View {
         }
         .animation(WorkspaceHTMLStyle.animation(0.22), value: spatial.toast)
         .tint(theme.blueC)
+        .focusedValue(\.hasPurloryEditor, projectSession.isEditorEditable)
         .ignoresSafeArea(.container, edges: .top)
         .background(pouchBridge(theme: theme).frame(width: 0, height: 0))
         .background(

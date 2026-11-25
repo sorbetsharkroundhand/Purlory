@@ -26,7 +26,7 @@ import SwiftUI
         active = panel
         let width = min(460, max(300, parent.frame.width - 32))
         panel.window?.title = mode.rawValue
-        panel.window?.appearance = NSAppearance(named: theme == .dark ? .darkAqua : .aqua)
+        panel.window?.appearance = NSAppearance(named: theme.isDark ? .darkAqua : .aqua)
         panel.window?.contentView = NSHostingView(rootView: WorkspaceAssistanceView(model: model, theme: theme, close: { [weak panel] in panel?.close() }).frame(width: width))
         panel.window?.setContentSize(NSSize(width: width, height: mode == .coauthor ? 210 : (mode == .polish ? 230 : 150)))
         panel.backdrop.show(over: parent, opacity: 0.5)

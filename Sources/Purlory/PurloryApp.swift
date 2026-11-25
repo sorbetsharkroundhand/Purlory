@@ -98,8 +98,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             drain: { [weak self] in
                 await self?.memoryPressure?.drain()
                 await writingDiagnostics?.prepareForTermination()
-                // Yield the main actor until every engine operation has released its resources.
-                while PurloryApp.sharedEngine.pendingOperationCount > 0 {
+                // Yield the main actor until engine operations release resources, bounded so quit never hangs.
+                let deadline = ContinuousClock.now + .seconds(3)
+                while PurloryApp.sharedEngine.pendingOperationCount > 0, ContinuousClock.now < deadline {
                     try? await Task.sleep(for: .milliseconds(50))
                 }
             })

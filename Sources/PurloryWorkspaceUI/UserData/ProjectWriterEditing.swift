@@ -39,7 +39,7 @@ public enum ProjectWriterEditing {
             } else { writer.characters.append(card) }
         case .removeCharacter(let id): writer.characters.removeAll { $0.id == id }
         case .override(let value):
-            writer.narrativeOverrides.removeAll { $0.id == value.id }
+            writer.narrativeOverrides.removeAll { $0.id == value.id || ($0.kind == value.kind && $0.key == value.key) }
             writer.narrativeOverrides.append(value)
         case .removeOverride(let kind, let key):
             writer.narrativeOverrides.removeAll { $0.kind == kind && $0.key == key }
