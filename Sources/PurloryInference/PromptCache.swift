@@ -69,6 +69,7 @@ final class PromptCacheBox: @unchecked Sendable {
     }
 
     private let lock = NSLock()
+    private var epoch: UInt64 = 0
     private var cache: [KVCache]?
     private var promptTokens: [Int] = []
     private var owner: Owner?
@@ -113,13 +114,15 @@ final class PromptCacheBox: @unchecked Sendable {
         }
         let pinnedPrefix = pinned.map { tokens.starts(with: $0.tokens) ? min($0.tokens.count, tokens.count - 1) : 0 } ?? 0
         if pinnedPrefix > livePrefix,
-           let reuse = restorePin(prefix: pinnedPrefix, owner: owner, tokens: tokens, pinTokens: requestedPin, lease: lease) { return reuse }
+           let reuse = restorePin(prefix: pinnedPrefix, owner: owner, tokens: tokens, pinTokens: requestedPin, lease: lease) { epoch &+= 1; return reuse }
         if livePrefix > 0, let cache, PromptCacheCapability.trim(cache, to: livePrefix) {
+            epoch &+= 1
             active = (lease, tokens, requestedPin)
             return Reuse(cache: cache, suffix: Array(tokens[livePrefix...]), reusedTokens: livePrefix, lease: lease)
         }
         if pinnedPrefix > 0,
-           let reuse = restorePin(prefix: pinnedPrefix, owner: owner, tokens: tokens, pinTokens: requestedPin, lease: lease) { return reuse }
+           let reuse = restorePin(prefix: pinnedPrefix, owner: owner, tokens: tokens, pinTokens: requestedPin, lease: lease) { epoch &+= 1; return reuse }
+        epoch &+= 1
         cache = nil; promptTokens = []; self.owner = nil
         let fresh = try makeCache()
         cache = fresh; promptTokens = []; self.owner = owner
@@ -147,31 +150,52 @@ final class PromptCacheBox: @unchecked Sendable {
 
     /// Captured tokens are committed only by the current lease after generation drains.
     func commit(lease: Lease) {
-        lock.lock(); defer { lock.unlock() }
-        guard let active, active.lease == lease else { return }
+        let pinCandidate: (cache: [KVCache], tokens: [Int], owner: Owner, epoch: UInt64)?
+        lock.lock()
+        guard let active, active.lease == lease else {
+            lock.unlock()
+            return
+        }
         if let cache, case .exactPrefix = PromptCacheCapability.inspect(cache) {
             promptTokens = active.tokens
             if !Task<Never, Never>.isCancelled, let tokens = active.pinTokens, let owner,
-               pinned?.tokens != tokens || pinned?.owner != owner,
-               let snapshot = snapshot(cache, count: tokens.count) {
-                pinned = Pin(owner: owner, tokens: tokens, cache: snapshot)
+               pinned?.tokens != tokens || pinned?.owner != owner {
+                pinCandidate = (cache, tokens, owner, epoch)
+            } else {
+                pinCandidate = nil
             }
         } else {
+            epoch &+= 1
             cache = nil; promptTokens = []; owner = nil; pinned = nil
+            pinCandidate = nil
         }
         self.active = nil
+        lock.unlock()
+
+        // Run GPU snapshot evaluation outside NSLock so invalidate() never blocks on Metal.
+        guard let pinCandidate,
+              !Task<Never, Never>.isCancelled,
+              let snapped = snapshot(pinCandidate.cache, count: pinCandidate.tokens.count) else {
+            return
+        }
+        lock.lock()
+        defer { lock.unlock() }
+        guard epoch == pinCandidate.epoch, owner == pinCandidate.owner, self.active == nil else { return }
+        pinned = Pin(owner: pinCandidate.owner, tokens: pinCandidate.tokens, cache: snapped)
     }
 
     func abandon(lease: Lease) {
         lock.lock(); defer { lock.unlock() }
         guard active?.lease == lease else { return }
         // A failed live request cannot mutate the independently owned pin.
+        epoch &+= 1
         cache = nil; promptTokens = []; owner = nil; active = nil
     }
 
     /// Retired leases may still finish, but cannot modify any subsequent owner or state.
     func invalidate() {
         lock.lock(); defer { lock.unlock() }
+        epoch &+= 1
         cache = nil; promptTokens = []; owner = nil; active = nil; pinned = nil
     }
 }

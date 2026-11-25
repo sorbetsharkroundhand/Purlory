@@ -894,7 +894,7 @@ public enum ContextAssembler {
                 let known =
                     writingInPast
                     ? position?.sceneIndex.map {
-                        knowledge.knowledgeChrono(of: card.id, atSceneIndex: $0)
+                        knowledge.knowledgeChrono(of: card.id, atSceneIndex: $0, before: windowStart)
                     } ?? knowledge.knowledgeChrono(of: card.id, atSceneContaining: windowStart)
                     : knowledge.knowledge(of: card.id, before: windowStart)
                 if !known.isEmpty, controls.allows("knowledge|\(card.id.uuidString)") {

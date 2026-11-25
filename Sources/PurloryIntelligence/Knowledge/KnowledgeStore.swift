@@ -1070,24 +1070,26 @@ public struct KnowledgeSnapshot: Sendable, Equatable {
         of characterID: UUID, atSceneContaining utf16Offset: Int
     ) -> [KnowledgeDelta] {
         guard let currentScene = outline.sceneIndex(at: utf16Offset) else { return [] }
-        return knowledgeChrono(of: characterID, atSceneIndex: currentScene)
+        return knowledgeChrono(of: characterID, atSceneIndex: currentScene, before: utf16Offset)
     }
 
-    /// 씬 인덱스 기준 변형 — 조립기가 커서 씬(NarrativePosition.sceneIndex)으로
-    /// 직접 부른다 (창 시작과 커서가 다른 씬일 수 있다).
+    /// Chronological knowledge query optionally bounded by discourse UTF-16 offset so
+    /// post-cursor text in the current scene and later flashback scenes never leak.
     public func knowledgeChrono(
-        of characterID: UUID, atSceneIndex currentScene: Int
+        of characterID: UUID, atSceneIndex currentScene: Int, before discourseUTF16: Int? = nil
     ) -> [KnowledgeDelta] {
         let chronoOrder = chronologicalSceneOrder()
         guard let currentRank = chronoOrder.firstIndex(of: currentScene) else { return [] }
-        let allowed = Set(chronoOrder.prefix(currentRank + 1).map { outline.scenes[$0].contentHash })
         var order: [String] = []
         var latest: [String: KnowledgeDelta] = [:]
-        // 시간 순서로 접는다 — 같은 사실의 시간상 나중 태도가 이긴다.
+        // Fold in chronological order so later attitudes overwrite earlier ones for the same fact.
         for sceneIndex in chronoOrder.prefix(currentRank + 1) {
             let hash = outline.scenes[sceneIndex].contentHash
+            if let discourseUTF16 {
+                guard (sceneEndByHash[hash] ?? .max) <= discourseUTF16 else { continue }
+            }
             for delta in knowledgeDeltas
-            where delta.characterID == characterID && delta.sceneHash == hash && allowed.contains(hash) {
+            where delta.characterID == characterID && delta.sceneHash == hash {
                 if latest[delta.fact] == nil { order.append(delta.fact) }
                 latest[delta.fact] = delta
             }
