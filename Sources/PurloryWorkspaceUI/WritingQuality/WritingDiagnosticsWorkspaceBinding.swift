@@ -59,6 +59,7 @@ final class WritingDiagnosticsWorkspaceBinding {
     private func attachEditorInteraction() {
         guard let interaction = bridge?.editor?.workspaceInteraction as? WorkspaceEditorInteraction else { return }
         interaction.onPresentationChange = { [weak self] in self?.handlePresentationChange() }
+        if let settings { interaction.settings = settings }
         if spatial == nil, let model = interaction.model {
             spatial = model
             observeSpatial(model)
@@ -169,7 +170,7 @@ final class WritingDiagnosticsWorkspaceBinding {
         if let showsInEditorOverride { return (showsInEditorOverride, false) }
         if let settings, !settings.showsWritingDiagnosticsInEditor { return (false, false) }
         if let prefs = session?.presentationPreferences,
-           let shows = prefs.object(forKey: "editor.showsWritingDiagnostics") as? Bool, !shows {
+           let shows = prefs.object(forKey: PurloryUserDefaultsKeys.showsWritingDiagnosticsInEditor) as? Bool, !shows {
             return (false, false)
         }
         return (true, false)

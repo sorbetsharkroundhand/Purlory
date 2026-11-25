@@ -17,7 +17,7 @@ struct ProjectNavigatorView: View {
     @State private var draftTitle = ""
     @State private var hovered: ProjectNavigationNode?
     @State private var showingTrash = false
-    @AppStorage("purlory.navigator.sortMode") private var sortModeRaw = NavigatorSortMode.titleAscending.rawValue
+    @AppStorage(PurloryUserDefaultsKeys.navigatorSortMode) private var sortModeRaw = NavigatorSortMode.titleAscending.rawValue
     private var sortMode: NavigatorSortMode {
         get { NavigatorSortMode(rawValue: sortModeRaw) ?? .titleAscending }
         nonmutating set { sortModeRaw = newValue.rawValue }

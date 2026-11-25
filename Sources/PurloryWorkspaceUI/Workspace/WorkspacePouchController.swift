@@ -10,17 +10,42 @@ struct WorkspacePouchAction {
         let symbol: String
         let enabled: Bool
         let selected: Bool
+        let showsLeadingSeparator: Bool
+
+        init(
+            id: String,
+            label: String,
+            symbol: String,
+            enabled: Bool,
+            selected: Bool,
+            showsLeadingSeparator: Bool = false
+        ) {
+            self.id = id
+            self.label = label
+            self.symbol = symbol
+            self.enabled = enabled
+            self.selected = selected
+            self.showsLeadingSeparator = showsLeadingSeparator
+        }
     }
 
     let id: String
     let label: String
     let symbol: String
+    var showsLeadingSeparator: Bool = false
     var selected: () -> Bool = { false }
     var enabled: () -> Bool = { true }
     let perform: () -> Void
 
     var snapshot: Snapshot {
-        Snapshot(id: id, label: label, symbol: symbol, enabled: enabled(), selected: selected())
+        Snapshot(
+            id: id,
+            label: label,
+            symbol: symbol,
+            enabled: enabled(),
+            selected: selected(),
+            showsLeadingSeparator: showsLeadingSeparator
+        )
     }
 }
 

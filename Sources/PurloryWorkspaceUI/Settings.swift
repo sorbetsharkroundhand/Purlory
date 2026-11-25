@@ -36,7 +36,7 @@ public final class CompletionSettings: ObservableObject {    /// 입력이 멈�
         static let kvCache = "completion.kvCache"
         static let lineSpacing = "editor.lineSpacing"
         static let fontSize = "editor.fontSize"
-        static let showsWritingDiagnosticsInEditor = "editor.showsWritingDiagnostics"
+        static let showsWritingDiagnosticsInEditor = PurloryUserDefaultsKeys.showsWritingDiagnosticsInEditor
         /// 저자 이름은 예측 동작이 아니라 **작품 메타데이터**라 `completion.*`이
         /// 아닌 앱 전역 이름공간(`purlory.*`)에 둔다 — 예측 파라미터 스냅샷
         /// (`CompletionParameters`)에도 들어가지 않는다.

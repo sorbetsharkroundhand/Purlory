@@ -39,7 +39,7 @@ struct WorkspacePouchTools: View {
     let openSettings: () -> Void
     var openVersions: () -> Void = {}
     var onMarkedTextSync: ((Bool) -> Void)? = nil
-    @AppStorage("purlory.appearance") private var appearance = ""
+    @AppStorage(PurloryUserDefaultsKeys.appearance) private var appearance = ""
     @Environment(\.colorScheme) private var colorScheme
     @State private var markedText = false
     @State private var quickNote = ""

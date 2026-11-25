@@ -30,7 +30,7 @@ public struct ContentView: View {
     private let writingDiagnostics: WritingDiagnosticsRuntime?
     @State private var projectEditorBridge = ProjectEditorBridge()
     /// ""=시스템 따름 / "light" / "dark" — 설정에서 전환.
-    @AppStorage("purlory.appearance") private var appearance = ""
+    @AppStorage(PurloryUserDefaultsKeys.appearance) private var appearance = ""
     public init(
         projectSession: ProjectSession,
         startup: ProjectStartupCoordinator,
@@ -313,7 +313,7 @@ struct EditorPane: View {
     var showsChrome = true
     /// 집중 모드 — 툴바·상태 바를 숨겨 글에만 집중 (L10). 본문 상단 inset(44pt)이
     /// 신호등 아래에서 시작하므로 타이틀바 없이도 첫 줄이 신호등과 겹치지 않는다.
-    @AppStorage("purlory.chromeHidden") private var chromeHidden = false
+    @AppStorage(PurloryUserDefaultsKeys.chromeHidden) private var chromeHidden = false
 
     var body: some View {
         VStack(spacing: 0) {

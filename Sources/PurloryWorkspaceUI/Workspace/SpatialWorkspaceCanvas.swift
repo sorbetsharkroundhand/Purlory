@@ -897,7 +897,7 @@ struct SpatialDocumentTile: View {
     let theme: PurloryTheme
     var editorBridge: ProjectEditorBridge?
     let positionStore: WritingPositionStore
-    @AppStorage("purlory.chromeHidden") private var chromeHidden = false
+    @AppStorage(PurloryUserDefaultsKeys.chromeHidden) private var chromeHidden = false
     @State private var longParagraphOpen = false
 
     private var quietChrome: Bool { model.whisperTyping || chromeHidden }

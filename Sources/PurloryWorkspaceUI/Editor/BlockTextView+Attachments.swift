@@ -112,7 +112,7 @@ extension BlockTextView {
     func scheduleVisibleRefresh() {
         visibleRefreshTask?.cancel()
         visibleRefreshTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(120))
+            try? await Task.sleep(for: EditorTiming.mediaRefreshDelay)
             guard !Task.isCancelled, let self else { return }
             self.refreshVisibleBlocks()
         }
@@ -1885,7 +1885,7 @@ extension BlockTextView {
         mathPreviewPending = (source, para)
         guard mathPreviewTask == nil else { return }
         mathPreviewTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(150))
+            try? await Task.sleep(for: EditorTiming.mathPreviewDelay)
             guard !Task.isCancelled, let self else { return }
             self.mathPreviewTask = nil
             guard let pending = self.mathPreviewPending else { return }

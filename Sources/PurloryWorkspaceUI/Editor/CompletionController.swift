@@ -150,7 +150,7 @@ public final class CompletionController {
 
     /// 감지 유휴 대기 — 고스트 디바운스보다 길다: 제안은 "대화를 다 쓰고 잠시
     /// 멈췄을 때"만 떠야 한다 (요구사항 §18·§20, 조용한 UI).
-    nonisolated static let conversationIdle: Duration = .milliseconds(1_500)
+    nonisolated static let conversationIdle: Duration = EditorTiming.conversationIdleDelay
 
     @ObservationIgnored private var conversationTask: Task<Void, Never>?
     @ObservationIgnored private var conversationSuggestionIdentity: ProjectRuntimeIdentity?

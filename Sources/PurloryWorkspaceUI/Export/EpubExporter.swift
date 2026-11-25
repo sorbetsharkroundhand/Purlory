@@ -1,4 +1,5 @@
 import AppKit
+import ImageIO
 import PurloryDocumentEngine
 import SwiftMath
 import UniformTypeIdentifiers
@@ -324,8 +325,8 @@ public enum EpubExporter {
                     inMathGroup = false
                     flushMath()
                 } else if trimmed.hasSuffix("$$"), trimmed.count >= 3 {
-                    mathLines.append((line as NSString).substring(
-                        with: NSRange(location: 0, length: (line as NSString).length - 2)))
+                    let rtrimmed = line.replacingOccurrences(of: #"[ \t]+$"#, with: "", options: .regularExpression)
+                    mathLines.append(String(rtrimmed.dropLast(2)))
                     inMathGroup = false
                     flushMath()
                 } else {
@@ -746,15 +747,16 @@ public enum EpubExporter {
             let extWithDot = finalExt.isEmpty ? "" : ".\(finalExt)"
             var name = "\(stem)\(extWithDot)"
             var suffix = 1
-            while FileManager.default.fileExists(atPath: dir.appendingPathComponent(name).path) {
-                let existingURL = dir.appendingPathComponent(name)
-                if (try? Data(contentsOf: existingURL)) == finalBytes {
+            var candidateURL = try ProjectPaths.checked(name, under: dir)
+            while FileManager.default.fileExists(atPath: candidateURL.path) {
+                if (try? Data(contentsOf: candidateURL)) == finalBytes {
                     return "images/\(name)"
                 }
                 name = "\(stem)-\(suffix)\(extWithDot)"
                 suffix += 1
+                candidateURL = try ProjectPaths.checked(name, under: dir)
             }
-            try finalBytes.write(to: ProjectPaths.checked(name, under: dir), options: .atomic)
+            try finalBytes.write(to: candidateURL, options: .atomic)
             return "images/\(name)"
         } catch {
             if !missing.contains(originalSrc) { missing.append(originalSrc) }
@@ -762,18 +764,21 @@ public enum EpubExporter {
         }
     }
 
+    /// Thread-safe PNG transcoding via ImageIO so background EPUB export never touches AppKit image classes off main thread.
     private static func transcodeToPNG(_ data: Data) -> Data? {
-        if let rep = NSBitmapImageRep(data: data),
-           let png = rep.representation(using: .png, properties: [:]) {
-            return png
-        }
-        if let image = NSImage(data: data),
-           let tiff = image.tiffRepresentation,
-           let rep = NSBitmapImageRep(data: tiff),
-           let png = rep.representation(using: .png, properties: [:]) {
-            return png
-        }
-        return nil
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil)
+        else { return nil }
+        let out = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            out,
+            UTType.png.identifier as CFString,
+            1,
+            nil
+        ) else { return nil }
+        CGImageDestinationAddImage(destination, cgImage, nil)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return out as Data
     }
 
     private static func isReferenceDefinitionLine(
@@ -800,12 +805,57 @@ public enum EpubExporter {
 
     // MARK: - 인라인 변환
 
-    /// `&`·`<`·`>`만 이스케이프한다 — 따옴표를 남겨야 이스케이프 뒤에도
-    /// `<font color="#…">` 태그를 알아볼 수 있다 (inline이 이어서 처리).
+    /// Strips characters forbidden by XML 1.0 (control chars except TAB/LF/CR and non-characters U+FFFE/U+FFFF).
+    private static func stripIllegalXMLCharacters(_ text: String) -> String {
+        var needsFiltering = false
+        for scalar in text.unicodeScalars {
+            let v = scalar.value
+            if (v < 0x20 && v != 0x09 && v != 0x0A && v != 0x0D) || v == 0xFFFE || v == 0xFFFF {
+                needsFiltering = true
+                break
+            }
+        }
+        guard needsFiltering else { return text }
+        var filtered = String.UnicodeScalarView()
+        filtered.reserveCapacity(text.unicodeScalars.count)
+        for scalar in text.unicodeScalars {
+            let v = scalar.value
+            if (v < 0x20 && v != 0x09 && v != 0x0A && v != 0x0D) || v == 0xFFFE || v == 0xFFFF {
+                continue
+            }
+            filtered.append(scalar)
+        }
+        return String(filtered)
+    }
+
+    /// Escapes `&`, `<`, `>` (preserving quotes for subsequent `<font>` inline parsing) after removing illegal XML 1.0 scalars.
     private static func escape(_ text: String) -> String {
-        text.replacingOccurrences(of: "&", with: "&amp;")
+        stripIllegalXMLCharacters(text)
+            .replacingOccurrences(of: "&", with: "&amp;")
             .replacingOccurrences(of: "<", with: "&lt;")
             .replacingOccurrences(of: ">", with: "&gt;")
+    }
+
+    /// Allows only safe web/mailto schemes, fragment anchors (`#...`), or scheme-less relative URLs.
+    private static func isSafeLinkDestination(_ destination: String) -> Bool {
+        let trimmed = destination.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        if trimmed.hasPrefix("#") { return true }
+        // Ignore control/whitespace characters when checking for a scheme prefix (prevents obfuscated `java\tscript:`).
+        let normalized = trimmed.unicodeScalars
+            .filter { !$0.properties.isWhitespace && $0.value >= 0x20 }
+            .map(Character.init)
+        let compact = String(normalized)
+        if let colon = compact.firstIndex(of: ":") {
+            let prefix = compact[..<colon]
+            // If `/`, `?`, or `#` appears before `:`, this is a relative path/query/fragment, not a scheme.
+            if prefix.contains("/") || prefix.contains("?") || prefix.contains("#") {
+                return true
+            }
+            let scheme = prefix.lowercased()
+            return scheme == "http" || scheme == "https" || scheme == "mailto"
+        }
+        return true
     }
 
     /// 속성값용 — escape()와 달리 따옴표도 막는다 (alt·title 속성, 이슈 #14).
@@ -834,7 +884,12 @@ public enum EpubExporter {
         for match in inlineLink.matches(in: working, range: fullRange(working)).reversed() {
             let label = source.substring(with: match.range(at: 1))
             let destination = source.substring(with: match.range(at: 2))
-            let html = "<a href=\"" + attrEscape(destination) + "\">" + inline(label) + "</a>"
+            let html: String
+            if isSafeLinkDestination(destination) {
+                html = "<a href=\"" + attrEscape(destination) + "\">" + inline(label) + "</a>"
+            } else {
+                html = inline(label)
+            }
             working = (working as NSString).replacingCharacters(in: match.range, with: reserve(html))
         }
         if working.contains("$") {

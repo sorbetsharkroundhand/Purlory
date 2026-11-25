@@ -74,7 +74,7 @@ struct SidebarView: View {
     var indexer: BackgroundIndexer?
 
     /// 현재 섹션 — 툴바의 소설 배지도 이 키를 써서 바이블 섹션을 연다.
-    @AppStorage("purlory.sidebarSection") private var sectionRaw = SidebarSection.files.rawValue
+    @AppStorage(PurloryUserDefaultsKeys.sidebarSection) private var sectionRaw = SidebarSection.files.rawValue
     private var section: SidebarSection {
         SidebarSection(rawValue: sectionRaw) ?? .files
     }
