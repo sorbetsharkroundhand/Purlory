@@ -890,7 +890,7 @@ final class SpatialDragIndicatorOverlayView: NSView {
 
 struct SpatialDocumentTile: View {
     @Bindable var session: ProjectSession
-    @ObservedObject var requests: ProjectEditorRequests
+    let requests: ProjectEditorRequests
     @Bindable var completion: CompletionController
     @Bindable var model: SpatialWorkspaceController
     let documentID: WritingDocumentID
@@ -898,8 +898,6 @@ struct SpatialDocumentTile: View {
     var editorBridge: ProjectEditorBridge?
     let positionStore: WritingPositionStore
     @AppStorage("purlory.chromeHidden") private var chromeHidden = false
-    @State private var hoveringStats = false
-    @State private var statsRevision = 0
     @State private var longParagraphOpen = false
 
     private var quietChrome: Bool { model.whisperTyping || chromeHidden }
@@ -933,7 +931,7 @@ struct SpatialDocumentTile: View {
 
 private struct SpatialDocumentFooterBar: View {
     @Bindable var session: ProjectSession
-    @ObservedObject var requests: ProjectEditorRequests
+    let requests: ProjectEditorRequests
     @Bindable var completion: CompletionController
     let documentID: WritingDocumentID
     let theme: PurloryTheme

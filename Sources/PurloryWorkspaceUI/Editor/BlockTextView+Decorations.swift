@@ -5,6 +5,8 @@ import UniformTypeIdentifiers
 
 // Attributed presentation and TextKit block drawing.
 extension BlockTextView {
+    /// Horizontal step per nested quote level, shared between paragraph indent and bar drawing.
+    nonisolated static let quoteIndentStep: CGFloat = 14
 
     /// 커서 문단에 블록을 부여하고 스타일을 다시 입힌다 (undo 등록 포함).
     func applyBlock(
@@ -323,7 +325,7 @@ extension BlockTextView {
         case .quote:
             color = t.ink2
             if editorialWorkspaceStyle { font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask) }
-            let qIndent = 19 + CGFloat(min(6, max(0, indent))) * 14
+            let qIndent = 19 + CGFloat(min(6, max(0, indent))) * Self.quoteIndentStep
             ps.firstLineHeadIndent = qIndent
             ps.headIndent = qIndent
             ps.paragraphSpacingBefore = 6
@@ -499,6 +501,7 @@ final class PurloryLayoutManager: NSLayoutManager {
         super.drawGlyphs(forGlyphRange: glyphsToShow, at: origin)
         guard let view, let storage = textStorage, storage.length > 0 else { return }
         let theme = view.palette
+        let markerSize: CGFloat = Thread.isMainThread ? MainActor.assumeIsolated { view.bodyFont.pointSize } : 20
         let ns = storage.string as NSString
         let shownChars = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
         drawWritingDiagnostics(forGlyphRange: glyphsToShow, at: origin, view: view)
@@ -518,25 +521,25 @@ final class PurloryLayoutManager: NSLayoutManager {
                 (editorialWorkspaceStyle ? theme.workspaceTerracotta : theme.ink2).setFill()
                 let barWidth: CGFloat = editorialWorkspaceStyle ? 2 : 3
                 for level in 0...max(0, info.indent) {
-                    let barX = rect.minX + CGFloat(level) * 20
+                    let barX = rect.minX + CGFloat(level) * BlockTextView.quoteIndentStep
                     NSRect(x: barX, y: rect.minY + 2, width: barWidth, height: rect.height - 4)
                         .fill()
                 }
             case .bullet:
                 let bullets = ["•", "◦", "▪"]
                 let symbol = bullets[max(0, info.indent) % bullets.count]
-                draw(marker: symbol, color: theme.ink2, size: 20,
+                draw(marker: symbol, color: theme.ink2, size: markerSize,
                      x: leftEdge(origin) + 8 + indentOffset, line: firstLine,
                      baseline: firstBaseline(charRange: para, line: firstLine))
             case .number:
-                // 본문(bodyFont serif 20)과 같은 크기·베이스라인으로 정렬.
-                draw(marker: info.marker ?? "1.", color: theme.ink2, size: 20,
+                // Align list numerals with the active body font size and baseline.
+                draw(marker: info.marker ?? "1.", color: theme.ink2, size: markerSize,
                      x: leftEdge(origin) + 6 + indentOffset, line: firstLine,
                      baseline: firstBaseline(charRange: para, line: firstLine))
             case .todo:
-                // 체크박스는 글자 캡하이트의 세로 중앙에 맞춘다.
+                // Center checkbox vertically on the active body font cap height.
                 let centerY = firstBaseline(charRange: para, line: firstLine)
-                    .map { $0 - PurloryFonts.serif(20).capHeight / 2 } ?? firstLine.midY
+                    .map { $0 - PurloryFonts.serif(markerSize).capHeight / 2 } ?? firstLine.midY
                 drawCheckbox(
                     checked: info.checked, theme: theme,
                     at: NSPoint(x: leftEdge(origin) + 4 + indentOffset, y: centerY - 8))

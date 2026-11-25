@@ -21,10 +21,10 @@ enum ContentViewRoute: Equatable {
 public struct ContentView: View {
     @Bindable private var projectSession: ProjectSession
     private let startup: ProjectStartupCoordinator
-    @ObservedObject private var editorRequests: ProjectEditorRequests
+    private let editorRequests: ProjectEditorRequests
     @Bindable private var completion: CompletionController
     private let indexer: BackgroundIndexer
-    @ObservedObject private var livingMargin: LivingMarginModel
+    private let livingMargin: LivingMarginModel
     private let firstRunFlow: FirstRunFlow
     private let positionStore: WritingPositionStore
     private let writingDiagnostics: WritingDiagnosticsRuntime?

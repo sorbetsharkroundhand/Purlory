@@ -44,8 +44,13 @@ public struct DocumentSource: Sendable, Equatable {
             self.root = root; self.random = random; self.cached = cached
         }
         var string: String {
-            lock.lock(); defer { lock.unlock() }
-            if let cached { return cached }
+            lock.lock()
+            if let cached {
+                lock.unlock()
+                return cached
+            }
+            lock.unlock()
+            // The rope tree is immutable, so build the joined string outside the lock.
             var pieces: [String] = [], stack: [Node] = [], next = root
             pieces.reserveCapacity(root?.count ?? 0)
             while next != nil || !stack.isEmpty {
@@ -53,7 +58,13 @@ public struct DocumentSource: Sendable, Equatable {
                 let node = stack.removeLast(); pieces.append(node.text); next = node.right
             }
             let result = pieces.joined()
+            lock.lock()
+            if let existing = cached {
+                lock.unlock()
+                return existing
+            }
             cached = result; builds += 1
+            lock.unlock()
             return result
         }
         var materializationCount: Int {
@@ -84,7 +95,67 @@ public struct DocumentSource: Sendable, Equatable {
     }
     public func isSameVersion(as other: DocumentSource) -> Bool { storage === other.storage }
     public static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.isSameVersion(as: rhs) || (lhs.utf16Length == rhs.utf16Length && lhs.string.utf16.elementsEqual(rhs.string.utf16))
+        if lhs.isSameVersion(as: rhs) { return true }
+        guard lhs.utf16Length == rhs.utf16Length, lhs.newlineCount == rhs.newlineCount else { return false }
+        if lhs.utf16Length == 0 { return true }
+        return Self.streamingUTF16Equals(lhs.storage.root, rhs.storage.root)
+    }
+
+    private static func streamingUTF16Equals(_ lhsRoot: Node?, _ rhsRoot: Node?) -> Bool {
+        struct ChunkCursor {
+            var stack: [Node] = []
+            var next: Node?
+            var currentText: String = ""
+            var index: String.UTF16View.Index
+            var end: String.UTF16View.Index
+
+            init(_ root: Node?) {
+                self.next = root
+                self.index = currentText.utf16.startIndex
+                self.end = currentText.utf16.endIndex
+                advanceChunk()
+            }
+
+            mutating func advanceChunk() {
+                while next != nil || !stack.isEmpty {
+                    while let node = next { stack.append(node); next = node.left }
+                    let node = stack.removeLast()
+                    next = node.right
+                    if !node.text.isEmpty {
+                        currentText = node.text
+                        index = currentText.utf16.startIndex
+                        end = currentText.utf16.endIndex
+                        return
+                    }
+                }
+                currentText = ""
+                index = currentText.utf16.startIndex
+                end = currentText.utf16.endIndex
+            }
+        }
+
+        var left = ChunkCursor(lhsRoot)
+        var right = ChunkCursor(rhsRoot)
+        while left.index < left.end && right.index < right.end {
+            let leftUTF16 = left.currentText.utf16
+            let rightUTF16 = right.currentText.utf16
+            if left.index == leftUTF16.startIndex && right.index == rightUTF16.startIndex
+                && left.currentText.utf16.count == right.currentText.utf16.count
+            {
+                if left.currentText != right.currentText { return false }
+                left.advanceChunk()
+                right.advanceChunk()
+                continue
+            }
+            while left.index < left.end && right.index < right.end {
+                if leftUTF16[left.index] != rightUTF16[right.index] { return false }
+                left.index = leftUTF16.index(after: left.index)
+                right.index = rightUTF16.index(after: right.index)
+            }
+            if left.index == left.end { left.advanceChunk() }
+            if right.index == right.end { right.advanceChunk() }
+        }
+        return left.index == left.end && right.index == right.end
     }
 
     public func substring(in range: NSRange) throws -> String {
@@ -117,9 +188,10 @@ public struct DocumentSource: Sendable, Equatable {
     }
 
     package func clampedSlice(in range: NSRange) -> String {
-        guard utf16Length > 0 else { return "" }
-        var start = max(0, min(range.location, utf16Length))
-        var end = max(start, min(range.upperBound, utf16Length))
+        guard utf16Length > 0, range.location >= 0, range.location < utf16Length else { return "" }
+        var start = range.location
+        let clampedLength = range.length <= 0 ? 0 : min(range.length, utf16Length - start)
+        var end = start + clampedLength
         if start > 0 && start < utf16Length, isTrailingSurrogate(at: start) {
             start -= 1
         }
@@ -179,7 +251,7 @@ public struct DocumentSource: Sendable, Equatable {
     /// Compares UTF-8 bytes against `other` by streaming rope chunks without joining or caching the full string.
     package func utf8Equals(_ other: String) -> Bool {
         guard (other as NSString).length == utf16Length else { return false }
-        var otherUTF8 = other.utf8
+        let otherUTF8 = other.utf8
         var otherIndex = otherUTF8.startIndex
         var stack: [Node] = [], next = storage.root
         while next != nil || !stack.isEmpty {
@@ -286,7 +358,8 @@ public struct DocumentSource: Sendable, Equatable {
                 else if point >= left + node.textLength { point -= left + node.textLength; next = node.right }
                 else {
                     let relative = point - left
-                    if relative > 0, (0xDC00...0xDFFF).contains((node.text as NSString).character(at: relative)) {
+                    if relative >= 0, relative < node.textLength,
+                       (0xDC00...0xDFFF).contains((node.text as NSString).character(at: relative)) {
                         throw EditError.invalidUTF16Boundary
                     }
                     break
@@ -304,9 +377,30 @@ public struct DocumentSource: Sendable, Equatable {
         }
         return result
     }
+    /// O(N) Cartesian tree construction preserving the min-heap treap invariant with 1 Node allocation per chunk.
     private static func tree(_ chunks: [String], random: inout UInt64, visits: inout Int) -> Node? {
-        var root: Node?
-        for chunk in chunks { root = Tree.merge(root, Node(chunk, priority: Tree.nextPriority(&random)), visits: &visits) }
+        guard !chunks.isEmpty else { return nil }
+        struct Frame {
+            let text: String
+            let priority: UInt64
+            let left: Node?
+        }
+        var stack: [Frame] = []
+        stack.reserveCapacity(min(chunks.count, 64))
+        for chunk in chunks {
+            visits += 1
+            let priority = Tree.nextPriority(&random)
+            var lastPopped: Node? = nil
+            while let top = stack.last, top.priority >= priority {
+                stack.removeLast()
+                lastPopped = Node(top.text, priority: top.priority, left: top.left, right: lastPopped)
+            }
+            stack.append(Frame(text: chunk, priority: priority, left: lastPopped))
+        }
+        var root: Node? = nil
+        while let top = stack.popLast() {
+            root = Node(top.text, priority: top.priority, left: top.left, right: root)
+        }
         return root
     }
     private static func split(_ root: Node?, at offset: Int, random: inout UInt64, visits: inout Int) -> (Node?, Node?) {

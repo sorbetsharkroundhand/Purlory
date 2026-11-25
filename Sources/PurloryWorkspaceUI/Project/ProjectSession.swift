@@ -827,17 +827,18 @@ public final class ProjectSession {
             }
             let id = WritingProjectID(rawValue: rawID)
             do {
-                let project: WritingProject
+                let summary: RecentProjectSummary
                 if activeProject?.id == id, let activeProject {
-                    project = activeProject
+                    summary = RecentProjectSummary(
+                        id: activeProject.id,
+                        title: activeProject.title,
+                        mode: activeProject.mode)
                 } else {
-                    project = try await store.load(id: id)
+                    let meta = try await store.projectSummary(id: id)
+                    summary = RecentProjectSummary(id: meta.id, title: meta.title, mode: meta.mode)
                 }
                 guard !resolved.contains(where: { $0.id == id }) else { continue }
-                resolved.append(RecentProjectSummary(
-                    id: project.id,
-                    title: project.title,
-                    mode: project.mode))
+                resolved.append(summary)
             } catch {
                 firstFailure = firstFailure ?? error.localizedDescription
             }

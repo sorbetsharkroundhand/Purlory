@@ -37,6 +37,20 @@ final class SpatialManilaTabBarView: NSView {
     private var toggleTypewriter: (() -> Void)?
     private var toggleFocus: (() -> Void)?
     private var revealActive = true
+    private struct RenderedTab: Equatable {
+        let id: WritingDocumentID
+        let title: String
+    }
+    private struct RenderedConfiguration: Equatable {
+        let tabs: [RenderedTab]
+        let active: WritingDocumentID
+        let theme: PurloryTheme
+        let quiet: Bool
+        let typewriter: Bool
+        let focus: Bool
+        let canCreate: Bool
+    }
+    private var renderedConfiguration: RenderedConfiguration?
     private let insertion = InsertionMarker()
     private var insertionIndex: Int?
     override var isFlipped: Bool { true }
@@ -72,9 +86,28 @@ final class SpatialManilaTabBarView: NSView {
                    typewriter: Bool, focus: Bool, canCreate: Bool,
                    activate: @escaping (WritingDocumentID) -> Void, close: @escaping (WritingDocumentID) -> Void,
                    create: @escaping () -> Void, toggleTypewriter: @escaping () -> Void, toggleFocus: @escaping () -> Void) {
-        revealActive = revealActive || self.active != active || tabs.map(\.documentID) != documents.map(\.id)
-        self.active = active; self.theme = theme; self.create = create
+        self.create = create
         self.toggleTypewriter = toggleTypewriter; self.toggleFocus = toggleFocus
+        let nextConfig = RenderedConfiguration(
+            tabs: documents.map { RenderedTab(id: $0.id, title: $0.title.isEmpty ? "제목 없음" : $0.title) },
+            active: active,
+            theme: theme,
+            quiet: quiet,
+            typewriter: typewriter,
+            focus: focus,
+            canCreate: canCreate
+        )
+        if renderedConfiguration == nextConfig {
+            for tab in tabs {
+                let id = tab.documentID
+                tab.activate = { activate(id) }
+                tab.close = { close(id) }
+            }
+            return
+        }
+        renderedConfiguration = nextConfig
+        revealActive = revealActive || self.active != active || tabs.map(\.documentID) != documents.map(\.id)
+        self.active = active; self.theme = theme
         let previous = Dictionary(uniqueKeysWithValues: tabs.map { ($0.documentID, $0) })
         for tab in tabs where !documents.contains(where: { $0.id == tab.documentID }) { tab.removeFromSuperview() }
         tabs = documents.map { document in
@@ -107,6 +140,7 @@ final class SpatialManilaTabBarView: NSView {
     }
 
     func showInsertion(at index: Int?) {
+        guard insertionIndex != index else { return }
         insertionIndex = index; insertion.isHidden = index == nil; needsLayout = true
     }
 

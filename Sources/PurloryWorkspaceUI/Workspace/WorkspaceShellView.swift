@@ -159,7 +159,7 @@ struct WorkspaceSurface: View {
     @Bindable var projectSession: ProjectSession
     @ObservedObject var editorRequests: ProjectEditorRequests
     @Bindable var completion: CompletionController
-    @ObservedObject var livingMargin: LivingMarginModel
+    let livingMargin: LivingMarginModel
     let indexer: BackgroundIndexer
     var editorBridge: ProjectEditorBridge? = nil
     var positionStore: WritingPositionStore = .shared
