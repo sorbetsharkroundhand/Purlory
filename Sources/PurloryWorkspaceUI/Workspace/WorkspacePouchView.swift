@@ -446,6 +446,7 @@ struct WorkspacePouchBridge: NSViewRepresentable {
     let extraActions: [WorkspacePouchAction]
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @Environment(\.accessibilityReduceTransparency) private var systemReduceTransparency
+    @Environment(\.colorSchemeContrast) private var systemColorSchemeContrast
     @Environment(\.purloryWorkspaceAccessibilityOptions) private var accessibilityOptions
 
     func makeCoordinator() -> Coordinator { Coordinator(model: model, defaults: defaults) }
@@ -461,6 +462,7 @@ struct WorkspacePouchBridge: NSViewRepresentable {
             reduceMotion: accessibilityOptions.resolvedReduceMotion(system: systemReduceMotion),
             accessibilityOptions: accessibilityOptions,
             reduceTransparency: systemReduceTransparency || accessibilityOptions.reduceTransparency,
+            increaseContrast: systemColorSchemeContrast == .increased,
             theme: theme,
             actions: actions,
             indexActions: indexActions,
@@ -487,6 +489,7 @@ struct WorkspacePouchBridge: NSViewRepresentable {
             reduceMotion: Bool,
             accessibilityOptions: WorkspaceAccessibilityOptions,
             reduceTransparency: Bool,
+            increaseContrast: Bool,
             theme: PurloryTheme,
             actions: [WorkspacePouchAction],
             indexActions: [WorkspacePouchAction],
@@ -504,6 +507,7 @@ struct WorkspacePouchBridge: NSViewRepresentable {
                 reduceMotion: reduceMotion,
                 accessibilityOptions: accessibilityOptions,
                 reduceTransparency: reduceTransparency,
+                increaseContrast: increaseContrast,
                 theme: theme,
                 actions: actions,
                 indexActions: indexActions,

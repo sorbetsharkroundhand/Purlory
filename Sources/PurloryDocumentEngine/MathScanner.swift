@@ -45,29 +45,73 @@ package enum MathScanner {
         guard line.contains("$") else { return [] }
         let ns = line as NSString
         let length = ns.length
+        let skips = normalizedSkips(skipRanges)
         var result: [Region] = []
         var i = 0
         while i < length {
             defer { i += 1 }
-            guard character(ns, i) == dollar, !inSkipped(NSRange(location: i, length: 1), skipRanges)
+            guard character(ns, i) == dollar, !inSkipped(NSRange(location: i, length: 1), skips)
             else { continue }
             // 이스케이프된 `\$` — 구분자가 아니라 글자 그대로의 달러다.
             if i > 0, character(ns, i - 1) == backslash { continue }
 
             if character(ns, i + 1) == dollar {
                 // display 후보 $$ … $$
-                if let region = scanDisplay(ns, from: i, skipping: skipRanges) {
+                if !inSkipped(NSRange(location: i, length: 2), skips),
+                   let region = scanDisplay(ns, from: i, skipping: skips) {
                     result.append(region)
                     i = region.range.upperBound - 1  // 루프의 += 1과 합쳐 다음 문자부터
                 } else {
-                    // An incomplete display opener still owns both dollars.
+                    // An incomplete or partially skipped display opener still owns both dollars.
                     i += 1
                 }
                 continue
             }
 
             // inline 후보 $ … $
-            if let region = scanInline(ns, at: i, skipping: skipRanges) {
+            if let region = scanInline(ns, at: i, skipping: skips) {
+                result.append(region)
+                i = region.range.upperBound - 1
+            }
+        }
+        return result
+    }
+
+    package static func regions(
+        in line: String,
+        skipping skipRanges: [NSRange] = [],
+        isolation: isolated (any Actor)? = #isolation,
+        checkpoint: () async -> Bool
+    ) async -> [Region]? {
+        guard line.contains("$") else { return [] }
+        let ns = line as NSString
+        let length = ns.length
+        let skips = normalizedSkips(skipRanges)
+        var result: [Region] = []
+        var i = 0
+        var nextYield = 2_048
+        while i < length {
+            if i >= nextYield {
+                guard await checkpoint() else { return nil }
+                nextYield = i + 2_048
+            }
+            defer { i += 1 }
+            guard character(ns, i) == dollar, !inSkipped(NSRange(location: i, length: 1), skips)
+            else { continue }
+            if i > 0, character(ns, i - 1) == backslash { continue }
+
+            if character(ns, i + 1) == dollar {
+                if !inSkipped(NSRange(location: i, length: 2), skips),
+                   let region = scanDisplay(ns, from: i, skipping: skips) {
+                    result.append(region)
+                    i = region.range.upperBound - 1
+                } else {
+                    i += 1
+                }
+                continue
+            }
+
+            if let region = scanInline(ns, at: i, skipping: skips) {
                 result.append(region)
                 i = region.range.upperBound - 1
             }
@@ -116,8 +160,46 @@ package enum MathScanner {
         index >= 0 && index < ns.length ? ns.character(at: index) : 0
     }
 
+    private static func normalizedSkips(_ skipRanges: [NSRange]) -> [NSRange] {
+        guard !skipRanges.isEmpty else { return [] }
+        if skipRanges.count == 1 {
+            return skipRanges[0].length > 0 ? skipRanges : []
+        }
+        var alreadyNormalized = skipRanges[0].length > 0
+        if alreadyNormalized {
+            for idx in 1..<skipRanges.count {
+                if skipRanges[idx].length <= 0 || skipRanges[idx - 1].upperBound > skipRanges[idx].location {
+                    alreadyNormalized = false
+                    break
+                }
+            }
+        }
+        if alreadyNormalized { return skipRanges }
+        var merged: [NSRange] = []
+        merged.reserveCapacity(skipRanges.count)
+        for range in skipRanges.sorted(by: { $0.location < $1.location }) where range.length > 0 {
+            if let last = merged.last, range.location <= last.upperBound {
+                merged[merged.count - 1] = NSUnionRange(last, range)
+            } else {
+                merged.append(range)
+            }
+        }
+        return merged
+    }
+
     private static func inSkipped(_ range: NSRange, _ skips: [NSRange]) -> Bool {
-        skips.contains { NSIntersectionRange($0, range).length > 0 }
+        guard !skips.isEmpty else { return false }
+        var low = 0, high = skips.count
+        while low < high {
+            let mid = low + (high - low) / 2
+            if skips[mid].upperBound <= range.location {
+                low = mid + 1
+            } else {
+                high = mid
+            }
+        }
+        guard low < skips.count else { return false }
+        return skips[low].location < range.upperBound
     }
 
     /// `$…$` — 여는 규칙: 다음 문자가 공백·또 다른 `$`면 실패.

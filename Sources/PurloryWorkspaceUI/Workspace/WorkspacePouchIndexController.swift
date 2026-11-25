@@ -9,6 +9,7 @@ import AppKit
     private(set) var geometry: WorkspacePouchIndexGeometry?
     var reduceMotion = false
     var reduceTransparency = false
+    var increaseContrast: Bool?
     var onClose: (() -> Void)?
     var animationTime: () -> Double = { ProcessInfo.processInfo.systemUptime }
     private var expansion = WorkspaceSpringValue(value: 0)
@@ -31,7 +32,12 @@ import AppKit
 
     @discardableResult
     func update(theme: PurloryTheme, actions: [WorkspacePouchAction], visible: Bool) -> Bool {
-        var changed = view.configure(theme: theme, actions: actions, reduceTransparency: reduceTransparency)
+        var changed = view.configure(
+            theme: theme,
+            actions: actions,
+            reduceTransparency: reduceTransparency,
+            increaseContrast: increaseContrast ?? NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+        )
         let appearanceName: NSAppearance.Name = theme.editorSurface.relativeLuminance < 0.5 ? .darkAqua : .aqua
         if panel.appearance?.name != appearanceName {
             panel.appearance = NSAppearance(named: appearanceName)

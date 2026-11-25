@@ -143,4 +143,26 @@ final class WritingProseProjectionTests: XCTestCase {
         XCTAssertNil(ImageReferenceParser.scanUntilUnescaped(destination, from: destination.startIndex, stoppingAt: ">"))
         XCTAssertNil(ImageReferenceParser.scanTitle(title, from: title.startIndex))
     }
+
+    func testMathScannerIgnoresZeroLengthSkipsAndAsymmetricDisplaySkipStaysLinear() {
+        let singleZero = MathScanner.regions(in: "$$x$$", skipping: [NSRange(location: 4, length: 0)])
+        XCTAssertEqual(singleZero.count, 1)
+        XCTAssertEqual(singleZero.first?.range, NSRange(location: 0, length: 5))
+
+        let multiZero = MathScanner.regions(
+            in: "$$x$$ a",
+            skipping: [NSRange(location: 4, length: 0), NSRange(location: 6, length: 1)]
+        )
+        XCTAssertEqual(multiZero.count, 1)
+        XCTAssertEqual(multiZero.first?.range, NSRange(location: 0, length: 5))
+
+        let repeatedDollars = String(repeating: "$$", count: 2_048)
+        let asymmetricSkips = (0..<2_048).map { NSRange(location: $0 * 2 + 1, length: 1) }
+        let start = ContinuousClock.now
+        let regions = MathScanner.regions(in: repeatedDollars, skipping: asymmetricSkips)
+        let elapsed = start.duration(to: .now)
+        let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+        XCTAssertTrue(regions.isEmpty)
+        XCTAssertLessThan(seconds, 0.1, "Asymmetric display skip ranges must stay linear (took \(seconds)s)")
+    }
 }

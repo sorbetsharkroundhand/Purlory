@@ -623,6 +623,73 @@ import XCTest
         XCTAssertEqual(contour.strokeColor, WorkspacePouchStyle.border(.light, increaseContrast: true).cgColor)
         XCTAssertFalse(indexView.configure(theme: .light, actions: [actionA], reduceTransparency: false, increaseContrast: true))
     }
+
+    func testAccessibilityDisplayOptionsNotificationRefreshesPouchAndIndex() throws {
+        let suite = UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var simulatedContrast = false
+        let controller = WorkspacePouchController(model: SpatialWorkspaceController(defaults: defaults), defaults: defaults)
+        controller.systemIncreaseContrast = { simulatedContrast }
+        let window = NSWindow(
+            contentRect: NSRect(x: 120, y: 120, width: 960, height: 640),
+            styleMask: [.titled, .closable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        let root = NSView(frame: window.contentRect(forFrameRect: window.frame))
+        window.contentView = root
+        window.orderFront(nil)
+        defer {
+            controller.detach()
+            window.close()
+        }
+
+        controller.attach(to: window, from: root)
+        let indexView = try XCTUnwrap(controller.index?.view)
+        let contour = try XCTUnwrap(indexView.layer?.sublayers?.compactMap { $0 as? CAShapeLayer }.first)
+        XCTAssertEqual(contour.strokeColor, WorkspacePouchStyle.border(.light, increaseContrast: false).cgColor)
+
+        let before = controller.refreshCount
+        simulatedContrast = true
+        NSWorkspace.shared.notificationCenter.post(
+            name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+            object: NSWorkspace.shared
+        )
+        RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        XCTAssertGreaterThan(
+            controller.refreshCount,
+            before,
+            "Posting accessibilityDisplayOptionsDidChangeNotification must refresh pouch and index styling"
+        )
+        XCTAssertEqual(
+            contour.strokeColor,
+            WorkspacePouchStyle.border(.light, increaseContrast: true).cgColor,
+            "Index contour stroke must reflect live increase-contrast toggle"
+        )
+
+        // Bridge contrast update must also restyle when system contrast flips back off.
+        simulatedContrast = false
+        let beforeBridge = controller.refreshCount
+        controller.applyBridgeUpdate(
+            window: window,
+            workspaceView: root,
+            reduceMotion: false,
+            accessibilityOptions: .init(),
+            reduceTransparency: false,
+            increaseContrast: false,
+            theme: .light,
+            actions: [],
+            indexActions: [],
+            extraActions: [],
+            targetTitle: "Purlory",
+            requests: ProjectEditorRequests(),
+            tools: AnyView(EmptyView())
+        )
+        XCTAssertGreaterThan(controller.refreshCount, beforeBridge)
+        XCTAssertEqual(contour.strokeColor, WorkspacePouchStyle.border(.light, increaseContrast: false).cgColor)
+    }
 }
 
 private struct ToolsVersionProbe: NSViewRepresentable {

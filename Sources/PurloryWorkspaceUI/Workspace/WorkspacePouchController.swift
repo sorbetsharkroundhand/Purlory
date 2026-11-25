@@ -62,6 +62,11 @@ struct WorkspacePouchAction {
         reduceMotion || accessibilityOptions.resolvedReduceMotion(system: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
     }
     var reduceTransparency = false
+    var increaseContrast = false
+    var systemIncreaseContrast: () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast }
+    private var resolvedIncreaseContrast: Bool {
+        increaseContrast || systemIncreaseContrast()
+    }
     var theme: PurloryTheme = .light { didSet { if !isBatchUpdating, theme != oldValue { refresh() } } }
     var actions: [WorkspacePouchAction] = [] { didSet { if !isBatchUpdating { refresh() } } }
     var indexActions: [WorkspacePouchAction] = [] { didSet { if !isBatchUpdating { refresh() } } }
@@ -81,6 +86,7 @@ struct WorkspacePouchAction {
     private var escapeMonitor: Any?
     private var toolsWereExpanded = false
     private var observers: [NSObjectProtocol] = []
+    private var workspaceObservers: [NSObjectProtocol] = []
     private var subscription: AnyCancellable?
     private var start: CGPoint?
     private var grabOffset = CGPoint(x: 22, y: 22)
@@ -141,6 +147,7 @@ struct WorkspacePouchAction {
         reduceMotion: Bool,
         accessibilityOptions: WorkspaceAccessibilityOptions,
         reduceTransparency: Bool,
+        increaseContrast: Bool = false,
         theme: PurloryTheme,
         actions: [WorkspacePouchAction],
         indexActions: [WorkspacePouchAction],
@@ -153,6 +160,7 @@ struct WorkspacePouchAction {
         self.reduceMotion = reduceMotion
         self.accessibilityOptions = accessibilityOptions
         self.reduceTransparency = reduceTransparency
+        self.increaseContrast = increaseContrast
         self.theme = theme
         self.actions = actions
         self.indexActions = indexActions
@@ -235,6 +243,13 @@ struct WorkspacePouchAction {
         observers.append(NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.dock(immediate: true) }
         })
+        workspaceObservers.append(NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { _ = self?.refresh(includeIndex: true) }
+        })
         refresh(includeIndex: false); dock(immediate: true)
     }
 
@@ -245,6 +260,8 @@ struct WorkspacePouchAction {
         timer?.invalidate(); timer = nil
         for observer in observers { NotificationCenter.default.removeObserver(observer) }
         observers.removeAll()
+        for observer in workspaceObservers { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
+        workspaceObservers.removeAll()
         cancelTransition(); collapsedImage = nil
         content?.removeFromSuperview()
         panel?.orderOut(nil); panel?.close(); panel = nil; content = nil; window = nil
@@ -397,7 +414,14 @@ struct WorkspacePouchAction {
             content.targetTitle = resolvedTitle
             changed = true
         }
-        let viewChanged = content.configure(orb: isCollapsed, horizontal: false, actions: [], theme: theme, attached: isAttached)
+        let viewChanged = content.configure(
+            orb: isCollapsed,
+            horizontal: false,
+            actions: [],
+            theme: theme,
+            attached: isAttached,
+            increaseContrast: resolvedIncreaseContrast
+        )
         if viewChanged { changed = true }
         if lastPanelCollapsedState != isCollapsed {
             lastPanelCollapsedState = isCollapsed
@@ -443,6 +467,7 @@ struct WorkspacePouchAction {
         guard let index else { return false }
         index.reduceMotion = motionReduced
         index.reduceTransparency = reduceTransparency
+        index.increaseContrast = resolvedIncreaseContrast
         if isCollapsed, index.isExpanded { index.setExpanded(false) }
         if !isCollapsed, model.pouchSection != nil, !index.isExpanded { index.setExpanded(true) }
         return index.update(theme: theme, actions: indexActions, visible: !isCollapsed)

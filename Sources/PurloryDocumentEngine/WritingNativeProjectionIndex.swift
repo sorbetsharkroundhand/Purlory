@@ -208,24 +208,42 @@ package final class WritingNativeRowIndex {
 
         if bounds.textStart < range.upperBound && bounds.textEnd > range.location {
             if node.row.eligible && !node.row.isCode {
-                for span in node.row.spans {
-                    let isEligibleSpan: Bool
-                    let local: NSRange
-                    if let body = span.body, !span.style.code {
-                        isEligibleSpan = true
-                        local = body
-                    } else {
-                        isEligibleSpan = false
-                        local = span.source
-                    }
-                    let global = NSRange(location: bounds.textStart + local.location, length: local.length)
-                    let clipped = NSIntersectionRange(global, range)
-                    if clipped.length > 0 {
-                        if isEligibleSpan {
-                            appendCoalescedInterval(clipped, to: &eligible)
+                let spans = node.row.spans
+                if !spans.isEmpty {
+                    let localStart = max(0, range.location - bounds.textStart)
+                    let localEnd = range.upperBound - bounds.textStart
+                    var low = 0, high = spans.count
+                    while low < high {
+                        let mid = low + (high - low) / 2
+                        if spans[mid].source.upperBound <= localStart {
+                            low = mid + 1
                         } else {
-                            appendCoalescedInterval(clipped, to: &blocked)
+                            high = mid
                         }
+                    }
+                    var idx = low
+                    while idx < spans.count {
+                        let span = spans[idx]
+                        if span.source.location >= localEnd { break }
+                        let isEligibleSpan: Bool
+                        let local: NSRange
+                        if let body = span.body, !span.style.code {
+                            isEligibleSpan = true
+                            local = body
+                        } else {
+                            isEligibleSpan = false
+                            local = span.source
+                        }
+                        let global = NSRange(location: bounds.textStart + local.location, length: local.length)
+                        let clipped = NSIntersectionRange(global, range)
+                        if clipped.length > 0 {
+                            if isEligibleSpan {
+                                appendCoalescedInterval(clipped, to: &eligible)
+                            } else {
+                                appendCoalescedInterval(clipped, to: &blocked)
+                            }
+                        }
+                        idx += 1
                     }
                 }
                 if node.row.hasLineFeed {

@@ -3,7 +3,7 @@ import SwiftUI
 
 /// One glass surface spans the outer window and tile gaps; manuscripts stay opaque.
 struct WorkspaceLiquidGlass: NSViewRepresentable {
-    static let cornerRadius: CGFloat = 18
+    nonisolated static let cornerRadius: CGFloat = 18
     let theme: PurloryTheme
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.purloryWorkspaceAccessibilityOptions) private var accessibilityOptions
