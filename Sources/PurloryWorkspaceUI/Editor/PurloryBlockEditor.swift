@@ -121,38 +121,6 @@ public struct PurloryBlockEditor: NSViewRepresentable {
         return sourceBinding?.wrappedValue
     }
 
-    /// Explicit legacy-workspace bridge. Project workspace composition uses the neutral primary
-    /// initializer above, while EntryStore remains available only at its compatibility boundary.
-    public init(
-        text: Binding<String>,
-        controller: CompletionController? = nil,
-        theme: PurloryTheme = .light,
-        lineSpacing: CGFloat = CGFloat(CompletionSettings.defaultLineSpacing),
-        baseFontSize: CGFloat = CGFloat(CompletionSettings.defaultFontSize),
-        entryID: UUID = UUID(),
-        positionStore: WritingPositionStore = .shared,
-        isEditable: Bool = true,
-        focusRequest: Int = 0,
-        searchJump: EntryStore.SearchJump? = nil,
-        onEditorWindowChange: ((NSTextView) -> Void)? = nil
-    ) {
-        self.init(
-            text: text,
-            controller: controller,
-            theme: theme,
-            lineSpacing: lineSpacing,
-            baseFontSize: baseFontSize,
-            documentIdentity: .legacy(entryID),
-            positionStore: positionStore,
-            isEditable: isEditable,
-            focusRequest: focusRequest,
-            searchJump: searchJump.map {
-                EditorSearchJump(
-                    documentID: $0.entryID, query: $0.query, sequence: $0.seq)
-            },
-            onEditorWindowChange: onEditorWindowChange)
-    }
-
     public func makeNSView(context: Context) -> NSScrollView {
         // TextKit 1 스택을 직접 조립 — 커스텀 레이아웃 매니저(블록 장식)를 쓰기 위해.
         let storage = NSTextStorage()

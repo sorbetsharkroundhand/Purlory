@@ -65,43 +65,11 @@ final class ContextReportIsolationTests: XCTestCase {
         XCTAssertFalse(completion.isPredicting)
     }
 
-    private var dir: URL!
-
-    override func setUpWithError() throws {
-        dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("Purlory-report-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    }
-
-    override func tearDownWithError() throws {
-        try? FileManager.default.removeItem(at: dir)
-    }
-
-    @MainActor
-    private func makeStore() -> EntryStore {
-        EntryStore(directory: dir, autosaveDelay: .seconds(3600))
-    }
-
-    @MainActor
-    func test문서스냅샷은소속entryID를담는다() throws {
-        let store = makeStore()
-        let novelID = store.newEntry(kind: .novel)
-
-        let context = store.activeDocumentContext
-        XCTAssertEqual(context?.entryID, novelID, "조립 스냅샷이 어느 작품 것인지 알아야 한다")
-
-        // 전환하면 스냅샷도 새 활성 문서를 가리킨다.
-        let otherID = store.newEntry()
-        store.select(otherID)
-        XCTAssertEqual(store.activeDocumentContext?.entryID, otherID)
-    }
-
     @MainActor
     func test문서전환이이전문서리포트와진행예측을무효화한다() {
         let completion = CompletionController()
-        let store = makeStore()
-        let aID = store.activeID
-        let bID = store.newEntry()
+        let aID = UUID()
+        let bID = UUID()
 
         // A에서 만들어진 리포트라고 친다 (세대 7).
         let reportA = ContextReport(
@@ -120,8 +88,7 @@ final class ContextReportIsolationTests: XCTestCase {
     @MainActor
     func test같은문서재선택은리포트를살려둔다() {
         let completion = CompletionController()
-        let store = makeStore()
-        let id = store.newEntry(kind: .novel)
+        let id = UUID()
 
         let report = ContextReport(
             items: [.init(kind: .card, text: "인물 카드", stableKey: "k")],
@@ -132,29 +99,5 @@ final class ContextReportIsolationTests: XCTestCase {
         completion.noteDocumentSwitch(to: id)
 
         XCTAssertEqual(completion.lastContextReport, report)
-    }
-
-    @MainActor
-    func test늦게도착한A리포트는B오버라이드를기록하지못한다() throws {
-        // 인스펙터 액션이 기록하는 대상은 리포트 소속 문서여야 한다 — 화면의
-        // activeID가 아니라. (View의 targetID 전달 계약을 값 수준에서 고정.)
-        let store = makeStore()
-        let aID = store.newEntry(kind: .novel)
-        _ = store.newEntry()  // B
-        store.select(aID)
-
-        // A 소속 리포트 항목을 "A"에 기록 — B가 active여도 A에 남는다.
-        let item = ContextReport.Item(kind: .sceneSummary, text: "A 장면", stableKey: "scene-1")
-        store.setNarrativeOverride(
-            NarrativeOverride(kind: .contextExclude, key: item.stableKey, value: "제외"),
-            in: aID)
-
-        let overridesOfA = store.entries.first { $0.id == aID }?.narrativeOverrides ?? []
-        XCTAssertTrue(overridesOfA.contains { $0.key == "scene-1" })
-        for entry in store.entries where entry.id != aID {
-            XCTAssertFalse(
-                (entry.narrativeOverrides ?? []).contains { $0.key == "scene-1" },
-                "다른 문서의 오버라이드가 오염됐다")
-        }
     }
 }

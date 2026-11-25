@@ -78,56 +78,15 @@ final class ImageStoreGCTests: XCTestCase {
         try? FileManager.default.removeItem(at: root)
     }
 
-    /// (asset 파일명, 그 asset을 심는 본문) 목록 — 과거 GC가 오판했던 문법 하나씩.
-    private var cases: [(file: String, body: String)] {
-        [
-            ("cover.png", "![표지](images/cover.png)"),
-            ("titled.png", #"![표지](images/titled.png "첫 장면")"#),
-            ("with space.png", "![]( <images/with space.png> )"),
-            ("frame(1).png", "![](images/frame(1).png)"),
-            ("ref.png", "![표지][r1]\n\n[r1]: images/ref.png"),
-            ("dotted.png", "![](./images/dotted.png)"),
-        ]
-    }
-
     @MainActor
-    func test다른저널삭제는모든문법의참조이미지를살려둔다() throws {
-        let store = EntryStore(directory: root, autosaveDelay: .seconds(3600))
-        var expectedFiles: Set<String> = []
-        var createdIDs: [UUID] = []
+    func test삭제후유예기간에는asset이살아있다() throws {
+        let imagesDir = root.appendingPathComponent("images")
+        try Data([0x89]).write(to: imagesDir.appendingPathComponent("cover.png"))
+        AssetJanitor.record("images/cover.png")
 
-        for (file, template) in cases {
-            let id = store.newEntry()
-            store.updateActiveBody(template)
-            createdIDs.append(id)
-            try Data([0x89]).write(to: root.appendingPathComponent("images").appendingPathComponent(file))
-            expectedFiles.insert(file)
-        }
-        XCTAssertEqual(store.entries.count, createdIDs.count + 1)
-
-        // 마지막 저널 하나만 남긴다 — 과거엔 이 동작이 참조 이미지를 지웠다.
-        for id in createdIDs {
-            if store.entries.count > 1 { store.delete(id) }
-        }
-        XCTAssertEqual(store.entries.count, 1)
-
-        let survivors = Set(try FileManager.default.contentsOfDirectory(
-            at: root.appendingPathComponent("images"), includingPropertiesForKeys: nil)
-            .map(\.lastPathComponent))
-        XCTAssertEqual(survivors, expectedFiles, "참조 중인 asset이 삭제됐다 — GC 재도입 의심")
-    }
-
-    @MainActor
-    func test고아이미지도자동삭제되지않는다() throws {
-        // 고아 정리는 #12/#17의 지연 GC 몫 — 그때까지는 아무도 지우지 않는다.
-        let orphan = root.appendingPathComponent("images").appendingPathComponent("orphan.png")
-        try Data([0x89]).write(to: orphan)
-
-        let store = EntryStore(directory: root, autosaveDelay: .seconds(3600))
-        store.newEntry()
-        store.delete(store.entries[0].id)
-        store.flush()
-
-        XCTAssertTrue(FileManager.default.fileExists(atPath: orphan.path))
+        // Grace-period sweep must not delete recently orphaned assets.
+        let removedNow = AssetJanitor.sweepAll(bodies: [])
+        XCTAssertTrue(removedNow.isEmpty, "유예 중인데 지웠다: \(removedNow)")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: imagesDir.appendingPathComponent("cover.png").path))
     }
 }

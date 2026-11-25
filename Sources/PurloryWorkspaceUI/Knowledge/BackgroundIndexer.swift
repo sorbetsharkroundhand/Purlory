@@ -153,8 +153,6 @@ public final class BackgroundIndexer {
     private let engine: CompletionEngine
     private let settings: CompletionSettings
     private let sidecarPersistence: any KnowledgeSidecarPersisting
-    @ObservationIgnored private weak var legacyStore: EntryStore?
-    @ObservationIgnored private var legacyScopeProvider: ((UUID) -> StoryMemoryScope?)?
     @ObservationIgnored private var documentProvider: (() -> ProjectDocumentSnapshot?)?
     @ObservationIgnored private var writerReader = WriterDocumentReader()
     @ObservationIgnored private var observedRuntimeIdentity: ProjectRuntimeIdentity?
@@ -255,27 +253,16 @@ public final class BackgroundIndexer {
     }
 
     private func currentDocument() -> DocumentInput? {
-        if let documentProvider {
-            guard let document = documentProvider(),
-                let writer = try? writerReader.read(document) else { return nil }
-            let key = document.identity.key
-            return DocumentInput(
-                id: key.documentID.rawValue,
-                scope: .project(projectID: key.projectID, documentID: key.documentID),
-                runtimeIdentity: document.identity, source: document.source,
-                isFiction: document.mode == .fiction,
-                characters: writer.characters, overrides: writer.narrativeOverrides,
-                recorded: writer.recordedConversations, rejectedNames: writer.rejectedCharacterNames)
-        }
-        guard let entry = legacyStore?.activeEntry,
-            let scope = legacyScopeProvider?(entry.id)
-        else { return nil }
+        guard let document = documentProvider?(),
+            let writer = try? writerReader.read(document) else { return nil }
+        let key = document.identity.key
         return DocumentInput(
-            id: entry.id, scope: scope, runtimeIdentity: nil, source: DocumentSource(entry.body),
-            isFiction: entry.resolvedKind == .novel,
-            characters: entry.characters ?? [], overrides: entry.narrativeOverrides ?? [],
-            recorded: entry.recordedConversations ?? [],
-            rejectedNames: entry.rejectedCharacterNames ?? [])
+            id: key.documentID.rawValue,
+            scope: .project(projectID: key.projectID, documentID: key.documentID),
+            runtimeIdentity: document.identity, source: document.source,
+            isFiction: document.mode == .fiction,
+            characters: writer.characters, overrides: writer.narrativeOverrides,
+            recorded: writer.recordedConversations, rejectedNames: writer.rejectedCharacterNames)
     }
 
     @ObservationIgnored private var fastTimer: Task<Void, Never>?
@@ -415,21 +402,7 @@ public final class BackgroundIndexer {
     /// ContentView가 1회 배선 — 패스 시점에 활성 문서를 pull하기 위한 약참조.
     public func attach(documentProvider: @escaping () -> ProjectDocumentSnapshot?) {
         prepareForProjectTransition()
-        legacyStore = nil
-        legacyScopeProvider = nil
         self.documentProvider = documentProvider
-    }
-
-    public func attachLegacy(
-        store: EntryStore,
-        scopeProvider: ((UUID) -> StoryMemoryScope?)? = nil
-    ) {
-        prepareForProjectTransition()
-        documentProvider = nil
-        self.legacyStore = store
-        self.legacyScopeProvider = scopeProvider ?? { entryID in
-            .legacy(documentID: WritingDocumentID(rawValue: entryID))
-        }
     }
 
     /// Cancels in-flight tasks and timers without removing lifecycle observers so recoverable
@@ -918,7 +891,6 @@ public final class BackgroundIndexer {
         // 요약은 낮은 온도로 결정성 우선 — 같은 씬이 패스마다 다른 요약을 얻으면
         // B 블록이 흔들려 KV 프리픽스가 식는다 (PLAN §12).
         parameters.temperature = min(parameters.temperature, 0.3)
-        let liveEntryIDs = Set(legacyStore?.entries.map(\.id) ?? [])
         // 사건의 참여자로 링크할 수 있는 인물 = 등록된 카드뿐 (CLAUDE.md §3).
         let characters = entry.characters
         // 인물 감지 제외 목록 — 이미 등록된 이름·별칭 + 사용자가 무시한 이름.
@@ -931,7 +903,6 @@ public final class BackgroundIndexer {
         let rejectedNames = Set(entry.rejectedNames)
         let overrides = entry.overrides
         let recorded = entry.recorded
-        let allowsLegacyMetadataWrites = legacyStore != nil && documentProvider == nil
         let caret = caretProvider?()
 
         setIsIndexing(true)
@@ -960,21 +931,10 @@ public final class BackgroundIndexer {
                 known: knownNames, rejected: rejectedNames)
             var superseded = false
             await MainActor.run {
-                // 늦은 이전 작업은 후보 발표·자동 등록조차 하지 않는다 (#82).
+                // 늦은 이전 작업은 후보 발표조차 하지 않는다 (#82).
                 guard owned() else { superseded = true; return }
-                // HIGH 신뢰(구조 신호 다수) 후보는 자동 등록한다 (요구사항 §16,
-                // CLAUDE.md §3 갱신) — 카드에 자동 등록 표식이 남고 삭제는 한 번의
-                // 클릭이다. 별칭 후보(기존 인물의 변형일 가능성)는 자동 등록하지
-                // 않는다 — 병합/신규는 사용자 결정 (요구사항 §17).
-                let auto = candidates.filter {
-                    allowsLegacyMetadataWrites && $0.confidence == .high && $0.aliasOfKnown == nil
-                }
-                for candidate in auto { self.autoRegister(candidate, in: entryID) }
-                let remaining = candidates.filter { candidate in
-                    !auto.contains(where: { $0.name == candidate.name })
-                }
-                if self.characterCandidates != remaining {
-                    self.characterCandidates = remaining
+                if self.characterCandidates != candidates {
+                    self.characterCandidates = candidates
                 }
                 if self.candidatesEntryID != entryID { self.candidatesEntryID = entryID }
             }
@@ -982,16 +942,13 @@ public final class BackgroundIndexer {
                 await MainActor.run { self.finishPass(token: token) }
                 return
             }
-            // 자동 등록이 카드를 늘렸을 수 있다 — 패스는 최신 카드로 돈다.
-            let liveCharacters = await MainActor.run {
-                allowsLegacyMetadataWrites ? (self.currentDocument()?.characters ?? characters) : characters
-            }
+            let liveCharacters = characters
             let blockedReasonBox = LockedBlockedReason()
             await Self.runPass(
                 deep: deep, scope: scope, entryID: entryID, body: body,
                 parameters: parameters, engine: engine,
                 persistence: persistence,
-                liveEntryIDs: liveEntryIDs, characters: liveCharacters,
+                liveEntryIDs: [], characters: liveCharacters,
                 overrides: overrides, recordedConversations: recorded,
                 caretUTF16: caret,
                 gateStateProvider: gateStateProvider
@@ -1060,95 +1017,6 @@ public final class BackgroundIndexer {
     // MARK: - 인물 후보 확인 (등록은 사용자, CLAUDE.md §3)
 
     /// HIGH 신뢰 후보의 자동 등록 (요구사항 §16) — 사용자 확인 없이 카드를
-    /// 만들되 `autoRegistered` 표식을 남긴다. 사용자가 카드를 편집하면 표식이
-    /// 사라지고, 삭제는 언제나 한 번의 클릭이다 (기억은 사용자의 것, §1-5).
-    /// 등록 대상은 **감지된 문서**다 — activeEntry가 아니라. 감지와 MainActor 홉
-    /// 사이에 문서를 전환하면 다른 원고에 카드가 새어드는 레이스가 생긴다.
-    private func autoRegister(
-        _ candidate: CharacterDetector.Candidate, in entryID: UUID
-    ) {
-        guard documentProvider == nil, let store = legacyStore,
-            let entry = store.entries.first(where: { $0.id == entryID })
-        else { return }
-        // 이미 같은 이름의 카드가 있으면 만들지 않는다 (known 필터의 안전망).
-        guard (entry.characters ?? []).allSatisfy({ $0.name != candidate.name }) else { return }
-        let card = CharacterCard(
-            name: candidate.name,
-            aliases: candidate.aliasForms.joined(separator: ", "),
-            autoRegistered: true)
-        store.upsertCharacter(card, in: entry.id)
-        profileInBackground(card: card, name: candidate.name, entry: entry)
-    }
-
-    /// 후보 등록 — 카드를 즉시 만들고, 소개는 백그라운드 LLM 프로파일링이
-    /// 채운다 (PLAN §7 깔때기 3단). 프로파일링 실패 시 이름만 남는다 —
-    /// 이름만으로도 카드 선택(§11)에는 충분하다.
-    public func approveCandidate(_ candidate: CharacterDetector.Candidate) {
-        guard documentProvider == nil, let store = legacyStore, let entry = store.activeEntry else { return }
-        let card = CharacterCard(
-            name: candidate.name,
-            aliases: candidate.aliasForms.joined(separator: ", "))
-        store.upsertCharacter(card, in: entry.id)
-        characterCandidates.removeAll { $0.name == candidate.name }
-
-        profileInBackground(card: card, name: candidate.name, entry: entry)
-    }
-
-    /// 별칭으로 등록 (요구사항 §17) — "재형"이 기존 "김재형"의 별칭이라는
-    /// 사용자 판정. 새 카드를 만들지 않고 기존 카드의 별칭 목록에 붙인다.
-    public func approveCandidateAsAlias(
-        _ candidate: CharacterDetector.Candidate, of ownerName: String
-    ) {
-        guard documentProvider == nil, let store = legacyStore, let entry = store.activeEntry,
-            var owner = entry.characters?.first(where: { $0.name == ownerName })
-        else { return }
-        var aliases = owner.aliases.split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-        for form in [candidate.name] + candidate.aliasForms where !aliases.contains(form) {
-            aliases.append(form)
-        }
-        owner.aliases = aliases.joined(separator: ", ")
-        store.upsertCharacter(owner, in: entry.id)
-        characterCandidates.removeAll { $0.name == candidate.name }
-    }
-
-    /// 카드 프로파일링 공용 경로 — 등록(수동·자동·별칭) 직후 소개를 채운다.
-    private func profileInBackground(card: CharacterCard, name: String, entry: JournalEntry) {
-        guard !memoryPressurePaused else { return }
-        let body = entry.body
-        let parameters = settings.parameters
-        let entryID = entry.id
-        let token = UUID(), generation = profileGeneration
-        profileTasks[token] = Task { [engine, weak store = legacyStore, weak self] in
-            defer { self?.profileTasks[token] = nil }
-            guard !Task.isCancelled else { return }
-            let note = await Self.profileCharacter(
-                named: name, in: body,
-                engine: engine, parameters: parameters)
-            guard !Task.isCancelled, let note, let store, let self,
-                !self.memoryPressurePaused, self.profileGeneration == generation,
-                self.documentProvider == nil, self.legacyStore === store
-            else { return }
-            // 그 사이 사용자가 직접 소개를 썼거나 카드를 잠갔다면 그쪽이 이긴다
-            // (CLAUDE.md §1-5 — locked는 자동 추출이 덮지 못한다, PLAN §6.2).
-            guard
-                var current = store.entries.first(where: { $0.id == entryID })?
-                    .characters?.first(where: { $0.id == card.id }),
-                current.note.isEmpty, current.locked != true
-            else { return }
-            current.note = note
-            store.upsertCharacter(current, in: entryID)
-        }
-    }
-
-    /// 후보 무시 — 거부 목록에 저장, 같은 이름은 다시 묻지 않는다 (PLAN §7).
-    public func rejectCandidate(_ candidate: CharacterDetector.Candidate) {
-        guard documentProvider == nil, let store = legacyStore, let id = store.activeEntry?.id else { return }
-        store.rejectCharacterName(candidate.name, in: id)
-        characterCandidates.removeAll { $0.name == candidate.name }
-    }
-
     public func approveCandidate(
         _ candidate: CharacterDetector.Candidate,
         in session: ProjectSession,

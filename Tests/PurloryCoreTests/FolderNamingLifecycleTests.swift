@@ -32,13 +32,15 @@ final class FolderNamingLifecycleTests: XCTestCase {
         XCTAssertTrue(completion.namingFolderIDs.isEmpty)
     }
 
-    func test자동완성이꺼지면요청자체가스피너를켜지않는다() {
-        let settings = CompletionSettings()
+    func test자동완성이꺼지면요청자체가스피너를켜지않는다() async throws {
+        let fixture = try await LegacyBoundaryFixture()
+        defer { fixture.cleanUp() }
+        let settings = CompletionSettings(defaults: fixture.defaults)
         settings.autocompleteEnabled = false
         let completion = CompletionController(settings: settings)
 
-        // store 없이도 조기 반환 경로(스위치 가드)를 검증한다.
-        completion.requestFolderName(for: UUID(), in: EntryStore())
+        // 스위치 가드 조기 반환 경로를 프로젝트 세션에서 검증한다.
+        completion.requestFolderName(for: UUID(), in: fixture.session)
 
         XCTAssertTrue(completion.namingFolderIDs.isEmpty)
     }

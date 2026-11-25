@@ -38,25 +38,29 @@ final class ManualPassPhaseTests: XCTestCase {
     }
 
     func test취소는토큰을정리하고취소상태를남긴다() throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("Purlory-pass-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-
-        let store = EntryStore(directory: root, autosaveDelay: .seconds(3600))
+        let projectID = WritingProjectID()
+        let documentID = WritingDocumentID()
+        let snapshot = ProjectDocumentSnapshot(
+            identity: ProjectRuntimeIdentity(
+                key: ProjectDocumentKey(projectID: projectID, documentID: documentID),
+                generation: 1
+            ),
+            title: "소설",
+            body: "첫 장면. 내용이 충분히 길어야 요약 대상이 된다. 추가 문장도 넣는다.",
+            kind: .manuscript,
+            mode: .fiction
+        )
         let settings = CompletionSettings()
         settings.autocompleteEnabled = false
         let indexer = BackgroundIndexer(engine: CompletionEngine(), settings: settings)
-        indexer.attachLegacy(store: store)
+        indexer.attach(documentProvider: { snapshot })
 
         // 사용자 요청 없이는 취소 대상이 없다.
         indexer.cancelManualPass()
         XCTAssertEqual(indexer.manualPhase, .idle)
 
         // 진행 중인 사용자 패스 시뮬레이션 — 소유권 주입 후 취소.
-        let entryID = store.newEntry(kind: .novel)
-        store.updateActiveBody("첫 장면. 내용이 충분히 길어야 요약 대상이 된다. 추가 문장도 넣는다.")
-        _ = indexer._testBeginPassForOwnership(entryID: entryID, body: "본문")
+        _ = indexer._testBeginPassForOwnership(entryID: documentID.rawValue, body: "본문")
         indexer._testSetManualPhase(.reading(done: 1, total: 3), token: indexer.passGeneration)
 
         indexer.cancelManualPass()

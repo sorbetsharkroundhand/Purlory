@@ -421,20 +421,23 @@ final class ContextAndInferenceReviewRegressionTests: XCTestCase {
 
     @MainActor
     func testF30_manualPassBlockedAtEntryReportsBlockedInsteadOfCompletedNoChange() async throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("Purlory-f30-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-
-        let store = EntryStore(directory: root, autosaveDelay: .seconds(3600))
+        let projectID = WritingProjectID()
+        let documentID = WritingDocumentID()
+        let snapshot = ProjectDocumentSnapshot(
+            identity: ProjectRuntimeIdentity(
+                key: ProjectDocumentKey(projectID: projectID, documentID: documentID),
+                generation: 1
+            ),
+            title: "소설",
+            body: "# 1장\n충분히 긴 소설 본문입니다. 열이나 저전력 상태에서 수동 읽기가 처음부터 차단될 때를 검증합니다.",
+            kind: .manuscript,
+            mode: .fiction
+        )
         let settings = CompletionSettings()
         settings.autocompleteEnabled = false
         let indexer = BackgroundIndexer(engine: CompletionEngine(), settings: settings)
         defer { indexer.prepareForProjectTransition() }
-        indexer.attachLegacy(store: store)
-
-        _ = store.newEntry(kind: .novel)
-        store.updateActiveBody("# 1장\n충분히 긴 소설 본문입니다. 열이나 저전력 상태에서 수동 읽기가 처음부터 차단될 때를 검증합니다.")
+        indexer.attach(documentProvider: { snapshot })
 
         // Inject low-power mode gate block for deep manual pass
         indexer._testGateStateProvider = { (.nominal, true) }

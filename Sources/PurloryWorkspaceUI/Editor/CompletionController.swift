@@ -796,48 +796,6 @@ public final class CompletionController {
     /// 늦게 풀린 옛 태스크가 새 요청의 표시·딕셔너리를 침범하지 않게.
     @ObservationIgnored private var folderNamingTasks: [UUID: Task<Void, Never>] = [:]
 
-    /// 자동 생성 폴더("새 폴더")의 이름을 멤버 문서 내용에서 지어 붙인다.
-    ///
-    /// 엔진을 쓸 수 없으면(자동완성 꺼짐·로드 실패) 조용히 기본 이름을 유지한다 —
-    /// 폴더 명명이 대용량 모델 다운로드를 유발해서는 안 된다. 실패·빈 결과도
-    /// 같은 폴백. 고스트 자동완성의 generation/suggestion에는 손대지 않으므로
-    /// 타이핑 중 제안 흐름과 간섭하지 않는다 (엔진 actor가 순차 처리).
-    public func requestFolderName(for folderID: UUID, in store: EntryStore) {
-        guard !isMemoryPressurePaused, settings.authorization == .enabled, settings.autocompleteEnabled else { return }
-        if case .failed = engineState { return }
-        guard !namingFolderIDs.contains(folderID) else { return }
-        let content = store.folderNamingContext(
-            for: folderID, maxCharacters: settings.contextCharacters)
-        guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else { return }
-
-        namingFolderIDs.insert(folderID)
-        let parameters = settings.parameters
-        // 이름이 도착할 때까지 self를 붙잡는다(수명 유한) — 진행 표시 해제가 목적.
-        let task = Task { [engine, weak store] in
-            let name =
-                (try? await engine.generateFolderName(
-                    content: content, parameters: parameters)) ?? ""
-            // 취소됐다면 정리는 이미 취소 경로가 끝냈고 이름도 적용하지 않는다
-            // (stale 결과 무시, 이슈 #47). 여기서 건드리지 않는 이유 — 이 태스크가
-            // 풀리기 전에 같은 폴더에 새 요청이 들어왔을 수 있다.
-            guard !Task.isCancelled else { return }
-            self.folderNamingTasks[folderID] = nil
-            self.namingFolderIDs.remove(folderID)
-            guard !name.isEmpty, let store else { return }
-            // 사용자가 그 사이 직접 이름을 바꿨다면 스토어 쪽 가드가 조용히 무시한다.
-            // 모션 정책 (#27): Reduce Motion이면 즉시 반영. 저빈도(폴더당 1회)
-            // 이지만 시스템 설정을 존중하는 게 규약이다.
-            let namingAnimation: Animation? =
-                NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-                ? nil : .easeOut(duration: 0.18)
-            withAnimation(namingAnimation) {
-                store.renameFolderIfPlaceholder(folderID, to: name)
-            }
-        }
-        folderNamingTasks[folderID] = task
-    }
-
     /// 프로젝트 탐색기에서 문서를 합쳐 만든 자동 생성 폴더("새 폴더")의 이름을
     /// 로컬 엔진이 준비된 경우에만 조용히 지어 붙인다.
     public func requestFolderName(for folderID: UUID, in session: ProjectSession) {
