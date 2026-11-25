@@ -21,12 +21,15 @@ package struct MarkdownDocumentCodec {
         var changed = Set([index])
         if codeBoundaryChanged, index + 1 < rows.count { changed.insert(index + 1) }
         if self.trailingLineFeed != trailingLineFeed, let last = rows.indices.last { changed.insert(last) }
-        for row in changed.sorted() {
-            // Ranks are checked above and replacements retain the row count.
-            source = try! source.replacingChunk(at: row,
-                with: Self.chunk(at: row, rows: rows, trailingLineFeed: trailingLineFeed))
+        do {
+            for row in changed.sorted() {
+                source = try source.replacingChunk(at: row,
+                    with: Self.chunk(at: row, rows: rows, trailingLineFeed: trailingLineFeed))
+            }
+            self.trailingLineFeed = trailingLineFeed
+        } catch {
+            reset(rows, trailingLineFeed: trailingLineFeed)
         }
-        self.trailingLineFeed = trailingLineFeed
     }
     package mutating func replaceSubrange(_ oldRange: Range<Int>, with newCount: Int, in rows: [Row], trailingLineFeed: Bool) {
         let oldRowCount = source.chunkCount
@@ -42,11 +45,15 @@ package struct MarkdownDocumentCodec {
             if self.trailingLineFeed != trailingLineFeed, let last = rows.indices.last {
                 changed.insert(last)
             }
-            for row in changed.sorted() {
-                source = try! source.replacingChunk(at: row,
-                    with: Self.chunk(at: row, rows: rows, trailingLineFeed: trailingLineFeed))
+            do {
+                for row in changed.sorted() {
+                    source = try source.replacingChunk(at: row,
+                        with: Self.chunk(at: row, rows: rows, trailingLineFeed: trailingLineFeed))
+                }
+                self.trailingLineFeed = trailingLineFeed
+            } catch {
+                reset(rows, trailingLineFeed: trailingLineFeed)
             }
-            self.trailingLineFeed = trailingLineFeed
             return
         }
         let chunkStart = max(0, oldRange.lowerBound - 1)
@@ -55,12 +62,16 @@ package struct MarkdownDocumentCodec {
         let replacementChunks = (chunkStart..<newChunkEnd).map {
             Self.chunk(at: $0, rows: rows, trailingLineFeed: trailingLineFeed)
         }
-        source = try! source.replacingChunks(in: chunkStart..<oldChunkEnd, with: replacementChunks)
-        if self.trailingLineFeed != trailingLineFeed, let last = rows.indices.last, last >= newChunkEnd {
-            source = try! source.replacingChunk(at: last,
-                with: Self.chunk(at: last, rows: rows, trailingLineFeed: trailingLineFeed))
+        do {
+            source = try source.replacingChunks(in: chunkStart..<oldChunkEnd, with: replacementChunks)
+            if self.trailingLineFeed != trailingLineFeed, let last = rows.indices.last, last >= newChunkEnd {
+                source = try source.replacingChunk(at: last,
+                    with: Self.chunk(at: last, rows: rows, trailingLineFeed: trailingLineFeed))
+            }
+            self.trailingLineFeed = trailingLineFeed
+        } catch {
+            reset(rows, trailingLineFeed: trailingLineFeed)
         }
-        self.trailingLineFeed = trailingLineFeed
     }
     private static func chunk(at index: Int, rows: [Row], trailingLineFeed: Bool) -> String {
         let row = rows[index]

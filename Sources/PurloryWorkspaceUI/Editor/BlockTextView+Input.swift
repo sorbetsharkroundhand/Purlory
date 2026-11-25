@@ -27,7 +27,21 @@ extension BlockTextView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if window == nil { workspaceInteraction?.detach(); hideSelectionToolbar() }
+        if window == nil {
+            caretBlinkTimer?.invalidate()
+            caretBlinkTimer = nil
+            visibleRefreshTask?.cancel()
+            visibleRefreshTask = nil
+            mathPreviewTask?.cancel()
+            mathPreviewTask = nil
+            ghostFadeTask?.cancel()
+            ghostFadeTask = nil
+            workspaceInteraction?.detach()
+            hideSelectionToolbar()
+            hideImageToolbar()
+            hideImageAltEditor()
+            hideMathPreview()
+        }
         editorWindowDidChange?(self)
         guard automaticallyFocusOnAttachment, !didInitialFocus, window != nil else { return }
         didInitialFocus = true
@@ -561,12 +575,15 @@ extension BlockTextView {
         else { return false }
         let raw = event.charactersIgnoringModifiers ?? ""
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let upArrow = String(UnicodeScalar(NSEvent.SpecialKey.upArrow.rawValue)!)
+        let downArrow = String(UnicodeScalar(NSEvent.SpecialKey.downArrow.rawValue)!)
+        let deleteForward = String(UnicodeScalar(NSEvent.SpecialKey.deleteForward.rawValue)!)
         switch (raw, flags.contains(.option), flags.contains(.command)) {
-        case ("\u{F700}", true, false):
+        case (upArrow, true, false):
             moveMathParagraph(para, offset: -1)
-        case ("\u{F704}", true, false):
+        case (downArrow, true, false):
             moveMathParagraph(para, offset: 1)
-        case ("\u{F728}", _, true):
+        case (deleteForward, _, true):
             deleteMathParagraph(para)
         default:
             return false
@@ -583,55 +600,68 @@ extension BlockTextView {
             definitions: currentImageDefinitions())?.width ?? 100
     }
 
-    /// 이미지 문단을 이웃 문단과 맞바꿔 위(offset -1)·아래(+1)로 옮긴다 —
-    /// undo 가능 (shouldChangeText). 성공해도 실패해도 원문 손상은 없다.
-    /// internal — 키보드 이동 경로의 회귀 테스트용 (이슈 #16). 선택 UI 갱신은
-    /// 호출부(키 핸들러)가 이어서 한다.
+    /// Moves an image paragraph up (`offset < 0`) or down (`offset > 0`) as an atomic undoable swap.
     func moveImageParagraph(_ para: NSRange, offset: Int) {
-        moveBlockParagraph(para, offset: offset, undoName: "이미지 이동")
+        moveBlockParagraph(para, offset: offset, undoName: "이미지 이동", reselectImage: true)
     }
 
-    /// 수식(단일·그룹) 문단의 키보드 이동 — undo 이름만 다르다 (이슈 #22).
+    /// Moves a math paragraph (or multi-line math group) up or down without corrupting image selection.
     func moveMathParagraph(_ para: NSRange, offset: Int) {
-        moveBlockParagraph(para, offset: offset, undoName: "수식 이동")
+        moveBlockParagraph(para, offset: offset, undoName: "수식 이동", reselectImage: false)
     }
 
-    func moveBlockParagraph(_ para: NSRange, offset: Int, undoName: String) {
+    func moveBlockParagraph(_ para: NSRange, offset: Int, undoName: String, reselectImage: Bool = false) {
         guard let storage = textStorage else { return }
         let ns = string as NSString
+        guard ns.length > 0, para.location <= ns.length else { return }
+        var moving = ns.paragraphRange(for: NSRange(location: min(para.location, ns.length), length: 0))
+        if !reselectImage, blockInfo(in: moving).block == .math, let group = mathGroup(containing: moving.location) {
+            moving = group
+        }
         let neighbor: NSRange
         if offset < 0 {
-            guard para.location > 0 else { return }
-            neighbor = ns.paragraphRange(for: NSRange(location: para.location - 1, length: 0))
+            guard moving.location > 0 else { return }
+            neighbor = ns.paragraphRange(for: NSRange(location: moving.location - 1, length: 0))
         } else {
-            guard para.upperBound < ns.length else { return }
-            neighbor = ns.paragraphRange(for: NSRange(location: para.upperBound, length: 0))
+            guard moving.upperBound < ns.length else { return }
+            neighbor = ns.paragraphRange(for: NSRange(location: moving.upperBound, length: 0))
         }
-        let lower = min(para.location, neighbor.location)
-        let upper = max(para.upperBound, neighbor.upperBound)
-        let span = NSRange(location: lower, length: upper - lower)
-        let imageText = ns.substring(with: para)
-        let otherText = ns.substring(with: neighbor)
-        // 문단은 자기 개행을 데리고 다닌다. 위 이동은 그대로 붙여도 줄 구조가
-        // 유지되지만, 아래 이동에서 이웃이 **마지막 문단**(개행 없음)이면
-        // 개행을 재배치해야 두 줄이 한 줄로 붙지 않는다.
-        let newText: String
-        if offset < 0 {
-            newText = imageText + otherText
-        } else if !otherText.hasSuffix("\n"), imageText.hasSuffix("\n") {
-            newText = otherText + "\n" + String(imageText.dropLast())
-        } else {
-            newText = otherText + imageText
-        }
-        guard shouldChangeText(in: span, replacementString: newText) else { return }
-        nameCurrentUndo(undoName)
-        isTransforming = true
-        storage.replaceCharacters(in: span, with: newText)
-        isTransforming = false
+        guard neighbor != moving else { return }
+        let unitA = offset < 0 ? neighbor : moving
+        let unitB = offset < 0 ? moving : neighbor
+        let combinedRange = NSRange(location: unitA.location, length: unitA.length + unitB.length)
 
-        // 새 자리의 이미지를 다시 객체 선택 — 키보드 이동이 연속되도록.
-        selectedImageLocation = offset < 0 ? lower : lower + otherText.count
-        refreshRenderedBlocks()
+        let attrA = NSMutableAttributedString(attributedString: storage.attributedSubstring(from: unitA))
+        let attrB = NSMutableAttributedString(attributedString: storage.attributedSubstring(from: unitB))
+        if attrA.string.hasSuffix("\n") && !attrB.string.hasSuffix("\n") {
+            let aNLAttrs = attrA.attributes(at: attrA.length - 1, effectiveRange: nil)
+            let bNLAttrs = attrB.length > 0
+                ? attrB.attributes(at: attrB.length - 1, effectiveRange: nil)
+                : aNLAttrs
+            attrA.deleteCharacters(in: NSRange(location: attrA.length - 1, length: 1))
+            attrB.append(NSAttributedString(string: "\n", attributes: bNLAttrs))
+        }
+
+        let swapped = NSMutableAttributedString()
+        swapped.append(attrB)
+        swapped.append(attrA)
+
+        let newParaStart = offset < 0 ? unitA.location : (unitA.location + attrB.length)
+        let currentCaretOffset = max(0, selectedRange().location - moving.location)
+        let movedAttr = offset < 0 ? attrB : attrA
+        let movedContentLen = movedAttr.string.hasSuffix("\n") ? max(0, movedAttr.length - 1) : movedAttr.length
+        let selectionAfter = reselectImage
+            ? NSRange(location: newParaStart, length: 0)
+            : NSRange(location: newParaStart + min(currentCaretOffset, movedContentLen), length: 0)
+
+        breakUndoCoalescing()
+        applyAttributedParagraphSwap(
+            in: combinedRange,
+            with: swapped,
+            selectionAfter: selectionAfter,
+            actionName: undoName,
+            reselectImageLocation: reselectImage ? newParaStart : nil
+        )
     }
 
 
@@ -735,7 +765,9 @@ extension BlockTextView {
                     menu.addItem(withTitle: "PDF로 복사", action: #selector(copyMathPDF(_:)), keyEquivalent: "")
                     menu.addItem(.separator())
                     if let base = super.menu(for: event) {
-                        for item in base.items { menu.addItem(item.copy() as! NSMenuItem) }
+                        for item in base.items {
+                            if let copy = item.copy() as? NSMenuItem { menu.addItem(copy) }
+                        }
                     }
                     return menu
                 }
@@ -1241,14 +1273,17 @@ extension BlockTextView {
         )
     }
 
-    private func applyAttributedParagraphSwap(
+    func applyAttributedParagraphSwap(
         in range: NSRange,
         with replacement: NSAttributedString,
-        selectionAfter: NSRange
+        selectionAfter: NSRange,
+        actionName: String = "문단 이동",
+        reselectImageLocation: Int? = nil
     ) {
         guard let storage = textStorage else { return }
         let previousSnapshot = NSAttributedString(attributedString: storage.attributedSubstring(from: range))
         let previousSelection = selectedRange()
+        let previousImageLocation = selectedImageLocation
         let scrollOrigin = enclosingScrollView?.contentView.bounds.origin
 
         if let undoManager {
@@ -1258,22 +1293,28 @@ extension BlockTextView {
                 target.applyAttributedParagraphSwap(
                     in: NSRange(location: range.location, length: replacement.length),
                     with: previousSnapshot,
-                    selectionAfter: previousSelection
+                    selectionAfter: previousSelection,
+                    actionName: actionName,
+                    reselectImageLocation: previousImageLocation
                 )
             }
-            undoManager.setActionName("문단 이동")
+            undoManager.setActionName(actionName)
             if needsExplicitGroup { undoManager.endUndoGrouping() }
         }
 
         clearImageSelection()
+        let wasTransforming = isTransforming
         isTransforming = true
         storage.replaceCharacters(in: range, with: replacement)
-        isTransforming = false
+        isTransforming = wasTransforming
 
         invalidateMediaIndex()
         invalidateSerialCache()
         let clampedLoc = min(max(0, selectionAfter.location), storage.length)
         setSelectedRange(NSRange(location: clampedLoc, length: 0))
+        if let reselectImageLocation {
+            selectedImageLocation = min(max(0, reselectImageLocation), storage.length)
+        }
         syncTypingAttributes()
         if !isSourceMode {
             refreshRenderedBlocks()

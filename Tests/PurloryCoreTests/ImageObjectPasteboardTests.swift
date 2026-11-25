@@ -155,24 +155,27 @@ final class ImageObjectPasteboardTests: XCTestCase {
 
     @MainActor
     func test정렬_크기_대체텍스트_삭제_이동의이력이름() throws {
-        let line = "![사진](images/a.png)"
+        let line = "![사진](images/a.png)\n다음 문단"
         let editor = makeEditor(text: line)
-        let image = (line as NSString).paragraphRange(for: NSRange(location: 0, length: 0))
+        let firstPara = { (editor.string as NSString).paragraphRange(for: NSRange(location: 0, length: 0)) }
 
-        grouped(editor) { editor.rewriteImage(image, setAlign: "left") }
+        grouped(editor) { editor.rewriteImage(firstPara(), setAlign: "left") }
         XCTAssertEqual(editor.undoManager?.undoActionName, "이미지 정렬")
 
-        grouped(editor) { editor.rewriteImage(image, setWidth: 50) }
+        grouped(editor) { editor.rewriteImage(firstPara(), setWidth: 50) }
         XCTAssertEqual(editor.undoManager?.undoActionName, "이미지 크기 조절")
 
-        grouped(editor) { editor.rewriteImage(image, setAlt: "새 alt") }
+        grouped(editor) { editor.rewriteImage(firstPara(), setAlt: "새 alt") }
         XCTAssertEqual(editor.undoManager?.undoActionName, "대체 텍스트 편집")
 
-        editor.selectedImageLocation = image.location
-        grouped(editor) { editor.moveImageParagraph(image, offset: 1) }
+        let currentImage = firstPara()
+        editor.selectedImageLocation = currentImage.location
+        grouped(editor) { editor.moveImageParagraph(currentImage, offset: 1) }
         XCTAssertEqual(editor.undoManager?.undoActionName, "이미지 이동")
 
-        grouped(editor) { editor.deleteImageParagraph(image) }
+        let movedLoc = try XCTUnwrap(editor.selectedImageLocation)
+        let movedImage = (editor.string as NSString).paragraphRange(for: NSRange(location: movedLoc, length: 0))
+        grouped(editor) { editor.deleteImageParagraph(movedImage) }
         XCTAssertEqual(editor.undoManager?.undoActionName, "이미지 삭제")
     }
 

@@ -184,7 +184,10 @@ final class ImageAtomTests: XCTestCase {
 
     @MainActor
     func test객체모드키매핑() {
-        let left = "\u{F702}", right = "\u{F703}", up = "\u{F700}", down = "\u{F704}"
+        let left = String(UnicodeScalar(NSEvent.SpecialKey.leftArrow.rawValue)!)
+        let right = String(UnicodeScalar(NSEvent.SpecialKey.rightArrow.rawValue)!)
+        let up = String(UnicodeScalar(NSEvent.SpecialKey.upArrow.rawValue)!)
+        let down = String(UnicodeScalar(NSEvent.SpecialKey.downArrow.rawValue)!)
         XCTAssertEqual(BlockTextView.objectKeyAction(left, command: false, option: false), .exitBefore)
         XCTAssertEqual(BlockTextView.objectKeyAction(right, command: false, option: false), .exitAfter)
         XCTAssertEqual(BlockTextView.objectKeyAction(left, command: true, option: false), .align("left"))
