@@ -65,16 +65,18 @@ public final class CompletionController {
     public func prepareForProjectTransition() {
         runtimeIdentity = nil
         lastContextReport = nil
-        dismissConversationSuggestion(remember: false)
-        dismissedConversationHashes.removeAll()
+        conversationCoordinator.resetForDocumentSwitch { [weak self] in
+            self?.clearPublishedConversationSuggestion()
+        }
         invalidate()
     }
 
     public func noteDocumentSwitch(to identity: ProjectRuntimeIdentity) {
         guard runtimeIdentity != identity else { return }
         if runtimeIdentity?.key != identity.key {
-            dismissConversationSuggestion(remember: false)
-            dismissedConversationHashes.removeAll()
+            conversationCoordinator.resetForDocumentSwitch { [weak self] in
+                self?.clearPublishedConversationSuggestion()
+            }
         }
         runtimeIdentity = identity
         if lastContextReport != nil { lastContextReport = nil }
@@ -140,86 +142,67 @@ public final class CompletionController {
     @ObservationIgnored public var onRecordConversation: ((RecordedConversation) -> Void)? {
         didSet {
             guard onRecordConversation == nil else { return }
-            conversationTask?.cancel()
-            conversationTask = nil
-            clearConversationSuggestion()
+            conversationCoordinator.dismiss(remember: false) { [weak self] in
+                self?.clearPublishedConversationSuggestion()
+            }
         }
     }
     /// 이미 기록된 블록 해시 제공자 — 같은 대화를 다시 제안하지 않는다.
     @ObservationIgnored public var recordedConversationHashesProvider: (() -> Set<String>)?
 
-    /// 감지 유휴 대기 — 고스트 디바운스보다 길다: 제안은 "대화를 다 쓰고 잠시
-    /// 멈췄을 때"만 떠야 한다 (요구사항 §18·§20, 조용한 UI).
     nonisolated static let conversationIdle: Duration = EditorTiming.conversationIdleDelay
+    @ObservationIgnored private let conversationCoordinator = ConversationSuggestionCoordinator()
 
-    @ObservationIgnored private var conversationTask: Task<Void, Never>?
-    @ObservationIgnored private var conversationSuggestionIdentity: ProjectRuntimeIdentity?
-    /// 닫힌(Esc·계속 입력) 블록 해시 — 같은 내용을 다시 묻지 않는다. 대화가
-    /// 이어져 내용이 바뀌면 해시가 바뀌어 다시 제안된다.
-    @ObservationIgnored private var dismissedConversationHashes: Set<String> = []
-
-    /// 편집 후 유휴에 대화 블록을 감지한다 — 소설에서만, 결정적·LLM 없음
-    /// (요구사항 §19 실시간 경로). 감지 자체도 유휴 태스크 안에서 돌므로
-    /// 키 입력 경로 비용은 태스크 예약뿐이다 (요구사항 §34).
     private func scheduleConversationDetection(prefix: String, caretLocation: Int) {
-        conversationTask?.cancel()
-        conversationTask = nil
+        conversationCoordinator.cancelTask()
         guard onRecordConversation != nil,
-            currentDocumentContext()?.kind == .novel
+              currentDocumentContext()?.kind == .novel
         else { return }
         let capturedIdentity = projectDocumentProvider?()?.identity
-        conversationTask = Task { [weak self] in
-            try? await Task.sleep(for: Self.conversationIdle)
-            guard !Task.isCancelled, let self, self.onRecordConversation != nil,
-                capturedIdentity == self.projectDocumentProvider?()?.identity else { return }
-            let text = prefix as NSString
-            guard var block = ConversationDetector.blockEnding(at: text.length, in: text)
-            else { return }
-            // 프리픽스 좌표 → 스토리지 절대 좌표.
-            let prefixStart = caretLocation - text.length
-            block.utf16Range =
-                (block.utf16Range.lowerBound + prefixStart)..<(block.utf16Range.upperBound + prefixStart)
-            guard !self.dismissedConversationHashes.contains(block.contentHash),
-                self.recordedConversationHashesProvider?().contains(block.contentHash) != true
-            else { return }
-            self.conversationSuggestionIdentity = capturedIdentity
-            self.conversationSuggestion = block
-            self.conversationSuggestionDidChange?(block)
-        }
+        conversationCoordinator.schedule(
+            prefix: prefix,
+            caretLocation: caretLocation,
+            idleDelay: Self.conversationIdle,
+            capturedIdentity: capturedIdentity,
+            isStillValid: { [weak self] in
+                guard let self else { return false }
+                return self.onRecordConversation != nil
+                    && capturedIdentity == self.projectDocumentProvider?()?.identity
+            },
+            recordedHashes: { [weak self] in
+                self?.recordedConversationHashesProvider?() ?? []
+            },
+            onPublish: { [weak self] block in
+                guard let self else { return }
+                self.conversationSuggestion = block
+                self.conversationSuggestionDidChange?(block)
+            }
+        )
     }
 
     /// Enter 승인 (요구사항 §20) — 기록을 실행하고 true. 호출부(에디터)는
     /// false를 리턴해 **개행도 정상 진행**시킨다 — 글쓰기 흐름이 끊기지 않는다.
     @discardableResult
     public func acceptConversationSuggestion() -> Bool {
-        guard let block = conversationSuggestion,
-            let onRecordConversation
-        else { return false }
-        if let provider = projectDocumentProvider,
-            provider()?.identity == nil || provider()?.identity != conversationSuggestionIdentity {
-            clearConversationSuggestion()
-            return false
-        }
-        clearConversationSuggestion()
-        // 기록 승인 = 사용자 결정 — 참여자 귀속·주제는 백그라운드가 보완한다.
-        onRecordConversation(ConversationDetector.record(from: block, utterances: []))
-        return true
+        guard let onRecordConversation else { return false }
+        return conversationCoordinator.accept(
+            currentIdentity: projectDocumentProvider?()?.identity,
+            requiresIdentityMatch: projectDocumentProvider != nil,
+            onClear: { [weak self] in self?.clearPublishedConversationSuggestion() },
+            onRecord: onRecordConversation
+        )
     }
 
     /// 제안 닫기 — remember면 같은 내용을 다시 묻지 않는다 (Esc·계속 입력).
     public func dismissConversationSuggestion(remember: Bool) {
-        if remember, let block = conversationSuggestion {
-            dismissedConversationHashes.insert(block.contentHash)
+        conversationCoordinator.dismiss(remember: remember) { [weak self] in
+            self?.clearPublishedConversationSuggestion()
         }
-        conversationTask?.cancel()
-        conversationTask = nil
-        clearConversationSuggestion()
     }
 
     public var hasConversationSuggestion: Bool { conversationSuggestion != nil }
 
-    private func clearConversationSuggestion() {
-        conversationSuggestionIdentity = nil
+    private func clearPublishedConversationSuggestion() {
         guard conversationSuggestion != nil else { return }
         conversationSuggestion = nil
         conversationSuggestionDidChange?(nil)
@@ -378,33 +361,16 @@ public final class CompletionController {
     }
 
     public private(set) var keystrokeStats = KeystrokeStats()
-    @ObservationIgnored private var handlerSamples: [Double] = []
-    @ObservationIgnored private var totalSamples: [Double] = []
-    @ObservationIgnored private var samplesSinceKeystrokePublication = 0
+    @ObservationIgnored private var keystrokeMetrics = KeystrokeMetricsTracker()
 
     /// Called for each keystroke processed by the editor (BlockTextView Coordinator).
     /// Statistics are published every 20 samples to limit observation overhead.
     /// `totalMs` measures from coordinator handler entry through the later
     /// main-queue callback.
     public func noteKeystroke(handlerMs: Double, totalMs: Double) {
-        handlerSamples.append(handlerMs)
-        totalSamples.append(totalMs)
-        if handlerSamples.count > 120 {
-            handlerSamples.removeFirst(handlerSamples.count - 120)
-            totalSamples.removeFirst(totalSamples.count - 120)
+        if let updated = keystrokeMetrics.record(handlerMs: handlerMs, totalMs: totalMs) {
+            keystrokeStats = updated
         }
-        samplesSinceKeystrokePublication += 1
-        guard samplesSinceKeystrokePublication == 20 else { return }
-        samplesSinceKeystrokePublication = 0
-        func p95(_ values: [Double]) -> Double {
-            let sorted = values.sorted()
-            return sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.95))]
-        }
-        keystrokeStats = KeystrokeStats(
-            handlerP95: p95(handlerSamples),
-            totalP95: p95(totalSamples),
-            totalMax: totalSamples.max() ?? 0,
-            samples: totalSamples.count)
     }
 
     public init(
@@ -437,7 +403,7 @@ public final class CompletionController {
             preloadToken = nil
             preloadTask?.cancel(); preloadTask = nil
             shutdown()
-            conversationTask?.cancel(); conversationTask = nil
+            conversationCoordinator.cancelTask()
             lastContextReport = nil
             cachedCounter = nil; cachedCounterModelID = nil
             engineState = .failed(Self.memoryPressureMessage)
@@ -790,81 +756,42 @@ public final class CompletionController {
     /// 보관하지 않으면 수 GB 네트워크 전송이 끝까지 혼자 돈다 (이슈 #46).
     @ObservationIgnored private var preloadTask: Task<Void, Never>?
 
-    /// 폴더별 이름 생성 태스크 (이슈 #47). 미추적이면 콜드 모델 로드 수 분 동안
-    /// 스피너가 도는 걸 끊을 방법이 없었다. 취소는 소유자(아래 cancel 계열)만
-    /// 딕셔너리를 정리하고, 태스크는 깨어나 `Task.isCancelled`로 스스로 물러난다 —
-    /// 늦게 풀린 옛 태스크가 새 요청의 표시·딕셔너리를 침범하지 않게.
-    @ObservationIgnored private var folderNamingTasks: [UUID: Task<Void, Never>] = [:]
+    @ObservationIgnored private let folderNaming = FolderNamingCoordinator()
 
-    /// 프로젝트 탐색기에서 문서를 합쳐 만든 자동 생성 폴더("새 폴더")의 이름을
-    /// 로컬 엔진이 준비된 경우에만 조용히 지어 붙인다.
     public func requestFolderName(for folderID: UUID, in session: ProjectSession) {
         guard !isMemoryPressurePaused, settings.authorization == .enabled, settings.autocompleteEnabled,
               engineState == .ready, !isManagingModel, !foregroundIsBusy,
-              let project = session.activeProject,
-              let navigation = try? ProjectNavigation.read(project) else { return }
-        guard !namingFolderIDs.contains(folderID) else { return }
-        let members = project.documents.filter {
-            !project.trashedDocumentIDs.contains($0.id) && navigation.documentFolders[$0.id] == folderID
-        }
-        guard !members.isEmpty else { return }
-        let content = String(members.enumerated().map { index, doc in
-            "[문서 \(index + 1)] 제목: \(doc.title)\n\(doc.body.prefix(300))"
-        }.joined(separator: "\n\n").prefix(settings.contextCharacters))
-        guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-
-        let projectID = project.id
-        let epoch = session.activationEpoch
-        namingFolderIDs.insert(folderID)
-        let parameters = settings.parameters
-        let task = Task { [engine, weak session] in
-            let name = (try? await engine.generateFolderName(content: content, parameters: parameters)) ?? ""
-            guard !Task.isCancelled else { return }
-            self.folderNamingTasks[folderID] = nil
-            self.namingFolderIDs.remove(folderID)
-            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty, let session,
-                  session.activeProject?.id == projectID,
-                  session.activationEpoch == epoch,
-                  let currentProject = session.activeProject,
-                  let currentNav = try? ProjectNavigation.read(currentProject),
-                  let folder = currentNav.folders.first(where: { $0.id == folderID }),
-                  folder.name == "새 폴더" else { return }
-            let namingAnimation: Animation? =
-                NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-                ? nil : .easeOut(duration: 0.18)
-            withAnimation(namingAnimation) {
-                try? session.applyNavigation(.renameFolder(folderID, trimmed), projectID: projectID, epoch: epoch)
-            }
-        }
-        folderNamingTasks[folderID] = task
+              !namingFolderIDs.contains(folderID)
+        else { return }
+        folderNaming.requestFolderName(
+            for: folderID,
+            in: session,
+            engine: engine,
+            parameters: settings.parameters,
+            maxContextCharacters: settings.contextCharacters,
+            onInsertID: { [weak self] id in self?.namingFolderIDs.insert(id) },
+            onRemoveID: { [weak self] id in self?.namingFolderIDs.remove(id) }
+        )
     }
 
-    /// 테스트 전용 — 실제 엔진 호출 없이 진행 상태와 장수 태스크를 심어
-    /// 취소 경로(스피너 즉시 해제)를 검증한다 (이슈 #47).
     @discardableResult
     func _testInjectNamingTask(folderID: UUID) -> Task<Void, Never> {
-        namingFolderIDs.insert(folderID)
-        let task = Task<Void, Never> { try? await Task.sleep(for: .seconds(60)) }
-        folderNamingTasks[folderID] = task
-        return task
+        folderNaming.injectTestTask(folderID: folderID) { id in
+            namingFolderIDs.insert(id)
+        }
     }
 
-    /// 사이드바 행이 사라졌다(삭제·접힘·필터) — 그 폴더의 이름 생성을 접는다.
-    /// 보이지 않는 스피너를 위해 수 분 생성을 돌려두는 일이 없게 (이슈 #47).
     public func cancelFolderName(for folderID: UUID) {
-        folderNamingTasks.removeValue(forKey: folderID)?.cancel()
-        namingFolderIDs.remove(folderID)
+        folderNaming.cancel(folderID: folderID) { id in
+            namingFolderIDs.remove(id)
+        }
     }
 
-    /// 이름 생성 전부 중단 — 자동완성 종료·모델 로드 실패처럼 이 이름이 더는
-    /// 도착할 수 없는 터미널 상태에서 부른다. 고스트 invalidate()와는 달리
-    /// 편집마다 부르지 않는다 — 명명은 타이핑과 간섭 없이 완료되기로 되어 있다.
     private func cancelAllFolderNaming() {
-        for (_, task) in folderNamingTasks { task.cancel() }
-        folderNamingTasks.removeAll()
-        guard !namingFolderIDs.isEmpty else { return }
-        namingFolderIDs.removeAll()
+        folderNaming.cancelAll {
+            guard !namingFolderIDs.isEmpty else { return }
+            namingFolderIDs.removeAll()
+        }
     }
 
     // MARK: - 내부
