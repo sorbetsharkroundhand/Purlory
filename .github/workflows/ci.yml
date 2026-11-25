@@ -22,7 +22,8 @@ jobs:
   purlory:
     name: Purlory / Debug Build & Test
     runs-on: macos-26
-    timeout-minutes: 30
+    # A cold build can take 27 minutes before the full test suite begins.
+    timeout-minutes: 50
 
     steps:
       - name: Checkout

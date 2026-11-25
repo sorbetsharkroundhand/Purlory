@@ -524,6 +524,9 @@ extension BlockTextView {
 
     /// 이미지가 객체로 선택된 동안엔 텍스트 입력을 막는다 — 내부는 편집 불가 (요구 1).
     override func insertText(_ insertString: Any, replacementRange: NSRange) {
+        let recorder = inputTraceRecorder
+        let traceToken = recorder?.beginOperation(kind: .insertText, composing: hasMarkedText())
+        defer { if let traceToken { recorder?.endOperation(traceToken) } }
         guard selectedImageLocation == nil else { return }
         // 텍스트가 드래그 선택된 상태에서 괄호·따옴표·서식 마커를 입력하면 선택 영역을 감싼다.
         let effectiveRange = replacementRange.location != NSNotFound ? replacementRange : selectedRange()
@@ -534,7 +537,12 @@ extension BlockTextView {
         }
         nativeTextUpdateDepth += 1
         defer { finishNativeTextUpdate() }
+        let wasComposing = hasMarkedText()
+        if wasComposing { writingProjectionCapture.beginComposition() }
         super.insertText(insertString, replacementRange: replacementRange)
+        if wasComposing {
+            writingProjectionCapture.endComposition(hasMarkedText() ? markedRange() : nil)
+        }
         let committed = (insertString as? String) ?? (insertString as? NSAttributedString)?.string
         // Keep each word and its trailing whitespace together. Only committed text
         // ends a typing unit, so Hangul marked-text updates remain AppKit-owned.
@@ -1600,6 +1608,9 @@ extension BlockTextView {
     func refreshRenderedBlocks(
         forceRender: Bool = false, limitToVisible: Bool = false
     ) {
+        let recorder = inputTraceRecorder
+        let traceToken = recorder?.beginPhase(.renderRefresh)
+        defer { if let traceToken { recorder?.endPhase(traceToken) } }
         guard let layoutManager, let storage = textStorage else { return }
         lastMediaRenderParagraphCount = 0
         let fullRefresh = forceRender || mediaParagraphIndex?.utf16Length != storage.length
@@ -2084,6 +2095,9 @@ extension BlockTextView {
             storage.attribute(.paragraphStyle, at: paragraph.location, effectiveRange: nil)
             as? NSParagraphStyle
         guard current?.minimumLineHeight != ps.minimumLineHeight else { return }
+        let wasRestyling = isRestylingPresentation
+        isRestylingPresentation = true
+        defer { isRestylingPresentation = wasRestyling }
         storage.addAttribute(.paragraphStyle, value: ps, range: paragraph)
     }
 
@@ -2110,6 +2124,9 @@ extension BlockTextView {
             storage.attribute(.paragraphStyle, at: paragraph.location, effectiveRange: nil)
             as? NSParagraphStyle
         guard current?.isEqual(ps) != true else { return }
+        let wasRestyling = isRestylingPresentation
+        isRestylingPresentation = true
+        defer { isRestylingPresentation = wasRestyling }
         storage.addAttribute(.paragraphStyle, value: ps, range: paragraph)
     }
 

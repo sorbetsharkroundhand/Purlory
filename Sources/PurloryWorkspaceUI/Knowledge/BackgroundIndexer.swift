@@ -232,11 +232,11 @@ public final class BackgroundIndexer {
     /// 패스 소유권 토큰 — 선점(새 noteChange·requestPass·전체 다시 읽기)마다
     /// 올라간다. 늦게 끝난 이전 작업은 자기 토큰이 현재와 같을 때만 상태를
     /// 건드린다 (이슈 #82).
-    public private(set) var passGeneration = 0
+    @ObservationIgnored public private(set) var passGeneration = 0
     /// 현재 패스가 읽고 있는 문서·본문 지문 — 발행 가드의 entryID/hash 절반.
-    public private(set) var passEntryID: UUID?
-    public private(set) var passBodyHash: String?
-    public private(set) var passScope: StoryMemoryScope?
+    @ObservationIgnored public private(set) var passEntryID: UUID?
+    @ObservationIgnored public private(set) var passBodyHash: String?
+    @ObservationIgnored public private(set) var passScope: StoryMemoryScope?
 
     struct PassIdentity: Equatable, Sendable {
         let scope: StoryMemoryScope
@@ -518,7 +518,7 @@ public final class BackgroundIndexer {
 
     @ObservationIgnored private var hydrateTask: Task<Void, Never>?
     /// hydrate 소유권 토큰 — 새 요청마다 올라가 늦은 발행을 무효화 (#82).
-    public private(set) var hydrateGeneration = 0
+    @ObservationIgnored public private(set) var hydrateGeneration = 0
 
     /// 활성 문서의 스냅샷이 없으면 사이드카에서 만든다 — 결정적·읽기 전용이라
     /// 게이트(열·저전력·자동완성) 대상이 아니다. 사이드카가 비어 있어도
@@ -587,7 +587,7 @@ public final class BackgroundIndexer {
                 guard self.hydrateGeneration == token else { return }
                 guard let current = self.currentDocument(), current.id == entryID,
                     current.scope == scope, current.runtimeIdentity == runtimeIdentity,
-                    current.body == body
+                    current.source.isSameVersion(as: source) || current.body == body
                 else { return }
                 // 그 사이 진짜 패스가 이 문서 걸 발행했다면 그쪽이 더 최신이다.
                 guard force || self.snapshot?.storyMemory?.scope != scope

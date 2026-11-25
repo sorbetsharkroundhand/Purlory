@@ -350,7 +350,7 @@ public final class CompletionController {
     /// 마지막으로 본 커서 위치 (UTF-16) — 인덱서의 **커서 거리순 순회**용
     /// (docs/m6-scene-split.md §5: 씬이 수십 개면 쓰고 있는 장부터 이해해야
     /// 한다). Int 하나 저장 — 키 입력 경로 비용 없음.
-    public private(set) var lastCaretLocation: Int?
+    @ObservationIgnored public private(set) var lastCaretLocation: Int?
     /// 현재 고스트가 만들어진 모드 (fast/smart/story[-dialogue]) — 수락률
     /// 로그의 축 (M7, PLAN §13). 제안과 함께 세팅·소멸한다.
     @ObservationIgnored private var currentSuggestionMode: String?
@@ -363,12 +363,14 @@ public final class CompletionController {
     // MARK: - 입력 지연 계측 (로컬 전용 진단 — PLAN §13 온라인 지표)
 
     /// 최근 키 입력 처리 시간 통계 — 상태 바가 표시한다. **원격 전송 절대 금지.**
-    /// 랙 보고를 "느려요"가 아니라 숫자로 만들기 위한 장비: 핸들러(우리 코드)와
-    /// 총 시간(렌더 포함)을 나눠 재므로, 랙의 소재가 어느 쪽인지 갈린다.
+    /// Local diagnostics for lag reports: handler time and the interval from
+    /// coordinator handler entry to the later main-queue callback. This interval
+    /// does not establish when rendering or display has completed.
     public struct KeystrokeStats: Equatable, Sendable {
         /// 에디터 핸들러(직렬화·저장 전달)만의 p95 (ms).
         public var handlerP95: Double = 0
-        /// 키 입력 → 메인 스레드가 한가해질 때까지 (SwiftUI 갱신·레이아웃 포함) p95.
+        /// p95 from coordinator handler entry through the later main-queue callback.
+        /// This does not isolate queue delay or indicate when content is displayed.
         public var totalP95: Double = 0
         /// 최근 표본 중 최대 총 시간 (ms) — 간헐 스파이크 포착용.
         public var totalMax: Double = 0
@@ -378,9 +380,12 @@ public final class CompletionController {
     public private(set) var keystrokeStats = KeystrokeStats()
     @ObservationIgnored private var handlerSamples: [Double] = []
     @ObservationIgnored private var totalSamples: [Double] = []
+    @ObservationIgnored private var samplesSinceKeystrokePublication = 0
 
-    /// 에디터가 키 입력 하나를 처리할 때마다 호출 (BlockTextView Coordinator).
-    /// 발행은 20표본마다 — 계측이 제 관찰 비용을 만들지 않게 한다.
+    /// Called for each keystroke processed by the editor (BlockTextView Coordinator).
+    /// Statistics are published every 20 samples to limit observation overhead.
+    /// `totalMs` measures from coordinator handler entry through the later
+    /// main-queue callback.
     public func noteKeystroke(handlerMs: Double, totalMs: Double) {
         handlerSamples.append(handlerMs)
         totalSamples.append(totalMs)
@@ -388,7 +393,9 @@ public final class CompletionController {
             handlerSamples.removeFirst(handlerSamples.count - 120)
             totalSamples.removeFirst(totalSamples.count - 120)
         }
-        guard totalSamples.count % 20 == 0 else { return }
+        samplesSinceKeystrokePublication += 1
+        guard samplesSinceKeystrokePublication == 20 else { return }
+        samplesSinceKeystrokePublication = 0
         func p95(_ values: [Double]) -> Double {
             let sorted = values.sorted()
             return sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.95))]

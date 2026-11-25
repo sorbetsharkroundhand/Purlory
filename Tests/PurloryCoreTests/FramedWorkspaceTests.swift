@@ -67,6 +67,8 @@ final class FramedWorkspaceTests: XCTestCase {
         XCTAssertEqual(trigger.accessibilityLabel(), "주머니 열기")
         XCTAssertNotNil(trigger.target); XCTAssertNotNil(trigger.action)
         trigger.performClick(nil); await h.layout()
+        try XCTUnwrap(h.element("purlory.workspace.pouch.index.environment") as? NSButton).performClick(nil)
+        await h.layout()
         XCTAssertNotNil(h.element("purlory.workspace.pouch.more"))
         let menu = try XCTUnwrap(h.requests.pouch).moreMenu()
         for identifier in ["purlory.workspace.navigator-toggle", "purlory.source-search.show", "purlory.workspace.settings"] {
@@ -407,8 +409,9 @@ final class FramedWorkspaceHarness {
          reduceTransparency: Bool = false, projectTitle: String = "Project",
          writingDiagnostics: WritingDiagnosticsRuntime? = nil,
          livingMargin: LivingMarginModel? = nil, mode: WritingMode = .general,
-         completionEngine: CompletionEngine = CompletionEngine()) async throws {
-        fixture = try await LegacyBoundaryFixture(projectTitle: projectTitle, mode: mode)
+         completionEngine: CompletionEngine = CompletionEngine(),
+         autosaveDelay: Duration = .seconds(3600)) async throws {
+        fixture = try await LegacyBoundaryFixture(projectTitle: projectTitle, mode: mode, autosaveDelay: autosaveDelay)
         initialProject = fixture.session.activeProject
         initialDocumentID = fixture.session.selectedDocumentID
         for (key, value) in presentationDefaults { fixture.defaults.set(value, forKey: key) }
@@ -470,6 +473,7 @@ final class FramedWorkspaceHarness {
         }
         var result = walk(root ?? host)
         if root == nil, let pouch = requests.pouch?.panel?.contentView { result += walk(pouch) }
+        if root == nil, let index = requests.pouch?.index?.view { result += walk(index) }
         return result
     }
 

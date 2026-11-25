@@ -155,6 +155,92 @@ public struct DocumentSource: Sendable, Equatable {
         return DocumentSource(root: root, random: random, visits: visits)
     }
 
+    /// Returns the cumulative UTF-16 offset before the chunk at `rank` in `O(log C)` time.
+    package func chunkOffset(at rank: Int) -> Int {
+        guard rank > 0 else { return 0 }
+        var current = storage.root, remaining = min(rank, chunkCount), offset = 0
+        while let node = current, remaining > 0 {
+            let leftCount = node.left?.count ?? 0
+            let leftLength = node.left?.length ?? 0
+            if remaining < leftCount {
+                current = node.left
+            } else if remaining == leftCount {
+                offset += leftLength
+                break
+            } else {
+                offset += leftLength + node.textLength
+                remaining -= leftCount + 1
+                current = node.right
+            }
+        }
+        return offset
+    }
+
+    /// Compares UTF-8 bytes against `other` by streaming rope chunks without joining or caching the full string.
+    package func utf8Equals(_ other: String) -> Bool {
+        guard (other as NSString).length == utf16Length else { return false }
+        var otherUTF8 = other.utf8
+        var otherIndex = otherUTF8.startIndex
+        var stack: [Node] = [], next = storage.root
+        while next != nil || !stack.isEmpty {
+            while let node = next { stack.append(node); next = node.left }
+            let node = stack.removeLast()
+            for byte in node.text.utf8 {
+                guard otherIndex != otherUTF8.endIndex, otherUTF8[otherIndex] == byte else { return false }
+                otherUTF8.formIndex(after: &otherIndex)
+            }
+            next = node.right
+        }
+        return otherIndex == otherUTF8.endIndex
+    }
+
+    /// Scans rope chunks line-by-line to extract `[Tag]`-prefixed note lines without materializing `string`.
+    package func extractTaggedNoteLines(tagPrefix: String) -> [String] {
+        guard !isEmpty, !tagPrefix.isEmpty else { return [] }
+        var results: [String] = []
+        var carry = ""
+        func processLine(_ rawLine: Substring) {
+            var line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            if line.hasPrefix("- ") || line.hasPrefix("* ") {
+                line = String(line.dropFirst(2)).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            if line.hasPrefix(tagPrefix) {
+                let content = String(line.dropFirst(tagPrefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !content.isEmpty {
+                    results.append(content)
+                }
+            }
+        }
+        var stack: [Node] = [], next = storage.root
+        while next != nil || !stack.isEmpty {
+            while let node = next { stack.append(node); next = node.left }
+            let node = stack.removeLast()
+            let chunk = node.text
+            if let firstNewline = chunk.firstIndex(where: { $0.isNewline }) {
+                carry += chunk[..<firstNewline]
+                processLine(carry[...])
+                carry.removeAll(keepingCapacity: true)
+                var lineStart = chunk.index(after: firstNewline)
+                while lineStart < chunk.endIndex {
+                    if let nextNewline = chunk[lineStart...].firstIndex(where: { $0.isNewline }) {
+                        processLine(chunk[lineStart..<nextNewline])
+                        lineStart = chunk.index(after: nextNewline)
+                    } else {
+                        carry = String(chunk[lineStart...])
+                        break
+                    }
+                }
+            } else {
+                carry += chunk
+            }
+            next = node.right
+        }
+        if !carry.isEmpty {
+            processLine(carry[...])
+        }
+        return results
+    }
+
     /// Codec rows retain stable ranks even when a row contributes no source characters.
     package func replacingChunk(at rank: Int, with text: String) throws -> DocumentSource {
         guard rank >= 0, rank < chunkCount else { throw EditError.outOfBounds }

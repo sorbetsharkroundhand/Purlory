@@ -106,14 +106,19 @@ extension BlockTextView {
     override func shouldChangeText(in affectedCharRange: NSRange, replacementString: String?)
         -> Bool
     {
-        let ns = string as NSString
-        if affectedCharRange.length > 0, affectedCharRange.upperBound <= ns.length {
-            let old = ns.substring(with: affectedCharRange)
-            serialPendingRemovedNewlines = old.reduce(0) { $1 == "\n" ? $0 + 1 : $0 }
+        if replacementString != nil {
+            let ns = string as NSString
+            if affectedCharRange.length > 0, affectedCharRange.upperBound <= ns.length {
+                let old = ns.substring(with: affectedCharRange)
+                serialPendingRemovedNewlines = old.reduce(0) { $1 == "\n" ? $0 + 1 : $0 }
+            } else {
+                serialPendingRemovedNewlines = 0
+            }
+            serialPendingTracked = true
         } else {
             serialPendingRemovedNewlines = 0
+            serialPendingTracked = false
         }
-        serialPendingTracked = true
         return super.shouldChangeText(in: affectedCharRange, replacementString: replacementString)
     }
 
@@ -132,6 +137,9 @@ extension BlockTextView {
     }
 
     override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        let recorder = inputTraceRecorder
+        let traceToken = recorder?.beginOperation(kind: .setMarkedText, composing: hasMarkedText())
+        defer { if let traceToken { recorder?.endOperation(traceToken) } }
         nativeTextUpdateDepth += 1
         defer { finishNativeTextUpdate() }
         writingProjectionCapture.beginComposition()
@@ -140,6 +148,9 @@ extension BlockTextView {
     }
 
     override func unmarkText() {
+        let recorder = inputTraceRecorder
+        let traceToken = recorder?.beginOperation(kind: .unmarkText, composing: hasMarkedText())
+        defer { if let traceToken { recorder?.endOperation(traceToken) } }
         nativeTextUpdateDepth += 1
         defer { finishNativeTextUpdate() }
         writingProjectionCapture.beginComposition()
@@ -456,7 +467,9 @@ extension BlockTextView {
         case .code:
             applyBlock(.code, codeLang: info.codeLang, to: caretPara)
         case .p:
-            applyBlock(.p, to: caretPara)
+            if blockInfo(in: caretPara).block != .p {
+                applyBlock(.p, to: caretPara)
+            }
         }
     }
 
@@ -493,6 +506,9 @@ extension BlockTextView {
     }
 
     override func keyDown(with event: NSEvent) {
+        let recorder = inputTraceRecorder
+        let traceToken = recorder?.beginOperation(kind: .keyDown, eventTimestamp: event.timestamp, composing: hasMarkedText())
+        defer { if let traceToken { recorder?.endOperation(traceToken) } }
         workspaceInteraction?.keyDown(event)
         if selectedImageLocation != nil, handleObjectKey(event) { return }
         if handleMathEditingKey(event) { return }
@@ -509,6 +525,16 @@ extension BlockTextView {
         defer { isHandlingSoftReturn = previousSoftReturn }
         // Let the input method handle/commit marked text before remapping the
         // resulting newline command. A raw key interception skips Hangul IME.
+        // Hold a composition scope across the key event when marked text is already
+        // active so a Hangul syllable transition (commit old syllable -> mark new
+        // jamo within one keyDown) does not fire a false intermediate IME commit.
+        let wasComposing = hasMarkedText()
+        if wasComposing { writingProjectionCapture.beginComposition() }
+        defer {
+            if wasComposing {
+                writingProjectionCapture.endComposition(hasMarkedText() ? markedRange() : nil)
+            }
+        }
         super.keyDown(with: event)
     }
 
@@ -721,14 +747,23 @@ extension BlockTextView {
     /// 폭이 바뀌면 수식·이미지 축소 배율이 달라진다 — 줄 높이를 다시 맞춘다.
     override func setFrameSize(_ newSize: NSSize) {
         let widthChanged = abs(frame.width - newSize.width) > 0.5
-        super.setFrameSize(newSize)
-        if widthChanged {
+        if widthChanged, let container = textContainer {
             let inset = editorialWorkspaceStyle
                 ? EditorMetrics.workspaceSideInset(forWidth: newSize.width, windowWidth: window?.frame.width ?? 640)
                 : EditorMetrics.sideInset(forWidth: newSize.width)
+            let targetContainerWidth = max(0, newSize.width - inset * 2)
+            let wasTracking = container.widthTracksTextView
+            container.widthTracksTextView = false
             if abs(textContainerInset.width - inset) > 0.5 {
                 textContainerInset = NSSize(width: inset, height: textContainerInset.height)
             }
+            super.setFrameSize(newSize)
+            if abs(container.size.width - targetContainerWidth) > 0.5 {
+                container.size = NSSize(width: targetContainerWidth, height: container.size.height)
+            }
+            container.widthTracksTextView = wasTracking
+        } else {
+            super.setFrameSize(newSize)
         }
         workspaceInteraction?.layoutDidChange()
         guard widthChanged else { return }
@@ -1366,10 +1401,22 @@ extension BlockTextView: @preconcurrency NSTextStorageDelegate {
         range editedRange: NSRange,
         changeInLength delta: Int
     ) {
+        inputTraceRecorder?.storageProcessed(range: editedRange, delta: delta,
+            editedCharacters: editedMask.contains(.editedCharacters), composing: hasMarkedText())
         // Font/paragraph edits and undo can bypass text input overrides. Wait
         // until TextKit has processed their layout invalidation before measuring.
         scheduleEditingOverlayRefresh()
+        // A committed IME insertion can transform Markdown before its native
+        // composition call unwinds. Those semantic attributes must reach storage caches.
+        if (isRestylingPresentation || (writingProjectionCapture.compositionDepth > 0 && !isTransforming))
+            && !editedMask.contains(.editedCharacters)
+        {
+            return
+        }
         writingProjectionCapture.storageChanged(mask: editedMask, range: editedRange, delta: delta, storage: textStorage)
+        if editedMask.contains(.editedCharacters) {
+            writingDecorations.rebase(editedRange: editedRange, delta: delta, storageLength: textStorage.length)
+        }
         updateMediaRenderIndex(mask: editedMask, range: editedRange, delta: delta)
         // 직렬화 증분 캐시 판정 — 모든 편집에 대해 먼저(마커 조기 반환에 가리지 않게).
         updateSerialCacheState(editedMask: editedMask, editedRange: editedRange, delta: delta)

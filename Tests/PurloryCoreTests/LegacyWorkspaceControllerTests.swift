@@ -227,7 +227,8 @@ struct LegacyBoundaryFixture {
     let session: ProjectSession
     let project: WritingProject
 
-    init(failProjectWrites: Bool = false, projectTitle: String = "Project", mode: WritingMode = .general) async throws {
+    init(failProjectWrites: Bool = false, projectTitle: String = "Project", mode: WritingMode = .general,
+         autosaveDelay: Duration = .seconds(3600)) async throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent("Purlory-LegacyBoundary-\(UUID())")
         legacyRoot = root.appendingPathComponent("Legacy")
         try FileManager.default.createDirectory(at: legacyRoot, withIntermediateDirectories: true)
@@ -241,7 +242,7 @@ struct LegacyBoundaryFixture {
         let sessionStore = failProjectWrites
             ? ProjectStore(root: root.appendingPathComponent("Projects"), fileSystem: FailingProjectFiles(fragment: "/Documents/"))
             : store
-        session = ProjectSession(store: sessionStore, defaults: defaults, autosaveDelay: .seconds(3600))
+        session = ProjectSession(store: sessionStore, defaults: defaults, autosaveDelay: autosaveDelay)
         try await session.bootstrap()
     }
 

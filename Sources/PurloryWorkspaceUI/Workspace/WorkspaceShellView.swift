@@ -167,7 +167,8 @@ struct WorkspaceSurface: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.openSettings) private var openSettings
     @StateObject private var palette = PaletteSettings.shared
-    @StateObject private var outline = DocumentOutlineController()
+    @StateObject private var outlineBox = DocumentOutlineHolder()
+    private var outline: DocumentOutlineController { outlineBox.controller }
     @State private var spatial = SpatialWorkspaceController()
     @State private var seededSpatialProject: WritingProjectID?
     @State private var assistance: WorkspaceAssistance?
@@ -189,7 +190,6 @@ struct WorkspaceSurface: View {
             if spatial.layout.isSingleManuscript { theme.editorSurfaceC }
             else { WorkspaceLiquidGlass(theme: theme) }
         }
-        .overlay { WorkspacePaperGrain().allowsHitTesting(false).accessibilityHidden(true) }
         .overlay(alignment: .bottom) {
             if let toast = spatial.toast {
                 HStack(spacing: 8) {
@@ -207,11 +207,17 @@ struct WorkspaceSurface: View {
         .tint(theme.blueC)
         .ignoresSafeArea(.container, edges: .top)
         .background(pouchBridge(theme: theme).frame(width: 0, height: 0))
-        .background(WorkspaceOutlineObservation(session: projectSession, outline: outline).frame(width: 0, height: 0))
+        .background(
+            WorkspaceOutlineObservation(session: projectSession, outline: outline) { identity in
+                updateOutlinePosition(identity: identity)
+            }
+            .frame(width: 0, height: 0)
+        )
         .onAppear {
             configureSpatial()
-            completion.observeForegroundCompletion(owner: outline) { [weak outline] busy in
-                outline?.setForegroundBusy(busy)
+            let outlineController = outline
+            completion.observeForegroundCompletion(owner: outlineController) { [weak outlineController] busy in
+                outlineController?.setForegroundBusy(busy)
             }
         }
         .onDisappear { outline.stop() }
@@ -264,9 +270,6 @@ struct WorkspaceSurface: View {
             }
             if mode == .map && !spatial.layout.contains(.map) { spatial.toggle(.map) }
             if mode == .outline && !spatial.layout.contains(.outline) { spatial.toggle(.outline) }
-        }
-        .onChange(of: outline.prepared) { _, prepared in
-            updateOutlinePosition(identity: prepared?.identity)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSTextView.didChangeSelectionNotification)) { notification in
             guard let editor = notification.object as? BlockTextView, editor === editorRequests.nativeEditor else { return }
@@ -365,6 +368,26 @@ struct WorkspaceSurface: View {
                 },
                 WorkspacePouchAction(id: "purlory.workspace.object-settings", label: "집필 도구 열기", symbol: "slider.horizontal.3", selected: { spatial.pouchSection != nil }) {
                     spatial.openPouchTools()
+                }
+            ], indexActions: [
+                WorkspacePouchAction(id: "purlory.workspace.pouch.index.note", label: "빠른 메모", symbol: "square.and.pencil",
+                    selected: { spatial.pouchSection == .note }, enabled: { projectSession.isEditorEditable }) {
+                    editorRequests.pouch?.showTools(.note)
+                },
+                pouchTool(.navigator, id: "purlory.workspace.pouch.index.documents", label: "문서 목록", symbol: "folder"),
+                pouchTool(.characters, id: "purlory.workspace.pouch.index.characters", label: "인물·작품", symbol: "person.2"),
+                WorkspacePouchAction(id: "purlory.workspace.pouch.index.search", label: "원문 검색", symbol: "magnifyingglass",
+                    selected: { spatial.layout.contains(.search) }, enabled: { projectSession.isEditorEditable }) {
+                    editorRequests.pouch?.dismissTools(); spatial.openSearch()
+                },
+                WorkspacePouchAction(id: "purlory.workspace.pouch.index.history", label: "원고 기록 · 저장과 비교", symbol: "clock.arrow.circlepath",
+                    enabled: { projectSession.isEditorEditable && projectSession.selectedDocumentPresentation?.kind == .manuscript
+                        && editorRequests.nativeEditor?.hasMarkedText() != true }) {
+                    editorRequests.pouch?.dismissTools(); versionsVisible = true
+                },
+                WorkspacePouchAction(id: "purlory.workspace.pouch.index.environment", label: "집필 환경", symbol: "slider.horizontal.3",
+                    selected: { spatial.pouchSection != nil && spatial.pouchSection != .note }) {
+                    editorRequests.pouch?.showTools(.overview)
                 }
             ], extraActions: [
                 WorkspacePouchAction(id: "purlory.workspace.pouch.collapse", label: "창을 주머니로 접기", symbol: "arrow.down.right.and.arrow.up.left") {
@@ -488,7 +511,13 @@ struct WorkspaceSurface: View {
     }
     private var mapVisible: Bool { activeWritingMode == .fiction && projectSession.workspaceMode == .map }
     private func updateOutlinePosition(identity: ProjectRuntimeIdentity?) {
-        let offset = identity.flatMap { editorRequests.nativeEditor?.outlineSourcePosition(identity: $0) }
+        guard let identity, outline.prepared?.identity == identity else {
+            if outline.currentHeadingID != nil {
+                outline.notePosition(nil, identity: identity)
+            }
+            return
+        }
+        let offset = editorRequests.nativeEditor?.outlineSourcePosition(identity: identity)
         outline.notePosition(offset, identity: identity)
     }
 
@@ -638,13 +667,28 @@ enum LivingMarginWorkspaceBridge {
     }
 }
 
+/// Lazily owns the outline controller without republishing its changes to `WorkspaceSurface`.
+@MainActor
+final class DocumentOutlineHolder: ObservableObject {
+    let controller: DocumentOutlineController
+
+    init(controller: DocumentOutlineController = DocumentOutlineController()) {
+        self.controller = controller
+    }
+}
+
 /// Keep source revision observation out of the workspace container and its chrome.
 private struct WorkspaceOutlineObservation: View {
     let session: ProjectSession
-    let outline: DocumentOutlineController
+    @ObservedObject var outline: DocumentOutlineController
+    let onPreparedChange: (ProjectRuntimeIdentity?) -> Void
     var body: some View {
-        Color.clear.task(id: session.runtimeIdentity) {
-            outline.update(session.projectPresentation?.mode == .general ? session.selectedDocumentSnapshot : nil)
-        }
+        Color.clear
+            .task(id: session.runtimeIdentity) {
+                outline.update(session.projectPresentation?.mode == .general ? session.selectedDocumentSnapshot : nil)
+            }
+            .onChange(of: outline.prepared) { _, prepared in
+                onPreparedChange(prepared?.identity)
+            }
     }
 }

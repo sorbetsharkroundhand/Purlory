@@ -33,6 +33,7 @@ extension BlockTextView {
             // 아니면 보존했다가 되살린 뒤 폰트·색을 다시 조립한다.
             let keepInline = ![PurloryBlock.code, .math, .divider, .image].contains(block)
             let preserved = keepInline ? inlineSnapshot(in: paragraph) : []
+            storage.beginEditing()
             storage.setAttributes(attrs, range: paragraph)
             for (range, inline) in preserved {
                 storage.addAttributes(inline, range: range)
@@ -40,6 +41,7 @@ extension BlockTextView {
             decorateInline(in: paragraph)
             applyStoredAlignment(base: attrs, in: paragraph)
             applyStoredLineSpacing(in: paragraph)
+            storage.endEditing()
             if registerUndo { didChangeText() }
         }
         // 커서가 이 문단 안에 있을 때만 typingAttributes를 덮는다.
@@ -55,11 +57,15 @@ extension BlockTextView {
 
     /// 팔레트/테마 변경 시 문서 전체를 다시 입힌다.
     func restyleAll() {
+        let wasRestyling = isRestylingPresentation
+        isRestylingPresentation = true
+        defer { isRestylingPresentation = wasRestyling }
         let ns = string as NSString
         let caret = min(max(0, selectedRange().location), ns.length)
         let caretParagraph = ns.paragraphRange(for: NSRange(location: caret, length: 0))
         let emptyTail = caretParagraph.length == 0 ? blockInfo(in: caretParagraph) : nil
         let emptyTailInline = typingAttributes.filter { InlineMarkdown.inlineKeys.contains($0.key) }
+        textStorage?.beginEditing()
         var location = 0
         while location < ns.length {
             let para = ns.paragraphRange(for: NSRange(location: location, length: 0))
@@ -89,11 +95,11 @@ extension BlockTextView {
                 }
             }
         }
+        textStorage?.endEditing()
         syncTypingAttributes()
         // 테마가 바뀌면 잉크 색으로 수식을 다시 렌더한다.
         rerenderInlineAtoms()
-        // Rebuild every paragraph without forcing focused math out of source mode.
-        invalidateMediaIndex()
+        // Rebuild visible/rendered media blocks without wiping the paragraph index.
         refreshRenderedBlocks()
         needsDisplay = true
         scheduleEditingOverlayRefresh()
@@ -150,7 +156,13 @@ extension BlockTextView {
         let ns = storage.string as NSString
         let clamped = NSIntersectionRange(range, NSRange(location: 0, length: ns.length))
         guard clamped.length > 0,
+              ns.range(of: "(", options: .literal, range: clamped).location != NSNotFound,
               ns.range(of: "](", options: .literal, range: clamped).location != NSNotFound else { return }
+        let wasRestyling = isRestylingPresentation
+        isRestylingPresentation = true
+        defer { isRestylingPresentation = wasRestyling }
+        storage.beginEditing()
+        defer { storage.endEditing() }
         var loc = clamped.location
         while loc < clamped.upperBound {
             let match = ns.range(of: "](", options: .literal, range: NSRange(location: loc, length: clamped.upperBound - loc))

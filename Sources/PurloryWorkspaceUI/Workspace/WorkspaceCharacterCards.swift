@@ -98,8 +98,14 @@ struct WorkspaceCharacterCards: View {
                                     session.selectDocument(record.documentID)
                                     model.selectTile(.characters); model.pouchSection = .object
                                 }.buttonStyle(.plain).purloryUIFont(10, .medium).foregroundStyle(theme.ink2C)
-                                if let reference = reference(for: record) {
-                                    Button("본문 이동 →") { jump(reference) }.buttonStyle(.plain).purloryUIFont(10, .medium).foregroundStyle(theme.novelC)
+                                if !card.name.isEmpty {
+                                    Button("본문 이동 →") {
+                                        if let reference = reference(for: record) {
+                                            jump(reference)
+                                        } else {
+                                            requests.issueJump(documentID: record.documentID, query: card.name)
+                                        }
+                                    }.buttonStyle(.plain).purloryUIFont(10, .medium).foregroundStyle(theme.novelC)
                                 }
                             }
                         }

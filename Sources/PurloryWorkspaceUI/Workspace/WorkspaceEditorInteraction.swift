@@ -312,9 +312,13 @@ import Combine
                 }
                 previousSelection = range.location
             }
-            let nextParagraph = (editor.string as NSString).substring(with: range)
-            if model?.activeParagraph != nextParagraph {
-                model?.activeParagraph = nextParagraph
+            if let model,
+               model.layout.contains(.characters) || model.layout.contains(.narrative) || model.layout.contains(.margin)
+            {
+                let nextParagraph = (editor.string as NSString).substring(with: range)
+                if model.activeParagraph != nextParagraph {
+                    model.activeParagraph = nextParagraph
+                }
             }
         }
     }

@@ -51,13 +51,18 @@ final class DocumentOutlineController: ObservableObject {
         setPolicyPaused(info.isLowPowerModeEnabled || info.thermalState == .serious || info.thermalState == .critical)
     }
     private func invalidate() {
-        epoch &+= 1; workTask?.cancel(); workTask = nil; prepared = nil; currentHeadingID = nil
+        epoch &+= 1; workTask?.cancel(); workTask = nil
+        if prepared != nil { prepared = nil }
+        if currentHeadingID != nil { currentHeadingID = nil }
+    }
+    private func setStatus(_ next: Status) {
+        if status != next { status = next }
     }
     private func schedule() {
         invalidate()
-        guard let snapshot else { status = .idle; return }
-        guard !foregroundBusy, !policyPaused else { status = .paused; return }
-        status = .checking
+        guard let snapshot else { setStatus(.idle); return }
+        guard !foregroundBusy, !policyPaused else { setStatus(.paused); return }
+        setStatus(.checking)
         let owned = epoch, sleep = sleep, project = project
         workTask = Task(priority: .utility) { [weak self] in
             do {
@@ -66,14 +71,14 @@ final class DocumentOutlineController: ObservableObject {
                 guard let self, !Task.isCancelled, self.epoch == owned,
                       self.snapshot?.identity == snapshot.identity else { return }
                 self.prepared = .init(identity: snapshot.identity, projection: projection)
-                self.status = .idle; self.workTask = nil
+                self.setStatus(.idle); self.workTask = nil
             } catch {
                 guard let self, !Task.isCancelled, self.epoch == owned else { return }
-                self.status = .unavailable; self.workTask = nil
+                self.setStatus(.unavailable); self.workTask = nil
             }
         }
     }
-    func stop() { snapshot = nil; invalidate(); status = .idle }
+    func stop() { snapshot = nil; invalidate(); setStatus(.idle) }
     func notePosition(_ offset: Int?, identity: ProjectRuntimeIdentity?) {
         let next: Int?
         if let prepared, prepared.identity == identity, let offset, offset >= 0 {

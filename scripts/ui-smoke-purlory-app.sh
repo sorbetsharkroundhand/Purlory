@@ -477,7 +477,11 @@ wait_ui() {
 open_pouch_menu() {
     if ! osascript "$SMOKE_ROOT/ui.applescript" "$PID" present "purlory.workspace.pouch.more" >/dev/null 2>&1; then
         ui wake-tools ""
-        ui press "purlory.writer-tools.compatibility"
+        if ! osascript "$SMOKE_ROOT/ui.applescript" "$PID" present "purlory.workspace.pouch.index.environment" >/dev/null 2>&1; then
+            ui press "purlory.writer-tools.compatibility"
+        fi
+        wait_ui present "purlory.workspace.pouch.index.environment"
+        ui press "purlory.workspace.pouch.index.environment"
     fi
     ui press "purlory.workspace.pouch.more"
 }

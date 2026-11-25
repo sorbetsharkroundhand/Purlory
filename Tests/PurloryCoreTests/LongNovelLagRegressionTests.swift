@@ -329,4 +329,99 @@ final class LongNovelLagRegressionTests: XCTestCase {
             "ManuscriptResumeBrief.build must resolve heading and paragraph excerpt via DocumentSource line index without materializing 240k chars"
         )
     }
+
+    func testScrollingUpToTopAfterDiagnosticsScanRebasesDecorationsAndTracksNewlineParagraphInO1() throws {
+        let novel = makeSyntheticNovel(paragraphPairs: 3_300)
+        let harness = WritingEditorHarness(novel)
+        defer { harness.close() }
+
+        let editor = harness.editor
+        let initialRebuilds = editor.serialCacheRebuildCount
+
+        let ns = harness.body as NSString
+        var findings: [WritingDiagnosticsFinding] = []
+        let initialRevision = editor.writingNativeRevision
+
+        // Populate ~150 correctness findings across the 240k-char novel (simulating staying in a region until scan completes).
+        for idx in stride(from: 20, to: 3200, by: 20) {
+            let token = "제\(idx)문단"
+            let range = ns.range(of: token)
+            guard range.location != NSNotFound else { continue }
+            findings.append(writingEditorFinding(harness, range: range))
+        }
+        XCTAssertGreaterThan(findings.count, 100)
+
+        editor.setWritingDiagnostics(findings, revision: initialRevision)
+        let lookupsAfterInitialScan = editor.writingDecorationLookupCount
+        XCTAssertEqual(lookupsAfterInitialScan, findings.count)
+
+        // Scroll/jump to the very top of the novel (paragraph 1), press Enter, and type Korean syllables.
+        let topTarget = (editor.string as NSString).range(of: "제1문단")
+        XCTAssertNotEqual(topTarget.location, NSNotFound)
+        editor.setSelectedRange(NSRange(location: topTarget.upperBound, length: 0))
+
+        let commitsBefore = harness.commits.count
+        harness.window.testUndo.beginUndoGrouping()
+        editor.insertNewline(nil as Any?)
+        harness.window.testUndo.endUndoGrouping()
+        XCTAssertEqual(
+            editor.serialCacheRebuildCount, initialRebuilds,
+            "insertNewline at top of 240k-char novel must splice dirty paragraph range without full serial cache rebuild"
+        )
+        let commitsAfterNewline = harness.commits.count
+        XCTAssertEqual(commitsAfterNewline, commitsBefore + 1)
+
+        // Type in the newly created paragraph right after the newline — must hit single-paragraph fast path, not rebuildSerialCache().
+        harness.window.testUndo.beginUndoGrouping()
+        editor.setMarkedText("ㅁ", selectedRange: NSRange(location: 1, length: 0), replacementRange: editor.selectedRange())
+        // Simulate Hangul syllable transition within an active composition scope (commit 'ㅁ' -> mark 'ㄴ').
+        editor.writingProjectionCapture.beginComposition()
+        editor.insertText("ㅁ", replacementRange: editor.markedRange())
+        editor.setMarkedText("ㄴ", selectedRange: NSRange(location: 1, length: 0), replacementRange: editor.selectedRange())
+        editor.writingProjectionCapture.endComposition(editor.markedRange())
+        XCTAssertTrue(editor.hasMarkedText())
+        XCTAssertEqual(
+            harness.commits.count, commitsAfterNewline,
+            "Hangul syllable transition within active composition scope must not fire a false intermediate WritingEditorCommit"
+        )
+
+        editor.insertText("니", replacementRange: editor.markedRange())
+        harness.window.testUndo.endUndoGrouping()
+        XCTAssertEqual(
+            editor.serialCacheRebuildCount, initialRebuilds,
+            "Typing in the new paragraph after insertNewline must track the new paragraph's serialFastIndex without rebuilding 3,500 lines"
+        )
+
+        // Re-publish all ~150 downstream findings shifted by the top edit delta (+3 UTF-16 units: "\n" + "ㅁ" + "니").
+        let currentIdentity = try XCTUnwrap(editor.writingRuntimeIdentityProvider?())
+        let currentRevision = editor.writingNativeRevision
+        let delta = 3
+        let shiftedFindings: [WritingDiagnosticsFinding] = findings.map { item in
+            var copy = item
+            let shiftedRange = WritingDiagnosticRange(location: item.sourceRanges[0].location + delta, length: item.sourceRanges[0].length)
+            copy.sourceRanges = [shiftedRange]
+            copy.contextRange = shiftedRange
+            copy.evidence = EvidenceAnchor(
+                documentID: item.evidence.documentID,
+                sceneHash: item.evidence.sceneHash,
+                quote: item.evidence.quote,
+                utf16Hint: shiftedRange.location
+            )
+            copy.stamp = WritingDiagnosticsStamp(
+                runtime: currentIdentity,
+                nativeRevision: currentRevision,
+                profileRevision: item.stamp.profileRevision,
+                providerRevision: item.stamp.providerRevision,
+                ruleRevision: item.stamp.ruleRevision,
+                windowDigest: item.stamp.windowDigest
+            )
+            return copy
+        }
+
+        editor.setWritingDiagnostics(shiftedFindings, revision: currentRevision)
+        XCTAssertEqual(
+            editor.writingDecorationLookupCount, lookupsAfterInitialScan,
+            "Top-of-document edits must rebase offscreen decoration ranges in O(1) without re-running nativeLookup across the entire novel"
+        )
+    }
 }
