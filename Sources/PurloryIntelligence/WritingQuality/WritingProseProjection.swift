@@ -192,15 +192,22 @@ package enum WritingProseProjection {
     package static func inlineRuns(_ text: String, offset: Int) -> [Run] {
         let spans = MarkdownInlineScanner.scan(text)
         let ns = text as NSString
+        let codeRanges = spans.filter { $0.style.code }.map(\.sourceRange)
         let mathRanges: [NSRange]
         if ns.range(of: "$", options: .literal).location != NSNotFound {
-            let codeRanges = spans.filter { $0.style.code }.map(\.sourceRange)
             mathRanges = MathScanner.regions(in: text, skipping: codeRanges).map(\.range)
         } else {
             mathRanges = []
         }
-        let links = scanLinks(in: text, trackUnclosed: false).links
+        let links = scanLinks(in: text, protectedRanges: protectedRanges(code: codeRanges, math: mathRanges)).links
         return buildInlineRuns(spans: spans, mathRanges: mathRanges, links: links, offset: offset, limit: nil)
+    }
+
+    private static func protectedRanges(code: [NSRange], math: [NSRange]) -> [NSRange] {
+        if math.isEmpty { return code }
+        if code.isEmpty { return math }
+        // MathScanner skips code. Keep adjacent spans separate so each owns its own delimiters.
+        return (code + math).sorted { $0.location < $1.location }
     }
 
     private static func mergeSortedRanges(_ ranges: [NSRange]) -> [NSRange] {
@@ -215,20 +222,6 @@ package enum WritingProseProjection {
             }
         }
         return merged
-    }
-
-    private static func containsOffset(_ location: Int, in sortedRanges: [NSRange]) -> Bool {
-        guard !sortedRanges.isEmpty else { return false }
-        var low = 0, high = sortedRanges.count
-        while low < high {
-            let mid = low + (high - low) / 2
-            if sortedRanges[mid].upperBound <= location {
-                low = mid + 1
-            } else {
-                high = mid
-            }
-        }
-        return low < sortedRanges.count && sortedRanges[low].location <= location
     }
 
     private static func buildInlineRuns(
@@ -619,7 +612,7 @@ package enum WritingProseProjection {
         _ candidate: (open: Int, close: Int),
         in table: LinkScanTable,
         trackUnclosed: Bool,
-        ignoreUnclosedInside: [NSRange],
+        protectedRanges: inout ArraySlice<NSRange>,
         cursor: inout Int,
         links: inout [Link]
     ) -> Int? {
@@ -631,21 +624,27 @@ package enum WritingProseProjection {
         let image = start > 0 && table.chars[start - 1] == "!" && !table.escaped[start - 1]
         let sourceStart = image ? start - 1 : start
 
-        func recordUnclosedIfTracked() -> Int? {
-            guard trackUnclosed else { return nil }
-            let offset = table.utf16Prefix[sourceStart]
-            return containsOffset(offset, in: ignoreUnclosedInside) ? nil : offset
+        // Candidates arrive in source order. Ignore a literal "[label](" inside one code or
+        // math span. A bracket in a formatted label can still pair with a closer outside it.
+        let offset = table.utf16Prefix[start]
+        while let range = protectedRanges.first, range.upperBound <= offset {
+            protectedRanges.removeFirst()
         }
+        let openingIsProtected = protectedRanges.first.map { $0.location <= offset } ?? false
+        if openingIsProtected, let range = protectedRanges.first, table.utf16Prefix[open + 1] <= range.upperBound {
+            return nil
+        }
+        let unclosedOffset = trackUnclosed && !openingIsProtected ? table.utf16Prefix[sourceStart] : nil
 
         let n = table.chars.count
         var end = table.nextNonSpace[open + 1]
         if end < n, table.chars[end] == "<" {
             let angle = table.nextAngle[end + 1]
-            guard angle >= 0 else { return recordUnclosedIfTracked() }
+            guard angle >= 0 else { return unclosedOffset }
             end = angle + 1
         } else {
             let destination = table.plainStop[end]
-            guard destination >= 0 else { return recordUnclosedIfTracked() }
+            guard destination >= 0 else { return unclosedOffset }
             end = destination
         }
 
@@ -664,7 +663,7 @@ package enum WritingProseProjection {
             }
         }
 
-        guard end < n else { return recordUnclosedIfTracked() }
+        guard end < n else { return unclosedOffset }
         guard table.chars[end] == ")" else { return nil }
 
         end += 1
@@ -684,17 +683,21 @@ package enum WritingProseProjection {
             label: NSRange(location: lblLoc, length: lblEnd - lblLoc),
             image: image
         ))
+        // A delimiter originating inside an accepted link or image cannot suppress a later link.
+        while let range = protectedRanges.first, range.location < srcEnd {
+            protectedRanges.removeFirst()
+        }
         cursor = end
         return nil
     }
 
     /// Strictly O(N) Markdown link/image scanner sharing Purlory's balanced/escaped destination grammar.
     /// Precomputed next-delimiter and paren-balance tables resolve every candidate in O(1) without mutable failure caches.
-    /// When `trackUnclosed` is true, records the first unclosed `[alt](...` outside `ignoreUnclosedInside` reaching EOL without `)`.
+    /// Sorted code and math ranges keep literal link openers from consuming following prose.
     package static func scanLinks(
         in text: String,
         trackUnclosed: Bool = false,
-        ignoreUnclosedInside: [NSRange] = []
+        protectedRanges: [NSRange] = []
     ) -> LinkScanResult {
         guard (text as NSString).range(of: "](", options: .literal).location != NSNotFound else {
             return LinkScanResult(links: [], unclosedDestinationStart: nil)
@@ -708,13 +711,14 @@ package enum WritingProseProjection {
         }
         let table = buildLinkScanTable(from: forward)
         var cursor = 0
+        var remainingProtected = protectedRanges[...]
         var links: [Link] = []
         for candidate in table.candidates {
             if let unclosed = resolveCandidate(
                 candidate,
                 in: table,
                 trackUnclosed: trackUnclosed,
-                ignoreUnclosedInside: ignoreUnclosedInside,
+                protectedRanges: &remainingProtected,
                 cursor: &cursor,
                 links: &links
             ) {
@@ -727,7 +731,7 @@ package enum WritingProseProjection {
     private static func scanLinksAsync(
         in text: String,
         trackUnclosed: Bool,
-        ignoreUnclosedInside: [NSRange],
+        protectedRanges: [NSRange],
         isolation: isolated (any Actor)? = #isolation,
         checkpoint: () async -> Bool
     ) async -> LinkScanResult? {
@@ -747,6 +751,7 @@ package enum WritingProseProjection {
             return nil
         }
         var cursor = 0
+        var remainingProtected = protectedRanges[...]
         var links: [Link] = []
         var processed = 0
         for candidate in table.candidates {
@@ -758,7 +763,7 @@ package enum WritingProseProjection {
                 candidate,
                 in: table,
                 trackUnclosed: trackUnclosed,
-                ignoreUnclosedInside: ignoreUnclosedInside,
+                protectedRanges: &remainingProtected,
                 cursor: &cursor,
                 links: &links
             ) {
@@ -784,8 +789,8 @@ package enum WritingProseProjection {
         let mathRanges = ns.range(of: "$", options: .literal).location != NSNotFound
             ? MathScanner.regions(in: line, skipping: codeRanges).map(\.range)
             : []
-        let protectedRanges = mergeSortedRanges(codeRanges + mathRanges)
-        let linkReport = scanLinks(in: line, trackUnclosed: true, ignoreUnclosedInside: protectedRanges)
+        let protectedRanges = protectedRanges(code: codeRanges, math: mathRanges)
+        let linkReport = scanLinks(in: line, trackUnclosed: true, protectedRanges: protectedRanges)
         return finalizeDeferredRuns(
             lineLength: ns.length,
             spans: spans,
@@ -812,11 +817,11 @@ package enum WritingProseProjection {
         } else {
             mathRanges = []
         }
-        let protectedRanges = mergeSortedRanges(codeRanges + mathRanges)
+        let protectedRanges = protectedRanges(code: codeRanges, math: mathRanges)
         guard let linkReport = await scanLinksAsync(
             in: line,
             trackUnclosed: true,
-            ignoreUnclosedInside: protectedRanges,
+            protectedRanges: protectedRanges,
             isolation: isolation,
             checkpoint: checkpoint
         ) else { return nil }
