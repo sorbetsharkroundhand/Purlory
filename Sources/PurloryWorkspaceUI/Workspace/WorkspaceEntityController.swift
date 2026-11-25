@@ -188,8 +188,8 @@ import SwiftUI
                     if peek?.name == card.name && peek?.reference.key == key && provenNativeRevision == editor.writingNativeRevision && provenNativeRange == range {
                         keepAlive(); return
                     }
-                    let editorSource = (editor.serialLinesValid && editor.serialDirtyRange == nil && !editor.serialFastDirty)
-                        ? editor.markdownCodec.source : editor.serializedSource()
+                    let editorSource = editor.serializationCache.isClean
+                        ? editor.serializationCache.markdownCodec.source : editor.serializedSource()
                     guard editorSource == document.source else { continue }
                     let original = document.body as NSString
                     let startOffset = editor.sourceCursorOffset(at: range.location)

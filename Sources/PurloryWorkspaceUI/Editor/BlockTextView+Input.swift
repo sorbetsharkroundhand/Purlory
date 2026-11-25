@@ -28,14 +28,8 @@ extension BlockTextView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window == nil {
-            caretBlinkTimer?.invalidate()
-            caretBlinkTimer = nil
-            visibleRefreshTask?.cancel()
-            visibleRefreshTask = nil
-            mathPreviewTask?.cancel()
-            mathPreviewTask = nil
-            ghostFadeTask?.cancel()
-            ghostFadeTask = nil
+            overlayState.teardown()
+            mediaState.cancelAsyncWork()
             workspaceInteraction?.detach()
             hideSelectionToolbar()
             hideImageToolbar()
@@ -101,37 +95,31 @@ extension BlockTextView {
     /// 스캔 한 번이 복잡도를 바꾸지 않는다 — 마커를 지운 뒤 빠른 경로로 복귀하는 길.
     func syncMarkerFlag() {
         let ns = string as NSString
-        mayHaveMarkers =
+        mediaState.mayHaveMarkers =
             ns.range(of: "$$").location != NSNotFound
             || ns.range(of: "![").location != NSNotFound
     }
 
-    /// 직렬화 캐시를 강제로 무효화한다 — 문서 로드 등 대량 교체 후.
+    /// Force-invalidates the incremental serialization cache (e.g. after full document load).
     func invalidateSerialCache() {
-        serialLinesValid = false
-        serialFastDirty = false
-        serialDirtyRange = nil
+        serializationCache.invalidate()
     }
 
-    /// 편집 **직전**에 삭제될 텍스트의 개행을 센다 — 직렬화 증분 캐시의 안전
-    /// 판정에 필요하다(`updateSerialCacheState`). `didProcessEditing`은 이미 바뀐
-    /// storage만 보므로 "무엇이 지워졌는지"를 알 수 없다. 이 훅은 타이핑·IME·
-    /// 붙여넣기·삭제·undo 등 NSText 경로 전부에서 편집 전에 불린다.
     override func shouldChangeText(in affectedCharRange: NSRange, replacementString: String?)
         -> Bool
     {
         if replacementString != nil {
             let ns = string as NSString
+            let removedNewlines: Int
             if affectedCharRange.length > 0, affectedCharRange.upperBound <= ns.length {
                 let old = ns.substring(with: affectedCharRange)
-                serialPendingRemovedNewlines = old.reduce(0) { $1 == "\n" ? $0 + 1 : $0 }
+                removedNewlines = old.reduce(0) { $1 == "\n" ? $0 + 1 : $0 }
             } else {
-                serialPendingRemovedNewlines = 0
+                removedNewlines = 0
             }
-            serialPendingTracked = true
+            serializationCache.notePendingEdit(tracked: true, removedNewlines: removedNewlines)
         } else {
-            serialPendingRemovedNewlines = 0
-            serialPendingTracked = false
+            serializationCache.notePendingEdit(tracked: false, removedNewlines: 0)
         }
         return super.shouldChangeText(in: affectedCharRange, replacementString: replacementString)
     }
@@ -420,7 +408,7 @@ extension BlockTextView {
 
     override func insertLineBreak(_ sender: Any?) {
         guard !hasMarkedText() else { return super.insertLineBreak(sender) }
-        guard selectedImageLocation == nil else { return insertNewline(sender) }
+        guard mediaState.selectedImageLocation == nil else { return insertNewline(sender) }
         // U+2028 is a line separator, not a paragraph separator. Use the normal
         // input path for undo, autosave and inline attributes without resetting
         // the block or advancing a list number as Enter does.
@@ -437,7 +425,7 @@ extension BlockTextView {
         }
         // 이미지 객체 선택 중 Enter — 이미지 아래에 새 문단을 만들고 커서를 옮긴다
         // (그림 블럭 완성도). insertText가 막혀 있어 기본 경로로는 아무 일도 없다.
-        if let loc = selectedImageLocation {
+        if let loc = mediaState.selectedImageLocation {
             let para = (string as NSString).paragraphRange(
                 for: NSRange(location: min(loc, (string as NSString).length), length: 0))
             imageLineBreak(after: para)
@@ -493,7 +481,7 @@ extension BlockTextView {
             return
         }
         // 이미지가 객체 선택된 상태면 백스페이스로 문단째 지운다 (요구 3).
-        if let loc = selectedImageLocation {
+        if let loc = mediaState.selectedImageLocation {
             let para = (string as NSString).paragraphRange(
                 for: NSRange(location: min(loc, (string as NSString).length), length: 0))
             deleteImageParagraph(para)
@@ -524,7 +512,7 @@ extension BlockTextView {
         let traceToken = recorder?.beginOperation(kind: .keyDown, eventTimestamp: event.timestamp, composing: hasMarkedText())
         defer { if let traceToken { recorder?.endOperation(traceToken) } }
         workspaceInteraction?.keyDown(event)
-        if selectedImageLocation != nil, handleObjectKey(event) { return }
+        if mediaState.selectedImageLocation != nil, handleObjectKey(event) { return }
         if handleMathEditingKey(event) { return }
         // AppKit coalesces adjacent typing even across idle time and event groups.
         // A new burst must not undo earlier writing; never split a live IME session.
@@ -592,7 +580,7 @@ extension BlockTextView {
     }
 
     func widthOfSelectedImage() -> Int {
-        guard let loc = selectedImageLocation else { return 100 }
+        guard let loc = mediaState.selectedImageLocation else { return 100 }
         let ns = string as NSString
         let para = ns.paragraphRange(for: NSRange(location: min(loc, ns.length), length: 0))
         return Self.imageAttrs(
@@ -696,7 +684,7 @@ extension BlockTextView {
                     return
                 }
                 // 렌더된 이미지 클릭 — 항상 객체 선택(소스는 절대 노출하지 않는다).
-                let isRendered = imageRenders.contains { $0.range.location == para.location }
+                let isRendered = mediaState.imageRenders.contains { $0.range.location == para.location }
                 if info.block == .image, isRendered {
                     selectImageObject(at: para)
                     return
@@ -758,7 +746,7 @@ extension BlockTextView {
                 if blockInfo(in: para).block == .math,
                     let latex = mathSource(at: para.location), !latex.isEmpty
                 {
-                    mathActionLocation = para.location
+                    mediaState.mathActionLocation = para.location
                     let menu = NSMenu(title: "수식")
                     menu.addItem(withTitle: "LaTeX 복사", action: #selector(copyMathLatex(_:)), keyEquivalent: "")
                     menu.addItem(withTitle: "이미지 복사", action: #selector(copyMathImage(_:)), keyEquivalent: "")
@@ -800,7 +788,7 @@ extension BlockTextView {
         workspaceInteraction?.layoutDidChange()
         guard widthChanged else { return }
         // 폭이 바뀌면 수식·이미지 축소 배율이 달라진다 — 줄 높이를 다시 맞춘다.
-        if !mathRenders.isEmpty || !imageRenders.isEmpty {
+        if !mediaState.mathRenders.isEmpty || !mediaState.imageRenders.isEmpty {
             DispatchQueue.main.async { [weak self] in self?.refreshRenderedBlocks() }
         }
     }
@@ -847,7 +835,7 @@ extension BlockTextView {
         case .align(let align): applyAlignment(align)
         case .block(let block): convertSelectionBlock(to: block)
         }
-        workspaceSelectionPanel?.makeFirstResponder(nil)
+        overlayState.workspaceSelectionPanel?.makeFirstResponder(nil)
         if let window, !window.isKeyWindow { window.makeKey() }
         window?.makeFirstResponder(self)
         presentSelectionToolbar()
@@ -1191,7 +1179,7 @@ extension BlockTextView {
         setSelectedRange(NSRange(location: clampedLoc, length: clampedLen))
         syncTypingAttributes()
         isTransforming = false
-        selectedImageLocation = nil
+        mediaState.selectedImageLocation = nil
         hideImageToolbar()
         hideSelectionToolbar()
         syncMarkerFlag()
@@ -1283,7 +1271,7 @@ extension BlockTextView {
         guard let storage = textStorage else { return }
         let previousSnapshot = NSAttributedString(attributedString: storage.attributedSubstring(from: range))
         let previousSelection = selectedRange()
-        let previousImageLocation = selectedImageLocation
+        let previousImageLocation = mediaState.selectedImageLocation
         let scrollOrigin = enclosingScrollView?.contentView.bounds.origin
 
         if let undoManager {
@@ -1313,7 +1301,7 @@ extension BlockTextView {
         let clampedLoc = min(max(0, selectionAfter.location), storage.length)
         setSelectedRange(NSRange(location: clampedLoc, length: 0))
         if let reselectImageLocation {
-            selectedImageLocation = min(max(0, reselectImageLocation), storage.length)
+            mediaState.selectedImageLocation = min(max(0, reselectImageLocation), storage.length)
         }
         syncTypingAttributes()
         if !isSourceMode {
@@ -1469,17 +1457,17 @@ extension BlockTextView: @preconcurrency NSTextStorageDelegate {
         guard end > start else { return }
         let touched = ns.substring(with: NSRange(location: start, length: end - start))
         if touched.contains("]:") || touched.contains("[") {
-            imageDefinitionsDirty = true
+            mediaState.imageDefinitionsDirty = true
         }
         // 인라인 수식 후보 — `$` 하나만으로도 보수적으로 켠다 (이슈 #20).
         // 접기 검사(collapseRawInlineMath)가 실측으로 다시 끝낸다.
         if touched.contains("$") {
-            mayHaveInlineMath = true
+            mediaState.mayHaveInlineMath = true
         }
         // 마커 플래그가 이미 true면 더 볼 필요 없다 — syncMarkerFlag가 정리한다.
-        guard !mayHaveMarkers else { return }
+        guard !mediaState.mayHaveMarkers else { return }
         if touched.contains("$$") || touched.contains("![") {
-            mayHaveMarkers = true
+            mediaState.mayHaveMarkers = true
         }
     }
 }

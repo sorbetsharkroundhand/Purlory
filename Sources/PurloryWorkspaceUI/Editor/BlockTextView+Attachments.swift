@@ -110,8 +110,8 @@ extension BlockTextView {
 
     /// 스크롤이 멈춘 뒤 120ms에 1번만 가시 범위 재수집.
     func scheduleVisibleRefresh() {
-        visibleRefreshTask?.cancel()
-        visibleRefreshTask = Task { [weak self] in
+        mediaState.visibleRefreshTask?.cancel()
+        mediaState.visibleRefreshTask = Task { [weak self] in
             try? await Task.sleep(for: EditorTiming.mediaRefreshDelay)
             guard !Task.isCancelled, let self else { return }
             self.refreshVisibleBlocks()
@@ -250,7 +250,7 @@ extension BlockTextView {
     /// 화살표·부호키를 객체 조작에 쓸 수 있다. 소비한 키만 true.
     @discardableResult
     func handleObjectKey(_ event: NSEvent) -> Bool {
-        guard let loc = selectedImageLocation else { return false }
+        guard let loc = mediaState.selectedImageLocation else { return false }
         let ns = string as NSString
         let para = ns.paragraphRange(for: NSRange(location: min(loc, ns.length), length: 0))
         guard let action = Self.objectKeyAction(
@@ -273,7 +273,7 @@ extension BlockTextView {
         case .move(let offset):
             moveImageParagraph(para, offset: offset)
             // 새 자리에서 선택 UI를 다시 얹는다 — ⌥↑↓ 연속 입력이 이어지도록.
-            if let newLoc = selectedImageLocation {
+            if let newLoc = mediaState.selectedImageLocation {
                 showImageBox(for: newLoc)
                 presentImageToolbar(for: NSRange(location: newLoc, length: 0))
             }
@@ -453,7 +453,7 @@ extension BlockTextView {
 
     /// 렌더된 이미지를 객체로 선택한다 — 소스를 감춘 채 박스 오버레이와 툴바를 띄운다.
     func selectImageObject(at para: NSRange) {
-        selectedImageLocation = para.location
+        mediaState.selectedImageLocation = para.location
         // 커서를 문단 시작에 두되(길이 0) 렌더는 유지된다(refresh의 objectSelected 예외).
         setSelectedRange(NSRange(location: para.location, length: 0))
         window?.makeFirstResponder(self)
@@ -465,12 +465,12 @@ extension BlockTextView {
     /// 이미지 박스 오버레이를 만들고(또는 갱신) 이미지 위에 얹는다.
     func showImageBox(for loc: Int) {
         let box: ImageBoxOverlay
-        if let existing = imageBox {
+        if let existing = mediaState.imageBox {
             box = existing
             box.theme = palette  // 재사용 시에도 최신 팔레트 — stale 색 방지 (#34)
         } else {
             box = ImageBoxOverlay(textView: self, theme: palette)
-            imageBox = box
+            mediaState.imageBox = box
         }
         box.paraLocation = loc
         if box.superview !== self { addSubview(box) }
@@ -479,13 +479,13 @@ extension BlockTextView {
 
     /// 객체 선택 해제 — 툴바·박스·편집 카드를 감추고 다시 그린다.
     func clearImageSelection() {
-        guard selectedImageLocation != nil else { return }
-        selectedImageLocation = nil
+        guard mediaState.selectedImageLocation != nil else { return }
+        mediaState.selectedImageLocation = nil
         hideImageToolbar()
         hideImageAltEditor()
-        imageBox?.removeFromSuperview()
-        imageBox = nil
-        imageDropIndicatorY = nil
+        mediaState.imageBox?.removeFromSuperview()
+        mediaState.imageBox = nil
+        mediaState.imageDropIndicatorY = nil
         needsDisplay = true
     }
 
@@ -499,7 +499,7 @@ extension BlockTextView {
         let caretPara = ns.paragraphRange(
             for: NSRange(location: min(sel.location, ns.length), length: 0))
 
-        if let loc = selectedImageLocation, sel.length != 0 || caretPara.location != loc {
+        if let loc = mediaState.selectedImageLocation, sel.length != 0 || caretPara.location != loc {
             clearImageSelection()
         }
         // 이미지 문단에 커서가 놓였는데 객체 선택이 아니면 자동 선택.
@@ -508,7 +508,7 @@ extension BlockTextView {
         // 제공하려면 (이슈 #15).
         guard sel.length == 0, !isTransforming, window?.firstResponder === self,
             caretPara.location < ns.length,
-            selectedImageLocation != caretPara.location,
+            mediaState.selectedImageLocation != caretPara.location,
             blockInfo(in: caretPara).block == .image,
             let caretAttrs = Self.imageAttrs(
                 from: paragraphContent(caretPara).trimmingCharacters(in: .whitespaces),
@@ -521,7 +521,7 @@ extension BlockTextView {
         // 화살표로 스쳐 지날 때 툴바/박스를 띄우지 않는다 — 편집 조작은 클릭했을 때만
         // 시작하게 해, 이동 중 UI가 불쑥 튀어나오지 않게 한다 (M10). 클릭 경로
         // (selectImageObject)는 그대로 박스·툴바를 보여준다.
-        selectedImageLocation = caretPara.location
+        mediaState.selectedImageLocation = caretPara.location
         refreshRenderedBlocks()
         needsDisplay = true
     }
@@ -531,7 +531,7 @@ extension BlockTextView {
         let recorder = inputTraceRecorder
         let traceToken = recorder?.beginOperation(kind: .insertText, composing: hasMarkedText())
         defer { if let traceToken { recorder?.endOperation(traceToken) } }
-        guard selectedImageLocation == nil else { return }
+        guard mediaState.selectedImageLocation == nil else { return }
         // 텍스트가 드래그 선택된 상태에서 괄호·따옴표·서식 마커를 입력하면 선택 영역을 감싼다.
         let effectiveRange = replacementRange.location != NSNotFound ? replacementRange : selectedRange()
         if !isSourceMode, !hasMarkedText(), effectiveRange.length > 0,
@@ -614,7 +614,7 @@ extension BlockTextView {
 
     /// 이미지 객체 선택 중 Esc — 선택만 해제한다 (그림 블럭 완성도).
     override func cancelOperation(_ sender: Any?) {
-        if selectedImageLocation != nil {
+        if mediaState.selectedImageLocation != nil {
             clearImageSelection()
             return
         }
@@ -624,12 +624,12 @@ extension BlockTextView {
     /// 이미지 객체 선택 중 ⌘C/⌘X — 이미지 비트맵을 클립보드로 (그림 블럭 완성도).
     /// 붙여넣기는 기존 insertImages의 TIFF 경로로 다시 이미지 블록이 된다.
     override func copy(_ sender: Any?) {
-        if let loc = selectedImageLocation, copyImageObject(atParagraph: loc) { return }
+        if let loc = mediaState.selectedImageLocation, copyImageObject(atParagraph: loc) { return }
         super.copy(sender)
     }
 
     override func cut(_ sender: Any?) {
-        if let loc = selectedImageLocation {
+        if let loc = mediaState.selectedImageLocation {
             guard copyImageObject(atParagraph: loc) else { return }
             let para = (string as NSString).paragraphRange(
                 for: NSRange(location: min(loc, (string as NSString).length), length: 0))
@@ -700,12 +700,12 @@ extension BlockTextView {
     /// 렌더된 수식 위에서는 열린 손 — 끌어 옮길 수 있음을 알린다 (요구 6).
     override func resetCursorRects() {
         super.resetCursorRects()
-        for render in imageRenders {
+        for render in mediaState.imageRenders {
             if let rect = imageDrawnRect(forParagraphAt: render.range.location) {
                 addCursorRect(rect, cursor: .pointingHand)
             }
         }
-        for render in mathRenders {
+        for render in mediaState.mathRenders {
             if let rect = mathDrawnRect(forParagraphAt: render.range.location) {
                 addCursorRect(
                     rect.insetBy(dx: -Self.mathBoxMargin, dy: -Self.mathBoxMargin),
@@ -716,7 +716,7 @@ extension BlockTextView {
 
     /// 이미지 툴바 액션 실행 (요구 3).
     func performImage(_ action: ImageObjectAction) {
-        guard let loc = selectedImageLocation else { return }
+        guard let loc = mediaState.selectedImageLocation else { return }
         let ns = string as NSString
         let para = ns.paragraphRange(for: NSRange(location: min(loc, ns.length), length: 0))
         switch action {
@@ -861,7 +861,7 @@ extension BlockTextView {
         let newPara = (string as NSString).paragraphRange(
             for: NSRange(location: para.location, length: 0))
         applyBlock(.image, to: newPara, registerUndo: false)
-        selectedImageLocation = newPara.location
+        mediaState.selectedImageLocation = newPara.location
         setSelectedRange(NSRange(location: newPara.location, length: 0))
         didChangeText()
         refreshRenderedBlocks()
@@ -921,7 +921,7 @@ extension BlockTextView {
     /// 선택된 이미지 위에 정렬·크기·줄바꿈 툴바를 띄운다.
     /// `overrideWidth`는 드래그 리사이즈 중 실시간 % 표시용.
     func presentImageToolbar(for para: NSRange, overrideWidth: Int? = nil) {
-        guard imageRenders.contains(where: { $0.range.location == para.location }),
+        guard mediaState.imageRenders.contains(where: { $0.range.location == para.location }),
             let attrs = Self.imageAttrs(
                 from: paragraphContent(para).trimmingCharacters(in: .whitespaces),
                 definitions: currentImageDefinitions()),
@@ -936,12 +936,12 @@ extension BlockTextView {
             self?.performImage(action)
         }
         let host: NSHostingView<ImageObjectToolbarView>
-        if let existing = imageToolbarHost {
+        if let existing = overlayState.imageToolbarHost {
             existing.rootView = view
             host = existing
         } else {
             host = NSHostingView(rootView: view)
-            imageToolbarHost = host
+            overlayState.imageToolbarHost = host
         }
         let size = host.fittingSize
         // 이미지 위 중앙 — 위가 좁으면 아래로 내린다 (flipped 좌표).
@@ -953,7 +953,7 @@ extension BlockTextView {
     }
 
     func hideImageToolbar() {
-        imageToolbarHost?.removeFromSuperview()
+        overlayState.imageToolbarHost?.removeFromSuperview()
     }
 
     /// alt·title 편집 카드를 툴바 아래에 띄운다 — 현재 alt/title로 미리 채운다 (이슈 #14).
@@ -961,7 +961,7 @@ extension BlockTextView {
         guard let attrs = Self.imageAttrs(
             from: paragraphContent(para).trimmingCharacters(in: .whitespaces),
             definitions: currentImageDefinitions()),
-            let toolbarFrame = imageToolbarHost?.frame
+            let toolbarFrame = overlayState.imageToolbarHost?.frame
         else { return }
         let view = ImageAltEditorView(
             theme: palette, initialAlt: attrs.alt, initialTitle: attrs.title,
@@ -978,14 +978,14 @@ extension BlockTextView {
         }
         origin.x = max(8, min(origin.x, bounds.width - host.fittingSize.width - 8))
         host.frame = NSRect(origin: origin, size: host.fittingSize)
-        imageAltEditorHost?.removeFromSuperview()
-        imageAltEditorHost = host
+        overlayState.imageAltEditorHost?.removeFromSuperview()
+        overlayState.imageAltEditorHost = host
         addSubview(host)
     }
 
     func hideImageAltEditor() {
-        imageAltEditorHost?.removeFromSuperview()
-        imageAltEditorHost = nil
+        overlayState.imageAltEditorHost?.removeFromSuperview()
+        overlayState.imageAltEditorHost = nil
     }
 
     /// 문단이 차지하는 **전체 컬럼 폭** rect (뷰 좌표) — 레이아웃 매니저의
@@ -1007,7 +1007,7 @@ extension BlockTextView {
     /// 렌더된 이미지가 실제로 그려지는 뷰 좌표 rect — `drawImage`와 같은 규칙.
     /// 핸들 히트 테스트·그리기의 기준.
     func imageDrawnRect(forParagraphAt loc: Int) -> NSRect? {
-        guard let render = imageRenders.first(where: { $0.range.location == loc }),
+        guard let render = mediaState.imageRenders.first(where: { $0.range.location == loc }),
             let row = paragraphRectInView(
                 (string as NSString).paragraphRange(
                     for: NSRange(location: min(loc, (string as NSString).length), length: 0)))
@@ -1028,7 +1028,7 @@ extension BlockTextView {
 
     /// 100% 표시 너비 — 드래그 델타를 %로 환산할 때의 기준.
     func imageFitWidth(forParagraphAt loc: Int) -> CGFloat? {
-        guard let render = imageRenders.first(where: { $0.range.location == loc })
+        guard let render = mediaState.imageRenders.first(where: { $0.range.location == loc })
         else { return nil }
         return imageDisplaySize(render.image, widthPercent: 100).width
     }
@@ -1046,7 +1046,7 @@ extension BlockTextView {
 
     /// 오버레이(있으면)를 이미지 위치에 맞춰 다시 배치한다.
     func repositionImageBox() {
-        guard let box = imageBox, let loc = selectedImageLocation,
+        guard let box = mediaState.imageBox, let loc = mediaState.selectedImageLocation,
             let rect = imageDrawnRect(forParagraphAt: loc)
         else { return }
         box.frame = rect.insetBy(dx: -box.inset, dy: -box.inset)
@@ -1059,7 +1059,7 @@ extension BlockTextView {
         let startDisplayW = fitW * CGFloat(startWidth) / 100
         let pct = Int(((startDisplayW + deltaWidth) / fitW * 100).rounded())
         let clamped = min(100, max(10, pct))
-        resizePreview = (loc, clamped)
+        mediaState.resizePreview = (loc, clamped)
         refreshRenderedBlocks()  // 끝에서 repositionImageBox 호출됨
         let para = (string as NSString).paragraphRange(
             for: NSRange(location: min(loc, (string as NSString).length), length: 0))
@@ -1068,8 +1068,8 @@ extension BlockTextView {
 
     /// 크기 조절 확정 — 미리보기 너비%를 소스에 기록한다.
     func commitImageResize(at loc: Int) {
-        let finalWidth = resizePreview?.width
-        resizePreview = nil
+        let finalWidth = mediaState.resizePreview?.width
+        mediaState.resizePreview = nil
         let para = (string as NSString).paragraphRange(
             for: NSRange(location: min(loc, (string as NSString).length), length: 0))
         if let finalWidth, finalWidth != imageWidthPercent(at: loc) {
@@ -1085,7 +1085,7 @@ extension BlockTextView {
         let idx = min(characterIndexForInsertion(at: p), (string as NSString).length)
         let dropPara = (string as NSString).paragraphRange(
             for: NSRange(location: idx, length: 0))
-        imageDropIndicatorY = paragraphRectInView(dropPara)?.minY
+        mediaState.imageDropIndicatorY = paragraphRectInView(dropPara)?.minY
         needsDisplay = true
     }
 
@@ -1097,7 +1097,7 @@ extension BlockTextView {
     /// Moves a block paragraph (or multi-line math group) before the drop paragraph,
     /// preserving attributed block/delimiter metadata and registering an atomic undo step.
     func moveParagraph(at loc: Int, as block: PurloryBlock, toViewPoint p: NSPoint) {
-        imageDropIndicatorY = nil
+        mediaState.imageDropIndicatorY = nil
         guard let storage = textStorage else { return }
         let ns = string as NSString
         var para = ns.paragraphRange(for: NSRange(location: min(loc, ns.length), length: 0))
@@ -1165,7 +1165,7 @@ extension BlockTextView {
     /// 렌더된 수식이 실제 그려지는 뷰 좌표 rect — `drawMath`와 같은 축소 규칙.
     /// 히트 판정·커서 rect의 기준. 다중 행 그룹은 그룹 전체 rect 기준 (이슈 #20).
     func mathDrawnRect(forParagraphAt loc: Int) -> NSRect? {
-        guard let render = mathRenders.first(where: { NSLocationInRange(loc, $0.range) }),
+        guard let render = mediaState.mathRenders.first(where: { NSLocationInRange(loc, $0.range) }),
             let row = paragraphRectInView(render.range)
         else { return nil }
         var size = render.image.size
@@ -1199,7 +1199,7 @@ extension BlockTextView {
                 continue
             }
             // mouseUp — 이동 확정 또는 편집 진입.
-            imageDropIndicatorY = nil
+            mediaState.imageDropIndicatorY = nil
             if moved {
                 moveParagraph(
                     at: para.location, as: .math,
@@ -1325,7 +1325,7 @@ extension BlockTextView {
     func convertAllInlineMath() {
         // 남는 raw 스팬 여부는 syncInlineMathFlag가 실측으로 정리한다.
         guard (string as NSString).range(of: "$", options: .literal).location != NSNotFound else {
-            mayHaveInlineMath = false
+            mediaState.mayHaveInlineMath = false
             return
         }
         var location = 0
@@ -1345,7 +1345,7 @@ extension BlockTextView {
     /// 커서가 떠난 문단의 raw `$…$`를 원자로 접는다. 커서 문단은 편집 중일 수 있어
     /// 건드리지 않고 플래그만 유지한다 — 다음 커서 이동 때 접힌다.
     func collapseRawInlineMath(awayFrom sel: NSRange, in ranges: [NSRange]) {
-        guard mayHaveInlineMath else { return }
+        guard mediaState.mayHaveInlineMath else { return }
         let paragraphs = ranges.flatMap { indexedMediaParagraphs(in: $0) }
         var seen = Set<Int>()
         for paragraph in paragraphs.sorted(by: { $0.range.location > $1.range.location }) {
@@ -1368,7 +1368,7 @@ extension BlockTextView {
     /// 실측으로 플래그 정리 — 전체 경로를 한 번 탄 뒤 호출한다 (syncMarkerFlag 짝).
     func syncInlineMathFlag() {
         guard let storage = textStorage else {
-            mayHaveInlineMath = false
+            mediaState.mayHaveInlineMath = false
             return
         }
         let ns = storage.string as NSString
@@ -1381,7 +1381,7 @@ extension BlockTextView {
             location = max(dollar.upperBound, para.upperBound)
             if hasConvertibleRawMath(in: para) { found = true }
         }
-        mayHaveInlineMath = found
+        mediaState.mayHaveInlineMath = found
     }
 
     /// 테마·글자 크기 변경 — 원자 이미지를 새 잉크색·크기로 다시 렌더한다.
@@ -1430,7 +1430,7 @@ extension BlockTextView {
         didChangeText()
         setSelectedRange(
             NSRange(location: index + 1, length: (atom.latex as NSString).length))
-        mayHaveInlineMath = true
+        mediaState.mayHaveInlineMath = true
         return true
     }
 
@@ -1558,20 +1558,20 @@ extension BlockTextView {
             NSIntersectionRange(range, edit).length > 0
                 || (edit.length == 0 && edit.location >= range.location && edit.location <= range.upperBound)
         }
-        mathRenders = mathRenders.compactMap { edited($0.range) ? nil : (moved($0.range), $0.image) }
-        imageRenders = imageRenders.compactMap { item in
+        mediaState.mathRenders = mediaState.mathRenders.compactMap { edited($0.range) ? nil : (moved($0.range), $0.image) }
+        mediaState.imageRenders = mediaState.imageRenders.compactMap { item in
             guard !edited(item.range) else { return nil }
             return ImageRender(range: moved(item.range), image: item.image, size: item.size,
                 align: item.align, selected: item.selected, failure: item.failure)
         }
-        mathRenderErrors = Dictionary(mathRenderErrors.map {
+        mediaState.mathRenderErrors = Dictionary(mediaState.mathRenderErrors.map {
             (moved(NSRange(location: $0.key, length: 0)).location, $0.value)
         }, uniquingKeysWith: { _, latest in latest })
-        previousClearRanges = previousClearRanges.map(moved).filter { $0.length > 0 }
-        previousMathGroups = previousMathGroups.map(moved).filter { $0.length > 0 }
-        mediaLastSelectionRange = mediaLastSelectionRange.map(moved)
-        if let location = selectedImageLocation {
-            selectedImageLocation = NSLocationInRange(location, edit) ? nil
+        mediaState.previousClearRanges = mediaState.previousClearRanges.map(moved).filter { $0.length > 0 }
+        mediaState.previousMathGroups = mediaState.previousMathGroups.map(moved).filter { $0.length > 0 }
+        mediaState.lastSelectionRange = mediaState.lastSelectionRange.map(moved)
+        if let location = mediaState.selectedImageLocation {
+            mediaState.selectedImageLocation = NSLocationInRange(location, edit) ? nil
                 : moved(NSRange(location: location, length: 0)).location
         }
     }
@@ -1579,10 +1579,10 @@ extension BlockTextView {
     func mediaRenderWorkRanges(full: Bool) -> [NSRange] {
         let total = textStorage?.length ?? 0
         if full { return [NSRange(location: 0, length: total)] }
-        var requests = mediaDirtyRanges + [selectedRange()]
+        var requests = mediaState.dirtyRanges + [selectedRange()]
         if let visible = visibleTextRange() { requests.append(visible) }
-        if let prior = mediaLastSelectionRange { requests.append(prior) }
-        if let image = selectedImageLocation { requests.append(NSRange(location: image, length: 0)) }
+        if let prior = mediaState.lastSelectionRange { requests.append(prior) }
+        if let image = mediaState.selectedImageLocation { requests.append(NSRange(location: image, length: 0)) }
         var ranges: [NSRange] = []
         for request in requests {
             let location = min(max(0, request.location), total)
@@ -1591,13 +1591,13 @@ extension BlockTextView {
             guard let first = paragraphs.first, let last = paragraphs.last else { continue }
             var range = NSRange(location: first.range.location, length: last.range.upperBound - first.range.location)
             for edge in [first.range.location, last.range.location] {
-                if let run = mediaParagraphIndex?.mathRun(containing: edge) { range = NSUnionRange(range, run) }
+                if let run = mediaState.paragraphIndex?.mathRun(containing: edge) { range = NSUnionRange(range, run) }
             }
             ranges.append(range)
         }
         // A removed opening/closing delimiter may leave former members outside the
         // current run; include the prior group to restore every persistent line height.
-        for old in previousMathGroups where ranges.contains(where: { NSIntersectionRange($0, old).length > 0 }) {
+        for old in mediaState.previousMathGroups where ranges.contains(where: { NSIntersectionRange($0, old).length > 0 }) {
             ranges.append(old)
         }
         return mergedMediaRanges(ranges)
@@ -1610,8 +1610,8 @@ extension BlockTextView {
         let traceToken = recorder?.beginPhase(.renderRefresh)
         defer { if let traceToken { recorder?.endPhase(traceToken) } }
         guard let layoutManager, let storage = textStorage else { return }
-        lastMediaRenderParagraphCount = 0
-        let fullRefresh = forceRender || mediaParagraphIndex?.utf16Length != storage.length
+        mediaState.lastRenderParagraphCount = 0
+        let fullRefresh = forceRender || mediaState.paragraphIndex?.utf16Length != storage.length
         _ = indexedMediaParagraphs(in: NSRange(location: 0, length: 0))
 
         // 빠른 경로: 렌더 중인 블록도, 이미 렌더된 것도, 이미지 선택도 없고 소스에
@@ -1622,13 +1622,13 @@ extension BlockTextView {
         // 주의: 수식/이미지 블록은 마커("$$"·"![")가 이미 **소비**돼 storage 텍스트에
         // 남아 있지 않다 — 커서 문단이 수식/이미지면 마커 검사와 무관하게 전체
         // 경로를 타야 한다 (안 그러면 편집 후 렌더로 영영 못 돌아가는 버그).
-        if mathRenders.isEmpty, imageRenders.isEmpty, previousMathGroups.isEmpty,
-            previousClearRanges.isEmpty, selectedImageLocation == nil, !mayHaveMarkers, !mayHaveInlineMath {
+        if mediaState.mathRenders.isEmpty, mediaState.imageRenders.isEmpty, mediaState.previousMathGroups.isEmpty,
+            mediaState.previousClearRanges.isEmpty, mediaState.selectedImageLocation == nil, !mediaState.mayHaveMarkers, !mediaState.mayHaveInlineMath {
             let source = storage.string as NSString
             let caretPara = source.paragraphRange(
                 for: NSRange(location: min(selectedRange().location, source.length), length: 0))
             let caretBlock = blockInfo(in: caretPara).block
-            let previousBlock = mediaLastSelectionRange.map {
+            let previousBlock = mediaState.lastSelectionRange.map {
                 blockInfo(in: source.paragraphRange(for: NSRange(
                     location: min($0.location, source.length), length: 0))).block
             }
@@ -1638,7 +1638,7 @@ extension BlockTextView {
                 cancelMathPreview()
                 hideMathPreview()
                 _ = takeMediaDirtyRanges()
-                mediaLastSelectionRange = selectedRange()
+                mediaState.lastSelectionRange = selectedRange()
                 return
             }
         }
@@ -1650,7 +1650,7 @@ extension BlockTextView {
         func affected(_ range: NSRange) -> Bool {
             fullRefresh || scanRanges.contains { NSIntersectionRange($0, range).length > 0 }
         }
-        for old in previousClearRanges where affected(old) || limitToVisible {
+        for old in mediaState.previousClearRanges where affected(old) || limitToVisible {
             let location = min(old.location, storage.length)
             let length = min(old.length, storage.length - location)
             if length > 0 {
@@ -1658,12 +1658,12 @@ extension BlockTextView {
                     (storage.string as NSString).paragraphRange(for: NSRange(location: location, length: length)))
             }
         }
-        previousClearRanges = fullRefresh || limitToVisible ? [] : previousClearRanges.filter { !affected($0) }
-        var maths = fullRefresh || limitToVisible ? [] : mathRenders.filter { !affected($0.range) }
-        var collectedMathErrors = fullRefresh || limitToVisible ? [:] : mathRenderErrors.filter {
+        mediaState.previousClearRanges = fullRefresh || limitToVisible ? [] : mediaState.previousClearRanges.filter { !affected($0) }
+        var maths = fullRefresh || limitToVisible ? [] : mediaState.mathRenders.filter { !affected($0.range) }
+        var collectedMathErrors = fullRefresh || limitToVisible ? [:] : mediaState.mathRenderErrors.filter {
             !affected(NSRange(location: $0.key, length: 1))
         }
-        var images: [ImageRender] = fullRefresh || limitToVisible ? [] : imageRenders.filter { !affected($0.range) }
+        var images: [ImageRender] = fullRefresh || limitToVisible ? [] : mediaState.imageRenders.filter { !affected($0.range) }
         // 편집 모드인 수식 그룹 — 루프 뒤 라이브 미리보기 패널을 붙인다.
         var editingMath: (para: NSRange, source: String)?
         let sel = selectedRange()
@@ -1678,18 +1678,18 @@ extension BlockTextView {
         let paras = indexed.values.sorted { $0.range.location < $1.range.location }.map {
             (range: $0.range, block: $0.record.block, open: $0.record.open, close: $0.record.close)
         }
-        lastMediaRenderParagraphCount = paras.count
+        mediaState.lastRenderParagraphCount = paras.count
         let groups = Self.mathGroupRanges(paras, requireContiguousRanges: true)
         // Restore old group layout before rendering replacement singles/images.
         // Every scoped group is complete, including on a scroll-driven dirty pass.
-        for old in previousMathGroups where affected(old) {
+        for old in mediaState.previousMathGroups where affected(old) {
             for member in indexedMediaParagraphs(in: old) {
                 if !groups.contains(where: { NSIntersectionRange($0, member.range).length > 0 }) {
                     updateGroupLineHeight(nil, in: member.range)
                 }
             }
         }
-        previousMathGroups = previousMathGroups.filter { !affected($0) } + groups
+        mediaState.previousMathGroups = mediaState.previousMathGroups.filter { !affected($0) } + groups
 
         // 2단계 — 다중 행 display 그룹 렌더. 커서가 그룹 어느 줄에든 들어오면
         // 그룹 전체가 소스 편집 모드가 되고, 나가면 하나의 이미지로 합쳐 그린다.
@@ -1728,7 +1728,7 @@ extension BlockTextView {
                 latex: latex, color: palette.ink, fontSize: mathFontSize)
             else { continue }  // 파싱 불가 — 직전 높이 유지 (기존 정책)
             maths.append((group, image))
-            previousClearRanges.append(group)
+            mediaState.previousClearRanges.append(group)
             layoutManager.addTemporaryAttribute(
                 .foregroundColor, value: NSColor.clear, forCharacterRange: group)
             // 그룹 박스 총높이(렌더±마진+틈)를 문단 수로 나눠 배분한다 — 표시
@@ -1752,7 +1752,7 @@ extension BlockTextView {
 
             let content = paragraphContent(para)
             let contentEnd = para.location + (content as NSString).length
-            let objectSelected = block == .image && selectedImageLocation == para.location
+            let objectSelected = block == .image && mediaState.selectedImageLocation == para.location
             // 이미지는 소스를 **절대** 보여주지 않는다 — 항상 렌더(요구 1).
             // 수식만 커서가 닿으면 편집 모드(소스)로 전환한다.
             let editing =
@@ -1799,7 +1799,7 @@ extension BlockTextView {
                     updateRenderedLineHeight(displayHeight(of: image), block: .math, in: para)
                     if !editing {
                         maths.append((para, image))
-                        previousClearRanges.append(para)
+                        mediaState.previousClearRanges.append(para)
                         layoutManager.addTemporaryAttribute(
                             .foregroundColor, value: NSColor.clear, forCharacterRange: para)
                     }
@@ -1814,7 +1814,7 @@ extension BlockTextView {
                     if !editing {
                         maths.append((para, placeholder))
                         collectedMathErrors[para.location] = error
-                        previousClearRanges.append(para)
+                        mediaState.previousClearRanges.append(para)
                         layoutManager.addTemporaryAttribute(
                             .foregroundColor, value: NSColor.clear, forCharacterRange: para)
                     }
@@ -1834,7 +1834,7 @@ extension BlockTextView {
                                 range: para, image: placeholder, size: size,
                                 align: a.align, selected: objectSelected, failure: failure))
                         updateRenderedLineHeight(size.height, block: .image, in: para)
-                        previousClearRanges.append(para)
+                        mediaState.previousClearRanges.append(para)
                         layoutManager.addTemporaryAttribute(
                             .foregroundColor, value: NSColor.clear, forCharacterRange: para)
                     } else {
@@ -1845,26 +1845,26 @@ extension BlockTextView {
                 }
                 let a = attrs ?? ImageAttrs(src: "")
                 // 드래그 리사이즈 중이면 미리보기 너비를 우선한다.
-                let width = resizePreview?.loc == para.location
-                    ? resizePreview!.width : a.width
+                let width = mediaState.resizePreview?.loc == para.location
+                    ? mediaState.resizePreview!.width : a.width
                 let size = imageDisplaySize(image, widthPercent: width)
                 images.append(
                     ImageRender(
                         range: para, image: image, size: size, align: a.align,
                         selected: objectSelected))
                 updateRenderedLineHeight(size.height, block: .image, in: para)
-                previousClearRanges.append(para)
+                mediaState.previousClearRanges.append(para)
                 layoutManager.addTemporaryAttribute(
                     .foregroundColor, value: NSColor.clear, forCharacterRange: para)
             default:
                 break
             }
         }
-        mathRenders = maths.sorted { $0.range.location < $1.range.location }
-        self.mathRenderErrors = collectedMathErrors
-        imageRenders = images.sorted { $0.range.location < $1.range.location }
+        mediaState.mathRenders = maths.sorted { $0.range.location < $1.range.location }
+        self.mediaState.mathRenderErrors = collectedMathErrors
+        mediaState.imageRenders = images.sorted { $0.range.location < $1.range.location }
         if fullRefresh { syncMarkerFlag() }
-        mediaLastSelectionRange = selectedRange()
+        mediaState.lastSelectionRange = selectedRange()
         repositionImageBox()  // 렌더/줄 높이 변화에 박스 위치를 맞춘다.
         // Keep live preview beside its source inside the same math block. Retain
         // the existing debounce so typing does not add a render on every key.
@@ -1882,22 +1882,22 @@ extension BlockTextView {
     /// 미리보기 렌더 예약 — 이미 예약이 있으면 소스만 교체한다 (타이머 리셋 없음,
     /// 연속 타이핑에서 최대 한 번의 조판).
     func scheduleMathPreview(source: String, in para: NSRange) {
-        mathPreviewPending = (source, para)
-        guard mathPreviewTask == nil else { return }
-        mathPreviewTask = Task { [weak self] in
+        mediaState.mathPreviewPending = (source, para)
+        guard mediaState.mathPreviewTask == nil else { return }
+        mediaState.mathPreviewTask = Task { [weak self] in
             try? await Task.sleep(for: EditorTiming.mathPreviewDelay)
             guard !Task.isCancelled, let self else { return }
-            self.mathPreviewTask = nil
-            guard let pending = self.mathPreviewPending else { return }
-            self.mathPreviewPending = nil
+            self.mediaState.mathPreviewTask = nil
+            guard let pending = self.mediaState.mathPreviewPending else { return }
+            self.mediaState.mathPreviewPending = nil
             self.presentMathPreview(source: pending.source, in: pending.para)
         }
     }
 
     func cancelMathPreview() {
-        mathPreviewTask?.cancel()
-        mathPreviewTask = nil
-        mathPreviewPending = nil
+        mediaState.mathPreviewTask?.cancel()
+        mediaState.mathPreviewTask = nil
+        mediaState.mathPreviewPending = nil
     }
 
     /// Source and preview occupy one block; preview never covers the next prose row.
@@ -1942,12 +1942,12 @@ extension BlockTextView {
             theme: palette, image: image, message: message, isError: isError,
             maxWidth: availableWidth)
         let host: NSHostingView<MathPreviewView>
-        if let existing = mathPreviewHost {
+        if let existing = mediaState.mathPreviewHost {
             existing.rootView = view
             host = existing
         } else {
             host = NSHostingView(rootView: view)
-            mathPreviewHost = host
+            mediaState.mathPreviewHost = host
         }
         let size = host.fittingSize
         // SwiftUI rounds intrinsic sizes to whole points. The reserved trailing
@@ -1962,15 +1962,15 @@ extension BlockTextView {
     }
 
     func hideMathPreview() {
-        mathPreviewHost?.removeFromSuperview()
+        mediaState.mathPreviewHost?.removeFromSuperview()
     }
 
     func currentImageDefinitions() -> [String: ImageReferenceParser.Definition] {
-        if imageDefinitionsDirty {
-            imageDefinitions = ImageReferenceParser.collectDefinitions(in: string)
-            imageDefinitionsDirty = false
+        if mediaState.imageDefinitionsDirty {
+            mediaState.imageDefinitions = ImageReferenceParser.collectDefinitions(in: string)
+            mediaState.imageDefinitionsDirty = false
         }
-        return imageDefinitions
+        return mediaState.imageDefinitions
     }
 
     /// `![alt](src)` 한 줄에서 src(상대경로)만 뽑는다. 형식이 아니면 nil.
@@ -2132,7 +2132,7 @@ extension BlockTextView {
     /// 단독 완결 수식이면 nil (그룹 이동 대상이 아니다).
     func mathGroup(containing loc: Int) -> NSRange? {
         _ = indexedMediaParagraphs(in: NSRange(location: 0, length: 0))
-        guard let run = mediaParagraphIndex?.mathRun(containing: loc) else { return nil }
+        guard let run = mediaState.paragraphIndex?.mathRun(containing: loc) else { return nil }
         let paragraphs = indexedMediaParagraphs(in: run).map {
             (range: $0.range, block: $0.record.block, open: $0.record.open, close: $0.record.close)
         }
@@ -2166,18 +2166,18 @@ extension BlockTextView {
     }
 
     func renderedMathImage(at loc: Int, latex: String) -> NSImage? {
-        mathRenders.first { $0.range.location <= loc && $0.range.upperBound > loc }?.image
+        mediaState.mathRenders.first { $0.range.location <= loc && $0.range.upperBound > loc }?.image
             ?? MathRenderer.image(latex: latex, color: palette.ink, fontSize: mathFontSize)
     }
 
     @objc func copyMathLatex(_ sender: AnyObject?) {
-        guard let loc = mathActionLocation, let latex = mathSource(at: loc) else { return }
+        guard let loc = mediaState.mathActionLocation, let latex = mathSource(at: loc) else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(latex, forType: .string)
     }
 
     @objc func copyMathImage(_ sender: AnyObject?) {
-        guard let loc = mathActionLocation,
+        guard let loc = mediaState.mathActionLocation,
             let latex = mathSource(at: loc),
             let image = renderedMathImage(at: loc, latex: latex)
         else { return }
@@ -2186,7 +2186,7 @@ extension BlockTextView {
     }
 
     @objc func copyMathPDF(_ sender: AnyObject?) {
-        guard let loc = mathActionLocation,
+        guard let loc = mediaState.mathActionLocation,
             let latex = mathSource(at: loc),
             let image = renderedMathImage(at: loc, latex: latex),
             let pdf = MathRenderer.pdfData(from: image)

@@ -126,7 +126,7 @@ final class ImageBoxOverlay: NSView {
                 tv.moveImageParagraph(
                     at: paraLocation, toViewPoint: tv.convert(event.locationInWindow, from: nil))
             } else {
-                tv.imageDropIndicatorY = nil  // 클릭만 — 표시선 제거
+                tv.mediaState.imageDropIndicatorY = nil  // 클릭만 — 표시선 제거
                 tv.needsDisplay = true
             }
             NSCursor.openHand.set()

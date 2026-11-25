@@ -2,32 +2,32 @@ import AppKit
 
 extension BlockTextView {
     func invalidateMediaIndex() {
-        mediaParagraphIndex = nil
-        mediaLastSelectionRange = nil
-        mediaDirtyRanges = [NSRange(location: 0, length: textStorage?.length ?? 0)]
+        mediaState.paragraphIndex = nil
+        mediaState.lastSelectionRange = nil
+        mediaState.dirtyRanges = [NSRange(location: 0, length: textStorage?.length ?? 0)]
     }
 
     func indexedMediaParagraphs(in range: NSRange) -> [ParagraphRenderIndex.Paragraph] {
         guard let storage = textStorage else { return [] }
         if storage.delegate == nil { storage.delegate = self }
-        if mediaParagraphIndex?.utf16Length != storage.length {
-            mediaParagraphIndex = ParagraphRenderIndex(records: mediaRecords(in: NSRange(location: 0, length: storage.length)))
-            mediaIndexBuildCount += 1
-            mediaDirtyRanges = [NSRange(location: 0, length: storage.length)]
+        if mediaState.paragraphIndex?.utf16Length != storage.length {
+            mediaState.paragraphIndex = ParagraphRenderIndex(records: mediaRecords(in: NSRange(location: 0, length: storage.length)))
+            mediaState.indexBuildCount += 1
+            mediaState.dirtyRanges = [NSRange(location: 0, length: storage.length)]
         }
-        return mediaParagraphIndex?.paragraphs(in: range) ?? []
+        return mediaState.paragraphIndex?.paragraphs(in: range) ?? []
     }
 
     func takeMediaDirtyRanges() -> [NSRange] {
-        defer { mediaDirtyRanges = [] }
-        return mediaDirtyRanges
+        defer { mediaState.dirtyRanges = [] }
+        return mediaState.dirtyRanges
     }
 
     /// Observe both text and block attributes on the authoritative storage delegate.
     /// Character edits splice the touched paragraphs plus immediate neighbors; style
     /// writes with unchanged block metadata do not dirty the next render again.
     func updateMediaRenderIndex(mask: NSTextStorageEditActions, range edited: NSRange, delta: Int) {
-        guard let storage = textStorage, let index = mediaParagraphIndex else { return }
+        guard let storage = textStorage, let index = mediaState.paragraphIndex else { return }
         guard index.utf16Length + delta == storage.length,
               edited.location <= index.utf16Length, edited.length >= delta else { invalidateMediaIndex(); return }
         let oldEdit = NSRange(location: edited.location, length: edited.length - delta)
@@ -44,25 +44,25 @@ extension BlockTextView {
         guard newRange.length >= delta else { invalidateMediaIndex(); return }
         let oldRange = NSRange(location: newRange.location, length: newRange.length - delta)
         let records = mediaRecords(in: newRange)
-        lastMediaIndexUpdateParagraphs = records.count
+        mediaState.lastIndexUpdateParagraphs = records.count
         let charactersChanged = mask.contains(.editedCharacters)
         if !charactersChanged, index.paragraphs(in: oldRange).map(\.record) == records { return }
         guard index.replace(oldRange, with: records), index.utf16Length == ns.length else { invalidateMediaIndex(); return }
         if charactersChanged {
             rebaseRenderedMedia(replacing: oldEdit, withLength: edited.length)
-            mediaDirtyRanges = mediaDirtyRanges.map { rebaseMediaRange($0, replacing: oldEdit, withLength: edited.length) }
+            mediaState.dirtyRanges = mediaState.dirtyRanges.map { rebaseMediaRange($0, replacing: oldEdit, withLength: edited.length) }
         }
-        mediaDirtyRanges = mergedMediaRanges(mediaDirtyRanges + [newRange])
+        mediaState.dirtyRanges = mergedMediaRanges(mediaState.dirtyRanges + [newRange])
     }
 
     func writingStatistics(goal: Int = 500) -> WorkspaceWritingStatistics {
         guard let storage = textStorage else {
             return WorkspaceWritingStatistics(characters: 0, paragraphs: 1, goal: goal)
         }
-        if mediaParagraphIndex?.utf16Length != storage.length {
+        if mediaState.paragraphIndex?.utf16Length != storage.length {
             _ = indexedMediaParagraphs(in: NSRange(location: 0, length: 0))
         }
-        if let index = mediaParagraphIndex, index.utf16Length == storage.length {
+        if let index = mediaState.paragraphIndex, index.utf16Length == storage.length {
             let newlines = index.newlineCount
             return WorkspaceWritingStatistics(
                 characters: max(0, index.utf16Length - newlines),

@@ -9,7 +9,7 @@ extension BlockTextView {
     /// 접근성 경로가 쓰는 현재 제안 스냅샷 — 시각 드로잉과 **같은 원천**이다 (#24).
     func ghostSnapshotForAccessibility() -> (text: String, generation: Int)? {
         guard let ghost = ghostText, !ghost.isEmpty else { return nil }
-        return (ghost, ghostGeneration)
+        return (ghost, overlayState.ghostGeneration)
     }
 
     /// NSTextView can notify selection/insertion changes before an insertion or
@@ -21,14 +21,14 @@ extension BlockTextView {
     }
 
     func scheduleEditingOverlayRefresh(restartBlink: Bool = false) {
-        pendingCaretBlinkRestart = pendingCaretBlinkRestart || restartBlink
-        guard !editingOverlayRefreshPending else { return }
-        editingOverlayRefreshPending = true
+        overlayState.pendingCaretBlinkRestart = overlayState.pendingCaretBlinkRestart || restartBlink
+        guard !overlayState.editingOverlayRefreshPending else { return }
+        overlayState.editingOverlayRefreshPending = true
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            self.editingOverlayRefreshPending = false
-            let restart = self.pendingCaretBlinkRestart
-            self.pendingCaretBlinkRestart = false
+            self.overlayState.editingOverlayRefreshPending = false
+            let restart = self.overlayState.pendingCaretBlinkRestart
+            self.overlayState.pendingCaretBlinkRestart = false
             guard self.window != nil else { return }
             self.refreshActiveLineHighlight(restartBlink: restart)
         }
@@ -42,16 +42,16 @@ extension BlockTextView {
             scheduleEditingOverlayRefresh(restartBlink: restartBlink)
             return
         }
-        guard !refreshingEditingOverlays else { return }
-        refreshingEditingOverlays = true
-        defer { refreshingEditingOverlays = false }
+        guard !overlayState.refreshingEditingOverlays else { return }
+        overlayState.refreshingEditingOverlays = true
+        defer { overlayState.refreshingEditingOverlays = false }
         syncActiveLineView()
         // 직전 선택 하이라이트 영역 무효화 — 공백·개행 선택 잔상 방지.
         let selection = selectionHighlightRect()
-        if selection != lastSelectionRect, let oldSelection = lastSelectionRect {
+        if selection != overlayState.lastSelectionRect, let oldSelection = overlayState.lastSelectionRect {
             setNeedsDisplay(oldSelection.insetBy(dx: -4, dy: -4))
         }
-        lastSelectionRect = selection
+        overlayState.lastSelectionRect = selection
         syncCaretView(restartBlink: restartBlink)
     }
 
@@ -83,7 +83,7 @@ extension BlockTextView {
         guard let window, window.firstResponder === self,
             selectedRange().length == 0,
             selectedRange().location != NSNotFound,
-            selectedImageLocation == nil,
+            mediaState.selectedImageLocation == nil,
             !isEditingMath,
             let layoutManager, let textContainer
         else { return nil }
@@ -130,7 +130,7 @@ extension BlockTextView {
 
     /// 선택이 생기면 잠깐 안정된 뒤 툴바를 띄우고, 사라지면 감춘다.
     func updateSelectionToolbar() {
-        toolbarShowTask?.cancel()
+        overlayState.toolbarShowTask?.cancel()
         let sel = selectedRange()
         // 공백만 있는(단어 삭제용 같은) 사소한 선택이나 IME 조합 중이면 띄우지 않는다.
         let selected = sel.length > 0 ? (string as NSString).substring(with: sel) : ""
@@ -142,7 +142,7 @@ extension BlockTextView {
         }
         // 드래그 중 깜빡임 방지 — 선택이 멈춘 뒤에 띄우되, 지연은 짧게(120ms)해 굼떠
         // 보이지 않게 한다.
-        toolbarShowTask = Task { [weak self] in
+        overlayState.toolbarShowTask = Task { [weak self] in
             try? await Task.sleep(for: EditorTiming.selectionToolbarDelay)
             guard !Task.isCancelled else { return }
             self?.presentSelectionToolbar()
@@ -150,12 +150,12 @@ extension BlockTextView {
     }
 
     func hideSelectionToolbar() {
-        toolbarShowTask?.cancel()
-        if let panel = workspaceSelectionPanel {
-            workspaceSelectionPanel = nil
+        overlayState.toolbarShowTask?.cancel()
+        if let panel = overlayState.workspaceSelectionPanel {
+            overlayState.workspaceSelectionPanel = nil
             panel.parent?.removeChildWindow(panel); panel.orderOut(nil); panel.close()
         }
-        toolbarHost?.removeFromSuperview()
+        overlayState.toolbarHost?.removeFromSuperview()
     }
 
     func presentSelectionToolbar() {
@@ -183,21 +183,21 @@ extension BlockTextView {
             theme: palette, state: currentSelectionState(), onAction: { [weak self] action in self?.perform(action) },
             onPolish: workspaceInteraction.map { interaction in { [weak interaction] in interaction?.polishSelection() } })
         let host: NSHostingView<SelectionToolbarView>
-        if let existing = toolbarHost {
+        if let existing = overlayState.toolbarHost {
             existing.rootView = view
             host = existing
         } else {
             host = NSHostingView(rootView: view)
-            toolbarHost = host
+            overlayState.toolbarHost = host
         }
         let size = host.fittingSize
         if editorialWorkspaceStyle, let window {
             // A fixed source popover crosses tile boundaries instead of being clipped by a column.
             let anchor = window.convertToScreen(convert(rect, to: nil))
             let screen = window.screen?.visibleFrame ?? window.frame
-            let panel = workspaceSelectionPanel ?? WorkspaceSelectionPanel(contentRect: .zero,
+            let panel = overlayState.workspaceSelectionPanel ?? WorkspaceSelectionPanel(contentRect: .zero,
                 styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-            let appeared = workspaceSelectionPanel == nil
+            let appeared = overlayState.workspaceSelectionPanel == nil
             panel.becomesKeyOnlyIfNeeded = true
             panel.initialFirstResponder = nil
             panel.title = "선택 서식"; panel.isReleasedWhenClosed = false
@@ -217,7 +217,7 @@ extension BlockTextView {
             } else if !panel.isKeyWindow {
                 panel.makeFirstResponder(nil)
             }
-            workspaceSelectionPanel = panel
+            overlayState.workspaceSelectionPanel = panel
             return
         }
         // 이미 떠 있으면 위치를 고정한다 — 글자 크기를 줄이면 선택 rect가 움직여
@@ -287,10 +287,10 @@ extension BlockTextView {
         let visible =
             window?.firstResponder === self
             && selectedRange().length == 0
-            && selectedImageLocation == nil
+            && mediaState.selectedImageLocation == nil
         guard visible, let line = caretLineGeometry(), let rect = caretRectInView() else {
-            caretBlinkTimer?.invalidate()
-            caretBlinkTimer = nil
+            overlayState.caretBlinkTimer?.invalidate()
+            overlayState.caretBlinkTimer = nil
             caretView.isHidden = true
             return
         }
@@ -312,16 +312,16 @@ extension BlockTextView {
             if caretView.frame != caret { caretView.frame = caret }
             if caretView.isHidden { caretView.isHidden = false }
         }
-        if restartBlink || moved || caretBlinkTimer == nil { restartCaretBlink() }
+        if restartBlink || moved || overlayState.caretBlinkTimer == nil { restartCaretBlink() }
     }
 
     /// 블링크를 "보임" 상태부터 다시 시작한다 — 타이핑·이동 중엔 캐럿이
     /// 항상 또렷하게 보이고, 멈춘 뒤부터 부드럽게 깜빡인다.
     func restartCaretBlink() {
-        caretBlinkTimer?.invalidate()
+        overlayState.caretBlinkTimer?.invalidate()
         caretView.layer?.removeAllAnimations()
         caretView.alphaValue = 1
-        caretBlinkTimer = Timer.scheduledTimer(withTimeInterval: EditorTiming.caretBlinkInterval, repeats: true) {
+        overlayState.caretBlinkTimer = Timer.scheduledTimer(withTimeInterval: EditorTiming.caretBlinkInterval, repeats: true) {
             [weak self] timer in
             guard self != nil else {
                 timer.invalidate()
@@ -352,15 +352,15 @@ extension BlockTextView {
         let valid = range.flatMap {
             $0.location + $0.length <= (string as NSString).length ? $0 : nil
         }
-        guard conversationPromptRange != valid else { return }
-        conversationPromptRange = valid
+        guard overlayState.conversationPromptRange != valid else { return }
+        overlayState.conversationPromptRange = valid
         layoutConversationPrompt()
         needsDisplay = true
     }
 
     /// pill을 대화 마지막 줄 끝 아래에 놓는다 — 화면을 흔들지 않는다 (§3 조용한 UI).
     func layoutConversationPrompt() {
-        guard let range = conversationPromptRange,
+        guard let range = overlayState.conversationPromptRange,
             let layoutManager, let textContainer
         else {
             conversationPromptView.isHidden = true
@@ -392,7 +392,7 @@ extension BlockTextView {
 
     /// 블록 전체의 아주 약한 배경 하이라이트 — draw(_:)가 본문 아래에 깐다.
     func drawConversationHighlight(in dirtyRect: NSRect) {
-        guard let range = conversationPromptRange,
+        guard let range = overlayState.conversationPromptRange,
             let layoutManager, let textContainer
         else { return }
         let glyphs = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
@@ -416,8 +416,8 @@ extension BlockTextView {
     /// 첫 글자 지연 예산(PLAN §10)을 깎아 먹었다. "고스트는 조용히"의 정답은
     /// 모션이 아니라 침묵이다 — 나타나고, 거절되면 흔적 없이 사라진다.
     func startGhostFadeIn() {
-        ghostFadeTask?.cancel()
-        ghostOpacity = 1
+        overlayState.ghostFadeTask?.cancel()
+        overlayState.ghostOpacity = 1
         needsDisplay = true
     }
 
@@ -444,7 +444,7 @@ extension BlockTextView {
         workspaceInteraction?.draw(dirtyRect)
 
         // 이미지 이동 드래그 중 드롭 위치 표시선 (요구 B).
-        if let y = imageDropIndicatorY {
+        if let y = mediaState.imageDropIndicatorY {
             let inset = textContainerInset.width
             palette.blue.setFill()
             NSRect(x: inset, y: y - 1, width: bounds.width - inset * 2, height: 2).fill()
@@ -460,7 +460,7 @@ extension BlockTextView {
         let font = (typingAttributes[.font] as? NSFont) ?? bodyFont
         let attributes: [NSAttributedString.Key: Any] = [
             .font: font,
-            .foregroundColor: palette.ghostSuggestion.withAlphaComponent(ghostOpacity),
+            .foregroundColor: palette.ghostSuggestion.withAlphaComponent(overlayState.ghostOpacity),
         ]
         // 프래그먼트 top(caretRect.minY)이 아니라 본문 글리프와 같은
         // 베이스라인에 맞춰야 실제 글자 높이와 일치한다 (줄 간격과 무관하게).
