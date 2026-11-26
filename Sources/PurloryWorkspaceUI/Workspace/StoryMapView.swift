@@ -1,4 +1,6 @@
 import SwiftUI
+import PurloryFoundation
+import PurloryDocumentEngine
 
 /// Attaches the prepared read-only map to the actual project and background reader.
 struct StoryMapWorkspacePanel: View {

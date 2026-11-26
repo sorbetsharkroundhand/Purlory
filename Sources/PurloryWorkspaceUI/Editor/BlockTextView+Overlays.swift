@@ -2,6 +2,7 @@ import AppKit
 import SwiftMath
 import SwiftUI
 import UniformTypeIdentifiers
+import PurloryIntelligence
 
 // Caret, selection, Ghost and transient editing tools.
 extension BlockTextView {

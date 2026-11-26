@@ -4,6 +4,7 @@ import PurloryDocumentEngine
 import SwiftMath
 import SwiftUI
 import UniformTypeIdentifiers
+import PurloryIntelligence
 
 // Attributed presentation and TextKit block drawing.
 extension BlockTextView {

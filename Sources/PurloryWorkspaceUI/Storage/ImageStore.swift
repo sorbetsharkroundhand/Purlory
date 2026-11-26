@@ -1,5 +1,7 @@
 import AppKit
 import ImageIO
+import PurloryFoundation
+import PurloryDocumentEngine
 
 /// 저널에 붙인 이미지의 파일 저장·로드 (에디터 v3.1).
 ///

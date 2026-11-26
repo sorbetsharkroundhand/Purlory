@@ -1,4 +1,6 @@
 import Foundation
+import PurloryFoundation
+import PurloryIntelligence
 
 extension WritingStyleRepository {
     static func update(_ record: WritingStyleRecord, in session: ProjectSession, identity: ProjectRuntimeIdentity) throws {

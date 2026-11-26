@@ -1,5 +1,7 @@
 import AppKit
 import SwiftUI
+import PurloryFoundation
+import PurloryDocumentEngine
 
 struct SpatialManilaTabBar: NSViewRepresentable {
     @Bindable var session: ProjectSession

@@ -1,5 +1,8 @@
 import Combine
 import Foundation
+import PurloryFoundation
+import PurloryDocumentEngine
+import PurloryIntelligence
 
 struct PreparedStoryMap: Equatable, Sendable {
     let identity: ProjectRuntimeIdentity

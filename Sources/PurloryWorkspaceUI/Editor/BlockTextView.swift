@@ -2,6 +2,10 @@ import AppKit
 import SwiftMath
 import SwiftUI
 import UniformTypeIdentifiers
+import PurloryFoundation
+import PurloryStorage
+import PurloryDocumentEngine
+import PurloryIntelligence
 
 /// Native editor state shared by the codec, decoration, attachment, overlay and input roles.
 /// Keep all accepted text, IME and undo ownership on this single NSTextView instance.

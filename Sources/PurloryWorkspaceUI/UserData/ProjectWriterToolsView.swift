@@ -1,4 +1,8 @@
 import SwiftUI
+import PurloryFoundation
+import PurloryDocumentEngine
+import PurloryInference
+import PurloryIntelligence
 
 /// Existing author-data tools use the project owner directly, without a legacy store.
 struct ProjectWriterToolsView: View {

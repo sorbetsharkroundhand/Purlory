@@ -1,5 +1,7 @@
 import CryptoKit
 import Foundation
+import PurloryFoundation
+import PurloryDocumentEngine
 
 /// Prepared inspection data; neither model prose nor a derived ID grants source authority.
 package struct ReviewIssue: Equatable, Sendable, Identifiable {

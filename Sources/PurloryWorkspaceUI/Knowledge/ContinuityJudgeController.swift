@@ -1,5 +1,8 @@
 import Combine
 import Foundation
+import PurloryFoundation
+import PurloryInference
+import PurloryIntelligence
 
 /// One explicit candidate request. Only a complete grounded proposal can become visible.
 @MainActor

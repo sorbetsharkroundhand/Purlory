@@ -1,4 +1,6 @@
 import Foundation
+import PurloryFoundation
+import PurloryInference
 
 /// Domain codec for existing author fields; generic project storage sees only bytes.
 public struct WriterDocumentData: Codable, Equatable, Sendable {

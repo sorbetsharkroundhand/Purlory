@@ -2,6 +2,9 @@ import AppKit
 import Combine
 import CryptoKit
 import SwiftUI
+import PurloryFoundation
+import PurloryDocumentEngine
+import PurloryIntelligence
 
 @MainActor final class WorkspaceEntityController: ObservableObject {
     struct Peek: Equatable {

@@ -1,4 +1,5 @@
 import Foundation
+import PurloryFoundation
 
 struct WorkspaceModeOption: Equatable, Identifiable {
     let mode: WorkspaceMode

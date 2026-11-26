@@ -1,4 +1,7 @@
 import Foundation
+import PurloryFoundation
+import PurloryDocumentEngine
+import PurloryInference
 
 public enum SourceSearchScope: String, CaseIterable, Sendable { case here, chapter, project }
 public enum SourceSearchPurpose: Sendable { case inspection, beforeCursor }

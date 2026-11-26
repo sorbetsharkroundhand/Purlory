@@ -1,4 +1,6 @@
 import Foundation
+import PurloryFoundation
+import PurloryInference
 
 /// A complete validated response; explanation prose cannot create evidence actions.
 package struct JudgeDecision: Equatable, Sendable {

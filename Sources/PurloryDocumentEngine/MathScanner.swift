@@ -1,4 +1,5 @@
 import Foundation
+import PurloryFoundation
 
 /// Deterministic single-line inline/display delimiter scanner. No inference or
 /// disk work; multiline display ownership remains with the editor and export.

@@ -2,6 +2,9 @@ import Observation
 import Combine
 import Foundation
 import SwiftUI
+import PurloryFoundation
+import PurloryInference
+import PurloryIntelligence
 
 /// 고스트 텍스트 자동완성 오케스트레이터 (M3, PLAN §4·§5).
 ///

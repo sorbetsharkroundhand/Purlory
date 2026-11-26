@@ -1,4 +1,5 @@
 import Foundation
+import PurloryFoundation
 
 /// Captures both sides of an explicit comparison. Applying it requires the caller's
 /// current runtime and exact expected body, never a refreshed offset alone.

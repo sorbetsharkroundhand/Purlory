@@ -1,4 +1,5 @@
 import Foundation
+import PurloryFoundation
 
 package struct FictionReviewProjection: Equatable, Sendable {
     package let issues: [ReviewIssue]

@@ -1,4 +1,5 @@
 import Foundation
+import PurloryFoundation
 
 public struct ProjectDocumentRecord: Codable, Equatable, Sendable {
     public var id: WritingDocumentID

@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import PurloryDocumentEngine
 
 /// Native source actions keep stable accessibility identity and route back through the editor owner.
 struct StoryMapActionButton: NSViewRepresentable {

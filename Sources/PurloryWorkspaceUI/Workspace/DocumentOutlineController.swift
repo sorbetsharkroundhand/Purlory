@@ -1,5 +1,7 @@
 import Combine
 import Foundation
+import PurloryFoundation
+import PurloryIntelligence
 
 struct PreparedDocumentOutline: Equatable, Sendable {
     let identity: ProjectRuntimeIdentity

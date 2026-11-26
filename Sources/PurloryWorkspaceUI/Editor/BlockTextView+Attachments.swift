@@ -2,6 +2,8 @@ import AppKit
 import SwiftMath
 import SwiftUI
 import UniformTypeIdentifiers
+import PurloryFoundation
+import PurloryDocumentEngine
 
 // Image/math editing, assets and visible media rendering.
 extension BlockTextView {

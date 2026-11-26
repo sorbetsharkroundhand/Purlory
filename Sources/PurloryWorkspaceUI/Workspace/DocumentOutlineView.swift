@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import PurloryInference
 
 struct DocumentOutlineView: View {
     @ObservedObject var controller: DocumentOutlineController

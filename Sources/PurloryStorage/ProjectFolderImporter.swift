@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import PurloryFoundation
 
 extension ProjectStore {
     /// Copy into an exclusively owned inactive directory; activation belongs to ProjectSession.

@@ -1,4 +1,5 @@
 import Foundation
+import PurloryFoundation
 
 /// The editor's inline grammar, with original UTF-16 spans and no AppKit attributes.
 package enum MarkdownInlineScanner {

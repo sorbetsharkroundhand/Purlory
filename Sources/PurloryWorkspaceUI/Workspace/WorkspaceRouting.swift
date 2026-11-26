@@ -1,4 +1,5 @@
 import Foundation
+import PurloryFoundation
 
 /// Pure product routing. This layer deliberately imports no Story Intelligence/Fiction types.
 public enum WorkspaceRouting {

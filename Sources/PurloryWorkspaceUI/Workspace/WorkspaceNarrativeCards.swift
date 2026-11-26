@@ -1,4 +1,8 @@
 import SwiftUI
+import PurloryFoundation
+import PurloryDocumentEngine
+import PurloryInference
+import PurloryIntelligence
 
 /// Compact projections reuse the map's scoped, source-verified preparation and cancellation.
 struct WorkspaceNarrativeCards: View {

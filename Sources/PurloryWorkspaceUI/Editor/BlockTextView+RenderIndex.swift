@@ -1,4 +1,5 @@
 import AppKit
+import PurloryDocumentEngine
 
 extension BlockTextView {
     func invalidateMediaIndex() {

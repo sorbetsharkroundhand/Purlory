@@ -1,4 +1,6 @@
 import Foundation
+import PurloryFoundation
+import PurloryDocumentEngine
 
 /// Prepared original evidence only. Build off the prediction path; query scans
 /// the bounded recent window and binary-searches per-character occurrences.

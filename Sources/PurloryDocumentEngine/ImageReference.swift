@@ -1,4 +1,5 @@
 import Foundation
+import PurloryFoundation
 
 /// 이미지 소스의 명시적 유형 (이슈 #12) — 문자열 하나를 상대경로로 오해하지
 /// 않게 한다. 원격·차단 소스는 로컬 파일로 절대 해석하지 않는다 (완전 로컬).

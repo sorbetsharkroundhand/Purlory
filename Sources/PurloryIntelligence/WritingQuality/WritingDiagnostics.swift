@@ -1,4 +1,5 @@
 import Foundation
+import PurloryFoundation
 
 public enum WritingDiagnosticCategory: String, Codable, CaseIterable, Sendable {
     case correctness

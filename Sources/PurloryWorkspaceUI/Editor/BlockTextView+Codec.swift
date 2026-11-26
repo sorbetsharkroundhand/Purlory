@@ -2,6 +2,9 @@ import AppKit
 import SwiftMath
 import SwiftUI
 import UniformTypeIdentifiers
+import PurloryFoundation
+import PurloryDocumentEngine
+import PurloryIntelligence
 
 // Markdown round-trip, source coordinates and serialization cache.
 extension BlockTextView {

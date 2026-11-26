@@ -1,4 +1,6 @@
 import Foundation
+import PurloryFoundation
+import PurloryDocumentEngine
 
 /// ProjectSession remains the only storage owner. Reading is strictly nonmutating.
 @MainActor

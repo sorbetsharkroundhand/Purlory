@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import PurloryFoundation
 
 /// Shares only ready-runtime admission and an explicit generator, never an automatic queue.
 @MainActor

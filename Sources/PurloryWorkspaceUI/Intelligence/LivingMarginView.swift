@@ -1,4 +1,7 @@
 import SwiftUI
+import PurloryFoundation
+import PurloryDocumentEngine
+import PurloryIntelligence
 
 public struct LivingMarginDescriptor: Equatable, Sendable {
     public var categoryLabel: String

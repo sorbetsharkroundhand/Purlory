@@ -1,4 +1,5 @@
 import AppKit
+import PurloryDocumentEngine
 
 /// 이미지 로드 실패의 원인 — 플레이스홀더가 원인별로 다르게 안내한다 (이슈 #15).
 public enum ImageLoadFailure: Equatable {

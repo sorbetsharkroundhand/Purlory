@@ -1,4 +1,5 @@
 import Foundation
+import PurloryDocumentEngine
 
 /// 사건 로그 (PLAN §6.3) — append-only. 설계 근거는 docs/m6-events.md.
 ///

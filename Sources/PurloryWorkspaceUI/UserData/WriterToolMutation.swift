@@ -1,4 +1,5 @@
 import Foundation
+import PurloryFoundation
 
 /// A field may send several callbacks before SwiftUI replaces its binding. Advance only
 /// after this field's accepted write; external edits and A/B/A transitions remain stale.

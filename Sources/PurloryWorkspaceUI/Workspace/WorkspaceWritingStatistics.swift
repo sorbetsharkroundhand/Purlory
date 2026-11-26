@@ -1,5 +1,6 @@
 import Foundation
 import os
+import PurloryFoundation
 
 struct WorkspaceWritingStatistics {
     private struct CacheState: Sendable {

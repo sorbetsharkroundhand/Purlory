@@ -1,5 +1,8 @@
 import AppKit
 import Combine
+import PurloryFoundation
+import PurloryDocumentEngine
+import PurloryIntelligence
 
 /// Temporary original-source inspection. The manuscript keeps its native view and undo owner.
 @MainActor

@@ -1,4 +1,7 @@
 import Foundation
+import PurloryFoundation
+import PurloryStorage
+import PurloryIntelligence
 
 public struct LegacyMigrationResult: Equatable, Sendable {
     public var projectID: WritingProjectID

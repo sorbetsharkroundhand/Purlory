@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import PurloryFoundation
 
 /// 디스크 작업은 actor 안에서 수행한다. 같은 루트의 다른 인스턴스/프로세스도 잠근다 (PLAN §5.2).
 public actor ProjectStore {

@@ -1,4 +1,6 @@
 import Foundation
+import PurloryFoundation
+import PurloryStorage
 
 public protocol KnowledgeSidecarPersisting: Sendable {
     func load(scope: StoryMemoryScope) async -> KnowledgeSidecar

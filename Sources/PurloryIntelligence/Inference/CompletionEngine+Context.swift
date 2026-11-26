@@ -1,4 +1,5 @@
 import Foundation
+import PurloryInference
 
 extension CompletionEngine {
     /// 구 API 호환(PurloryBench 단발 측정 등) — 조립기 없이 prefix만으로 생성.

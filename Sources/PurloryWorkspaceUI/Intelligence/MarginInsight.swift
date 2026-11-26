@@ -1,4 +1,7 @@
 import Foundation
+import PurloryFoundation
+import PurloryDocumentEngine
+import PurloryIntelligence
 
 /// A value-described action emitted by an intelligence provider. Living Margin renders
 /// the action and delegates execution to its owner; it never performs analysis itself.

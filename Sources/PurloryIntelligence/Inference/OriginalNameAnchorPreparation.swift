@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import PurloryFoundation
 
 /// Optional source preparation has independent ownership from model/indexing work.
 @MainActor

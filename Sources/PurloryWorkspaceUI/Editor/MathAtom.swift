@@ -1,4 +1,5 @@
 import AppKit
+import PurloryDocumentEngine
 
 /// 인라인 수식(`$…$`)의 storage 표현 — LaTeX 소스를 품은 NSTextAttachment (이슈 #20).
 ///

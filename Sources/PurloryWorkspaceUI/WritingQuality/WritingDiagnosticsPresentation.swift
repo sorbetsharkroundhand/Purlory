@@ -1,5 +1,8 @@
 import CryptoKit
 import Foundation
+import PurloryFoundation
+import PurloryDocumentEngine
+import PurloryIntelligence
 
 /// Prepared values only: presentation never owns analysis, source scanning or navigation.
 enum WritingDiagnosticsPresentation {

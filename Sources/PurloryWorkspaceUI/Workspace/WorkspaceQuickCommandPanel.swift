@@ -1,5 +1,7 @@
 import AppKit
 import Combine
+import PurloryDocumentEngine
+import PurloryIntelligence
 
 @MainActor final class WorkspaceQuickCommandPanel: NSWindowController, NSWindowDelegate, NSSearchFieldDelegate, NSTableViewDataSource, NSTableViewDelegate {
     private static var active: WorkspaceQuickCommandPanel?

@@ -1,5 +1,8 @@
 import CryptoKit
 import Foundation
+import PurloryFoundation
+import PurloryDocumentEngine
+import PurloryIntelligence
 
 struct StoryMapProjection: Equatable, Sendable {
     enum Order: String, CaseIterable, Sendable { case manuscript, chronology }

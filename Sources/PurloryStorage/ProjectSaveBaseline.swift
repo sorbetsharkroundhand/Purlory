@@ -1,4 +1,5 @@
 import Foundation
+import PurloryFoundation
 
 /// Only the last successful save is retained. Assets are represented by versions,
 /// never duplicate byte buffers. Strict load/activation does not consult this cache.

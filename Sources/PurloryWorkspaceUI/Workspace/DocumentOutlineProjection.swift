@@ -1,4 +1,6 @@
 import Foundation
+import PurloryFoundation
+import PurloryDocumentEngine
 
 struct DocumentOutlineProjection: Equatable, Sendable {
     struct Heading: Equatable, Sendable, Identifiable {

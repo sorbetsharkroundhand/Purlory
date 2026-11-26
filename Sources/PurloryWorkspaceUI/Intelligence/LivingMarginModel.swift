@@ -1,5 +1,8 @@
 import Combine
 import Foundation
+import PurloryFoundation
+import PurloryDocumentEngine
+import PurloryIntelligence
 
 /// Pure presentation gate shared by the docked view and future Review consumers.
 public enum LivingMarginPolicy {

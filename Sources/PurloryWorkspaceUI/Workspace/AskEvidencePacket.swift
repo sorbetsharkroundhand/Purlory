@@ -1,4 +1,8 @@
 import Foundation
+import PurloryFoundation
+import PurloryDocumentEngine
+import PurloryInference
+import PurloryIntelligence
 
 struct AskEvidencePacket: Sendable {
     enum Failure: Error { case invalidOrigin, noEvidence, invalidQuestion }

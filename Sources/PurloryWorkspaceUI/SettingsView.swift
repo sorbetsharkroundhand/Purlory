@@ -1,4 +1,6 @@
 import SwiftUI
+import PurloryDocumentEngine
+import PurloryInference
 
 /// Native Settings panes prioritize writing controls while retaining the existing settings owner.
 /// Each grouped form scrolls within the fixed window, including custom palettes and diagnostics.

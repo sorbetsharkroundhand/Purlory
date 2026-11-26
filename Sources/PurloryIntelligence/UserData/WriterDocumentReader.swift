@@ -1,4 +1,5 @@
 import Foundation
+import PurloryFoundation
 
 /// One prepared writer value. Body generations reuse it until opaque metadata changes.
 package struct WriterDocumentReader {

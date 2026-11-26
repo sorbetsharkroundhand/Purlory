@@ -1,4 +1,5 @@
 import Foundation
+import PurloryFoundation
 
 /// Verified bytes for exactly one project. Resolving a reference never touches disk.
 public struct ProjectAssetCatalog: Sendable, Equatable {

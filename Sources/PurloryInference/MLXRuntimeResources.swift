@@ -1,6 +1,7 @@
 import Foundation
 import Metal
 import MLX
+import PurloryFoundation
 
 public enum MLXRuntimeResources {
     /// Validate packaged resources before MLX can reach its process-fatal default loader.

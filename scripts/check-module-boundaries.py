@@ -55,6 +55,10 @@ for name, permitted in allowed.items():
         assert not forbidden, f'{path} imports forbidden application modules: {sorted(forbidden)}'
         if name in {'PurloryFoundation', 'PurloryStorage', 'PurloryInference', 'PurloryIntelligence'}:
             assert not (imported & {'AppKit', 'SwiftUI', 'UIKit'}), f'{path} imports UI frameworks'
+        if name != 'PurloryCore':
+            assert '@_exported' not in path.read_text(), (
+                f'{path} uses @_exported import; only PurloryCore may re-export implementation modules'
+            )
 
 assert dependencies('PurloryCore') == required, 'Core must only re-export the six implementation modules'
 assert dependencies('Purlory') == {'PurloryCore'}, (

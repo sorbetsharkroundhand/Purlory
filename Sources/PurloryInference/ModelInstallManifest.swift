@@ -1,4 +1,5 @@
 import Foundation
+import PurloryFoundation
 
 public struct ModelInstallManifest: Codable, Equatable, Sendable {
     public struct File: Codable, Equatable, Sendable {

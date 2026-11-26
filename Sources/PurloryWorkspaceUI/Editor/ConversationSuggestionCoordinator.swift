@@ -1,5 +1,6 @@
 import Foundation
 import PurloryIntelligence
+import PurloryFoundation
 
 /// Manages idle dialogue-block detection, suggestion identity scoping, and dismissal memory for `CompletionController`.
 @MainActor

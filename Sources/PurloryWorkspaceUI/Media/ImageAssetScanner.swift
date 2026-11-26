@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import PurloryDocumentEngine
 
 /// 문서에서 **원본 파일이 없는** 로컬 이미지 소스를 찾는다 (이슈 #15).
 ///

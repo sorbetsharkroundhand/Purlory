@@ -1,4 +1,6 @@
 import AppKit
+import PurloryFoundation
+import PurloryIntelligence
 
 /// Derived native spans, separate from author attributes and temporary search/selection layers.
 @MainActor

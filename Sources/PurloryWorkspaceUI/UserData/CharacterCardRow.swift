@@ -1,4 +1,7 @@
 import SwiftUI
+import PurloryDocumentEngine
+import PurloryInference
+import PurloryIntelligence
 
 /// Editable character card row with read-only derived understanding, chronicle, and source jump links.
 struct CharacterCardRow: View {

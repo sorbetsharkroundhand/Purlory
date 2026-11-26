@@ -1,4 +1,6 @@
 import Foundation
+import PurloryDocumentEngine
+import PurloryIntelligence
 
 /// Centralized Korean LLM prompt catalog for background knowledge extraction, rollup, and character profiling.
 enum KnowledgePromptCatalog {

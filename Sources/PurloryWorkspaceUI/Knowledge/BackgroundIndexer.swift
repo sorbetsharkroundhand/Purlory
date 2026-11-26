@@ -3,6 +3,10 @@ import Combine
 import AppKit
 import Foundation
 import os
+import PurloryFoundation
+import PurloryDocumentEngine
+import PurloryInference
+import PurloryIntelligence
 
 /// Prepares derived story memory outside prediction. Work is scoped, cancellable,
 /// incremental and subordinate to foreground editing, power and memory pressure.

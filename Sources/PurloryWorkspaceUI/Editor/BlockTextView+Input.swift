@@ -2,6 +2,8 @@ import AppKit
 import SwiftMath
 import SwiftUI
 import UniformTypeIdentifiers
+import PurloryDocumentEngine
+import PurloryIntelligence
 
 // Native commands, IME, undo and text-storage edit routing.
 extension BlockTextView {

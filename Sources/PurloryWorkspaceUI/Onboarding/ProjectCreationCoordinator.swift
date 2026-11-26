@@ -1,4 +1,6 @@
 import Foundation
+import PurloryFoundation
+import PurloryStorage
 
 public struct ProjectCreationResult: Equatable, Sendable {
     public var projectID: WritingProjectID

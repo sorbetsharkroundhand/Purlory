@@ -1,4 +1,5 @@
 import Foundation
+import PurloryFoundation
 
 /// Source assembly over cached native rows. Fences belong to row boundaries, so a
 /// local edit replaces at most its row, the next boundary and the terminal suffix.

@@ -1,4 +1,5 @@
 import Foundation
+import PurloryFoundation
 
 extension IntelligenceDatabase {
     func reconcileSources(_ sources: [IndexedSource]) throws {

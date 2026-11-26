@@ -1,4 +1,7 @@
 import Foundation
+import PurloryFoundation
+import PurloryDocumentEngine
+import PurloryIntelligence
 
 enum ProjectNavigationEdit {
     case createFolder(ProjectFolder)

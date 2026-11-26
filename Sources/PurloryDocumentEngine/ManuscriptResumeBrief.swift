@@ -1,4 +1,5 @@
 import Foundation
+import PurloryFoundation
 
 /// Summarizes where the writer left off in a manuscript and surfaces quick notes linked to it.
 public struct ManuscriptResumeBrief: Equatable, Sendable {

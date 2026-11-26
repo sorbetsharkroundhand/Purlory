@@ -1,4 +1,6 @@
 import AppKit
+import PurloryFoundation
+import PurloryIntelligence
 
 struct WritingCorrection: Sendable {
     let finding: WritingDiagnosticsFinding

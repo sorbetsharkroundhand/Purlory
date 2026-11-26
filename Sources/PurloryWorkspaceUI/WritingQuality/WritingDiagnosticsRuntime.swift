@@ -1,6 +1,9 @@
 import Combine
 import Foundation
 import PurloryKoreanBackend
+import PurloryFoundation
+import PurloryInference
+import PurloryIntelligence
 
 /// App-owned offline diagnostics lifetime; the native model remains lazy until admitted work.
 @MainActor

@@ -1,4 +1,7 @@
 import Foundation
+import PurloryFoundation
+import PurloryStorage
+import PurloryDocumentEngine
 
 package struct SourceIndexPreparation: Sendable {
     package let candidates: [String: Set<WritingDocumentID>]

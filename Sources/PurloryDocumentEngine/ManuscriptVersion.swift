@@ -1,4 +1,5 @@
 import Foundation
+import PurloryFoundation
 
 /// Explicit, writer-owned original text. A version UUID identifies a saved decision;
 /// a document ID identifies its manuscript; content digests identify only revisions.

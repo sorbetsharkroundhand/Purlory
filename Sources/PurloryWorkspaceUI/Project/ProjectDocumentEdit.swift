@@ -1,4 +1,5 @@
 import Foundation
+import PurloryFoundation
 
 /// A captured source body makes multi-document editing all-or-nothing and stale-safe.
 struct ProjectDocumentEdit: Sendable {

@@ -1,5 +1,9 @@
 import CryptoKit
 import Foundation
+import PurloryFoundation
+import PurloryDocumentEngine
+import PurloryInference
+import PurloryIntelligence
 
 /// A scoped read of durable writer choices; source staleness never deletes those choices.
 struct ReviewDispositionIndex: Sendable {

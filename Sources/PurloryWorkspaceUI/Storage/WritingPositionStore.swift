@@ -1,4 +1,5 @@
 import Foundation
+import PurloryFoundation
 
 /// 문서별 마지막 집필 위치 (이슈 #36) — **UI 상태**다. 원문(entries.json)이 아니라
 /// UserDefaults에 산다: 파생 캐시는 아니지만 사용자 저작도 아닌 창 상태이고,
