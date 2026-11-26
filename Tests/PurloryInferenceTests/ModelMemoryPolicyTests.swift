@@ -1,8 +1,6 @@
-@testable import PurloryIntelligence
-@_spi(Benchmark) @testable import PurloryInference
 import XCTest
-@testable import PurloryCore
-@testable import PurloryWorkspaceUI
+@testable import PurloryFoundation
+@_spi(Benchmark) @testable import PurloryInference
 
 final class ModelMemoryPolicyTests: XCTestCase {
     private let gib: UInt64 = 1 << 30

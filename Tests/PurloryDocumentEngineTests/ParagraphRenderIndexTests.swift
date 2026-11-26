@@ -1,9 +1,7 @@
-@testable import PurloryIntelligence
-@testable import PurloryDocumentEngine
 import Foundation
 import XCTest
-@testable import PurloryCore
-@testable import PurloryWorkspaceUI
+@testable import PurloryFoundation
+@testable import PurloryDocumentEngine
 
 final class ParagraphRenderIndexTests: XCTestCase {
     private typealias Record = ParagraphRenderIndex.Record

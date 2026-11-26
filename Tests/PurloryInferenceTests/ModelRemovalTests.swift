@@ -1,8 +1,6 @@
-@testable import PurloryIntelligence
-@_spi(Benchmark) @testable import PurloryInference
 import XCTest
-@testable import PurloryCore
-@testable import PurloryWorkspaceUI
+@testable import PurloryFoundation
+@_spi(Benchmark) @testable import PurloryInference
 
 final class ModelRemovalTests: XCTestCase {
     private func fixture() throws -> (URL, ModelInstallManifest, ModelInstallationStore) {

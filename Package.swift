@@ -69,7 +69,28 @@ let package = Package(
             dependencies: ["PurloryCore", "PurloryInference", "PurloryIntelligence"],
             path: "Sources/PurloryBench"
         ),
-        // Deterministic editor/storage and pinned offline NLP regressions.
+        // Fast, zero-UI module unit test targets matching the implementation layer boundaries.
+        .testTarget(
+            name: "PurloryFoundationTests",
+            dependencies: ["PurloryFoundation"],
+            path: "Tests/PurloryFoundationTests"
+        ),
+        .testTarget(
+            name: "PurloryDocumentEngineTests",
+            dependencies: ["PurloryFoundation", "PurloryDocumentEngine"],
+            path: "Tests/PurloryDocumentEngineTests"
+        ),
+        .testTarget(
+            name: "PurloryInferenceTests",
+            dependencies: [
+                "PurloryFoundation",
+                "PurloryInference",
+                .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
+            ],
+            path: "Tests/PurloryInferenceTests"
+        ),
+        // Deterministic editor/storage/workspace and pinned offline NLP regressions.
         // No Ghost model or Metal execution is required.
         .testTarget(
             name: "PurloryCoreTests",

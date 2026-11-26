@@ -1,7 +1,8 @@
 import Foundation
 import MLXLMCommon
 import XCTest
-@testable import PurloryInference
+@testable import PurloryFoundation
+@_spi(Benchmark) @testable import PurloryInference
 
 final class PromptCachePinPolicyTests: XCTestCase {
     private let model = NSObject(), other = NSObject()
