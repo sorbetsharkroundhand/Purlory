@@ -10,6 +10,10 @@ on:
       - main
   workflow_dispatch:
 
+env:
+  # MLX 0.32 requires Swift 6.3; pin the image toolchain for CLI and Xcode builds.
+  DEVELOPER_DIR: /Applications/Xcode_26.4.1.app/Contents/Developer
+
 permissions:
   contents: read
 
@@ -24,7 +28,7 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.head_branch == 'main')
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 45
 
     steps:

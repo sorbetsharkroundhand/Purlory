@@ -1575,6 +1575,59 @@ final class WritingEditorProjectionTests: XCTestCase {
         )
     }
 
+    func testProtectedLinkTokensPreserveFollowingProseAndRealLink() async {
+        let cases = [
+            "`[x](<unfinished` NORMAL [참고](<https://example.test/path>)",
+            "$[x](<unfinished$ NORMAL [참고](<https://example.test/path>)",
+            "NORMAL [참고 `unfinished [예시]` 끝](<https://example.test/path>)",
+        ]
+        for prefix in ["🙂 ", String(repeating: "가", count: 4_500) + " 🙂 "] {
+            for fragment in cases {
+                let line = prefix + fragment
+                let edited = WritingEditorHarness("기\n다음 문단")
+                defer { edited.close() }
+                edited.edit(line, range: NSRange(location: 0, length: 1))
+                await waitForDeferredProjection(edited)
+                let expectedSource = line + "\n다음 문단"
+                XCTAssertEqual(edited.body, expectedSource)
+                XCTAssertEqual(edited.projectedSource, expectedSource)
+
+                let fresh = WritingEditorHarness(expectedSource)
+                defer { fresh.close() }
+                for (quote, eligible) in [("unfinished", false), ("NORMAL", true),
+                                          ("참고", true), ("[참고", false), ("https://example.test/path", false)] {
+                    let range = (expectedSource as NSString).range(of: quote)
+                    for harness in [edited, fresh] {
+                        XCTAssertEqual(harness.editor.nativeRange(
+                            forSource: .init(range), revision: harness.editor.writingNativeRevision,
+                            expectedQuote: quote
+                        ) != nil, eligible, "\(fragment), \(quote), edited=\(harness === edited)")
+                    }
+                }
+            }
+        }
+    }
+
+    func testProtectedProjectionKeepsSubsequentDestinationsExcluded() async throws {
+        let lines = [
+            "[첫째](https://a/$p) 본문 [둘째](https://b/q$/private)",
+            "[첫째](https://a/`p) 본문 [둘째](https://b/q`/private)",
+            "![사진](image){custom=$p} 본문 [참고](https://b/q$/private)",
+            "본문 [참고 $unfinished[$ 끝](<https://example.test/private>)",
+            "본문 [참고 `unfinished [` 끝](<https://example.test/private>)",
+            "[첫$째](https://a/p) 본문 [둘째](https://b/q$/private)",
+            "[A](u/$a/X) NORM [C$x[xy$label](w/`c/Z) END [C`a](`label](w/$c/private)",
+        ]
+        for line in lines {
+            let tail = (line as NSString).range(of: "/private")
+            let deferred = await WritingProseProjection.deferredLineRuns(in: line, checkpoint: { true })
+            for runs in [WritingProseProjection.inlineRuns(line, offset: 0),
+                         WritingProseProjection.deferredLineRuns(in: line), try XCTUnwrap(deferred)] {
+                XCTAssertFalse(runs.contains { $0.eligible && NSIntersectionRange($0.source, tail).length > 0 }, line)
+            }
+        }
+    }
+
     func testInvalidOuterLinkDoesNotSuppressValidInnerLink() async throws {
         let cases: [(name: String, line: String)] = [
             ("short-inner-angle", "[outer [i](<INNERTARGET>) end](<bad> nope)"),
