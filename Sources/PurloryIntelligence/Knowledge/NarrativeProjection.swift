@@ -83,17 +83,21 @@ package enum GraphRow: Identifiable {
     ) -> [GraphRow] {
         // 정본 사건 → 첫 등장 씬, 재서술 관점 → 그 씬의 참조 행.
         var canonicalByScene: [String: [CanonicalEvent]] = [:]
+        canonicalByScene.reserveCapacity(snapshot.outline.scenes.count)
         var refsByScene: [String: [(canonical: CanonicalEvent, perspective: EventPerspective)]] =
             [:]
         for event in snapshot.canonicalEvents {
             canonicalByScene[event.sceneHash, default: []].append(event)
-            for perspective in event.perspectives where perspective.sceneHash != event.sceneHash {
-                refsByScene[perspective.sceneHash, default: []].append((event, perspective))
+            if event.perspectives.count > 1 || (event.perspectives.first?.sceneHash != event.sceneHash) {
+                for perspective in event.perspectives where perspective.sceneHash != event.sceneHash {
+                    refsByScene[perspective.sceneHash, default: []].append((event, perspective))
+                }
             }
         }
 
         // 세그먼트 수 — 같은 헤딩 경로가 몇 조각으로 쪼개졌는지 ("1장 (3/14)").
         var segmentCounts: [[String]: Int] = [:]
+        segmentCounts.reserveCapacity(snapshot.outline.scenes.count)
         for scene in snapshot.outline.scenes {
             segmentCounts[scene.headingPath, default: 0] += 1
         }
@@ -107,6 +111,7 @@ package enum GraphRow: Identifiable {
         }
 
         var rows: [GraphRow] = []
+        rows.reserveCapacity(snapshot.outline.scenes.count + snapshot.canonicalEvents.count)
         for (index, scene) in snapshot.outline.scenes.enumerated() {
             if let branch = branchOpenAt[index] {
                 rows.append(.branchOpen(branch: branch))
@@ -273,6 +278,7 @@ package struct ThreadGraphLayout {
     package static func compute(rows: [GraphRow], threads: [ResolvedPlotThread]) -> ThreadGraphLayout {
         // 사건 키 → 행 (첫 등장 행 — 같은 키가 두 번 나올 일은 없지만 방어).
         var rowByKey: [String: Int] = [:]
+        rowByKey.reserveCapacity(rows.count)
         for (row, graphRow) in rows.enumerated() {
             if let key = graphRow.eventKey, rowByKey[key] == nil {
                 rowByKey[key] = row
@@ -282,10 +288,19 @@ package struct ThreadGraphLayout {
 
         // 레인 배치 — 스냅샷 스레드 순서대로 겹침 없는 최저 슬롯.
         var lanes: [Lane] = []
+        lanes.reserveCapacity(threads.count)
         var spans: [(slot: Int, open: Int, close: Int)] = []
+        spans.reserveCapacity(threads.count)
+        var maxSlot = 0
         for thread in threads {
-            let memberRows = thread.memberKeys.compactMap { rowByKey[$0] }.sorted()
-            guard let open = memberRows.first else { continue }
+            var memberRows: [Int] = []
+            memberRows.reserveCapacity(thread.memberKeys.count)
+            for key in thread.memberKeys {
+                if let r = rowByKey[key] { memberRows.append(r) }
+            }
+            guard !memberRows.isEmpty else { continue }
+            memberRows.sort()
+            let open = memberRows[0]
             let resolveRow = thread.resolvedAtKey.flatMap { rowByKey[$0] }
             let close = resolveRow ?? lastRow
             var slot = 0
@@ -294,6 +309,7 @@ package struct ThreadGraphLayout {
             }) {
                 slot += 1
             }
+            if slot > maxSlot { maxSlot = slot }
             spans.append((slot, open, close))
             lanes.append(
                 Lane(
@@ -302,37 +318,62 @@ package struct ThreadGraphLayout {
         }
 
         // Index actual memberships once instead of scanning every lane for each node.
-        // Sets retain the previous single participation for duplicate member keys.
         var laneIndicesByEvent: [String: [Int]] = [:]
+        laneIndicesByEvent.reserveCapacity(rowByKey.count)
         for (index, lane) in lanes.enumerated() {
-            for key in Set(lane.thread.memberKeys) where rowByKey[key] != nil {
-                laneIndicesByEvent[key, default: []].append(index)
+            var seenInLane = Set<String>()
+            seenInLane.reserveCapacity(lane.thread.memberKeys.count)
+            for key in lane.thread.memberKeys where rowByKey[key] != nil {
+                if seenInLane.insert(key).inserted {
+                    laneIndicesByEvent[key, default: []].append(index)
+                }
             }
         }
 
         // Preserve lane order for open/resolve curves and the minimum participating slot.
         var nodes: [String: Node] = [:]
+        nodes.reserveCapacity(rowByKey.count)
         for (key, row) in rowByKey {
+            guard let indices = laneIndicesByEvent[key], !indices.isEmpty else {
+                nodes[key] = Node(
+                    key: key, row: row, slot: 0, laneSlots: [],
+                    opensSlots: [], resolvesSlots: [])
+                continue
+            }
+            if indices.count == 1 {
+                let slot = lanes[indices[0]].slot
+                nodes[key] = Node(
+                    key: key, row: row, slot: slot, laneSlots: [slot],
+                    opensSlots: [], resolvesSlots: [])
+                continue
+            }
             var laneSlots: [Int] = []
-            var opens: [Int] = []
-            var resolves: [Int] = []
-            for index in laneIndicesByEvent[key] ?? [] {
-                let lane = lanes[index]
-                laneSlots.append(lane.slot)
-                if lane.openRow == row { opens.append(lane.slot) }
-                if lane.resolveRow == row { resolves.append(lane.slot) }
+            laneSlots.reserveCapacity(indices.count)
+            var minSlot = Int.max
+            for index in indices {
+                let s = lanes[index].slot
+                laneSlots.append(s)
+                if s < minSlot { minSlot = s }
             }
             laneSlots.sort()
-            let slot = laneSlots.first ?? 0
+            var opens: [Int] = []
+            var resolves: [Int] = []
+            for index in indices {
+                let lane = lanes[index]
+                let s = lane.slot
+                if s != minSlot {
+                    if lane.openRow == row { opens.append(s) }
+                    if lane.resolveRow == row { resolves.append(s) }
+                }
+            }
             nodes[key] = Node(
-                key: key, row: row, slot: slot, laneSlots: laneSlots,
-                opensSlots: opens.filter { $0 != slot },
-                resolvesSlots: resolves.filter { $0 != slot })
+                key: key, row: row, slot: minSlot, laneSlots: laneSlots,
+                opensSlots: opens, resolvesSlots: resolves)
         }
 
         return ThreadGraphLayout(
             lanes: lanes, nodes: nodes,
-            slotCount: (lanes.map(\.slot).max() ?? 0) + 1)
+            slotCount: lanes.isEmpty ? 1 : maxSlot + 1)
     }
 }
 

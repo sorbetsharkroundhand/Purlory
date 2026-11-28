@@ -322,7 +322,11 @@ extension BlockTextView {
         caretView.layer?.removeAllAnimations()
         caretView.alphaValue = 1
         caretBlinkTimer = Timer.scheduledTimer(withTimeInterval: 0.55, repeats: true) {
-            [weak self] _ in
+            [weak self] timer in
+            guard self != nil else {
+                timer.invalidate()
+                return
+            }
             MainActor.assumeIsolated {
                 guard let self else { return }
                 let target: CGFloat = self.caretView.alphaValue > 0.5 ? 0 : 1

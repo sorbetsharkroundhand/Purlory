@@ -238,10 +238,11 @@ final class WritingEditorProjectionCapture {
         for span in row.spans {
             if span.prefix.isEmpty && span.suffix.isEmpty && span.opaqueID == nil,
                let previous = result.last, previous.prefix.isEmpty && previous.suffix.isEmpty && previous.opaqueID == nil,
+               let previousBody = previous.body,
                previous.style == span.style, previous.native.upperBound == span.native.location {
                 result.removeLast()
                 result.append(.init(source: NSUnionRange(previous.source, span.source),
-                    body: NSRange(location: previous.body!.location, length: previous.native.length + span.native.length),
+                    body: NSRange(location: previousBody.location, length: previous.native.length + span.native.length),
                     native: NSUnionRange(previous.native, span.native), style: span.style))
             } else { result.append(span) }
         }

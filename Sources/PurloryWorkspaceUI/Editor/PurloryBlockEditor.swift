@@ -253,6 +253,10 @@ public struct PurloryBlockEditor: NSViewRepresentable {
         return scrollView
     }
 
+    public static func dismantleNSView(_ nsView: NSScrollView, coordinator: Coordinator) {
+        coordinator.detachScrollObserver()
+    }
+
     public func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? BlockTextView else { return }
         let activationChanged = context.coordinator.parent.isActiveEditor != isActiveEditor
@@ -448,6 +452,12 @@ public struct PurloryBlockEditor: NSViewRepresentable {
 
         init(_ parent: PurloryBlockEditor) {
             self.parent = parent
+        }
+
+        func detachScrollObserver() {
+            guard let observer = scrollObserver else { return }
+            NotificationCenter.default.removeObserver(observer)
+            scrollObserver = nil
         }
 
         func applyWorkspaceSource(_ body: String, to editor: BlockTextView) {

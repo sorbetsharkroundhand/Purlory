@@ -47,7 +47,9 @@ public final class KoreanNativeWorker: @unchecked Sendable {
                 let opening = context.handle == nil
                 if opening { context.handle = try context.factory.open(resources: context.resources, admission: valid) }
                 guard valid() else {
-                    if opening { context.close() }
+                    // Only tear down a freshly opened handle during retirement; normal cancelPending
+                    // (e.g. a typing keystroke) keeps the warmed handle to avoid 109 MB re-hash thrashing.
+                    if opening, owner.isRetiring { context.close() }
                     request.cancel()
                     return
                 }
@@ -86,6 +88,9 @@ private final class NativeOwnership: @unchecked Sendable {
     func capture() -> UInt64? { lock.withLock { retirement == nil ? generation : nil } }
     func isCurrent(_ generation: UInt64) -> Bool {
         lock.withLock { retirement == nil && self.generation == generation }
+    }
+    var isRetiring: Bool {
+        lock.withLock { retirement != nil }
     }
     func invalidate() { lock.withLock { generation &+= 1 } }
     func beginRetirement() -> (NativeCompletion<Void>, Bool) {

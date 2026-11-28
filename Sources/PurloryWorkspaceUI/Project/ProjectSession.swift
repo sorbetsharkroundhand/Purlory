@@ -524,7 +524,16 @@ public final class ProjectSession {
         in folderID: UUID? = nil
     ) -> WritingDocumentID? {
         guard !isTransitioning else { return nil }
-        guard activeProject != nil else { return nil }
+        guard let initialProject = activeProject else { return nil }
+        do {
+            let previewNavigation = try ProjectNavigation.read(initialProject)
+            if let folderID, !previewNavigation.contains(.folder(folderID), in: initialProject) {
+                throw ProjectSessionError.staleRuntime
+            }
+        } catch {
+            reportError(error)
+            return nil
+        }
         willTransition?()
         guard var project = activeProject else { return nil }
         let document = WritingDocument(
@@ -541,7 +550,11 @@ public final class ProjectSession {
             }
             navigation.createdDates[document.id] = Date()
             try navigation.write(to: &project)
-        } catch { reportError(error); return nil }
+        } catch {
+            reportError(error)
+            noteDocumentChange()
+            return nil
+        }
         activeProject = project
         selectedDocumentID = document.id
         persistSelection(document.id, for: project.id)

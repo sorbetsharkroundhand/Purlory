@@ -28,7 +28,10 @@ final class ConversationCaptureTests: XCTestCase {
     private func makeNovelController(
         onRecord: ((RecordedConversation) -> Void)?
     ) -> CompletionController {
-        let settings = CompletionSettings()
+        let suite = "Purlory.ConversationCaptureTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
+        let settings = CompletionSettings(defaults: defaults)
         settings.autocompleteEnabled = false
         let completion = CompletionController(settings: settings)
         completion.documentContextProvider = {

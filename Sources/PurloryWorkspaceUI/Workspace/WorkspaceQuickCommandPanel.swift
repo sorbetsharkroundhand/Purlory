@@ -30,7 +30,7 @@ import Combine
         let width = min(500, max(300, parent.frame.width - 48)), height: CGFloat = 354
         panel.window?.setContentSize(NSSize(width: width, height: height))
         panel.window?.setFrameOrigin(.init(x: parent.frame.midX - width / 2, y: parent.frame.maxY - height - 80))
-        panel.window?.appearance = NSAppearance(named: theme == .dark ? .darkAqua : .aqua)
+        panel.window?.appearance = NSAppearance(named: theme.isDark ? .darkAqua : .aqua)
         panel.backdrop.show(over: parent, opacity: 0.40)
         if let window = panel.window { parent.addChildWindow(window, ordered: .above) }
         panel.window?.makeKeyAndOrderFront(nil); panel.window?.makeFirstResponder(panel.searchField)

@@ -125,9 +125,10 @@ final class PaletteTests: XCTestCase {
     /// 켜지 않은 사용자의 화면이 바뀌면 안 된다.
     @MainActor
     func test_팔레트가_꺼져_있으면_기본_테마다() {
-        let settings = PaletteSettings.shared
-        let wasEnabled = settings.enabled
-        defer { settings.enabled = wasEnabled }
+        let suite = "Purlory.PaletteTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = PaletteSettings(defaults: defaults)
 
         settings.enabled = false
         for scheme in [ColorScheme.light, .dark] {

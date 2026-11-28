@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import os
 
 struct WorkspaceCommandItem: Identifiable, Sendable {
     enum Kind: String, Sendable { case command = "명령", file = "파일", character = "인물", source = "원문" }
@@ -21,9 +22,16 @@ enum WorkspaceCommandSearch {
         let excludedRanges: [NSRange]
     }
 
-    private static let cacheLock = NSLock()
-    nonisolated(unsafe) private static var sourceCache: [WritingDocumentID: CachedSourceMetadata] = [:]
-    nonisolated(unsafe) static var revisionHashCount = 0
+    private struct CacheState: Sendable {
+        var sourceCache: [WritingDocumentID: CachedSourceMetadata] = [:]
+        var revisionHashCount = 0
+    }
+
+    private static let cacheState = OSAllocatedUnfairLock(initialState: CacheState())
+    static var revisionHashCount: Int {
+        get { cacheState.withLock { $0.revisionHashCount } }
+        set { cacheState.withLock { $0.revisionHashCount = newValue } }
+    }
 
     static func search(
         in project: WritingProject,
@@ -215,12 +223,14 @@ enum WorkspaceCommandSearch {
     }
 
     private static func metadata(for document: WritingDocument) -> CachedSourceMetadata {
-        cacheLock.lock()
-        if let cached = sourceCache[document.id], cached.source == document.source {
-            cacheLock.unlock()
+        if let hit = cacheState.withLock({ state -> CachedSourceMetadata? in
+            guard let cached = state.sourceCache[document.id],
+                  cached.source.isSameVersion(as: document.source) || cached.source == document.source
+            else { return nil }
             return cached
+        }) {
+            return hit
         }
-        cacheLock.unlock()
 
         let bodyString = document.body
         let body = bodyString as NSString
@@ -259,13 +269,13 @@ enum WorkspaceCommandSearch {
             }
         }
         let built = CachedSourceMetadata(source: document.source, revision: revision, excludedRanges: excludedRanges)
-        cacheLock.lock()
-        revisionHashCount += 1
-        if sourceCache.count >= 64, sourceCache[document.id] == nil, let firstKey = sourceCache.keys.first {
-            sourceCache.removeValue(forKey: firstKey)
+        cacheState.withLock { state in
+            state.revisionHashCount += 1
+            if state.sourceCache.count >= 64, state.sourceCache[document.id] == nil, let firstKey = state.sourceCache.keys.first {
+                state.sourceCache.removeValue(forKey: firstKey)
+            }
+            state.sourceCache[document.id] = built
         }
-        sourceCache[document.id] = built
-        cacheLock.unlock()
         return built
     }
 

@@ -128,14 +128,14 @@ public final class BackgroundIndexer {
     @ObservationIgnored private var profileGeneration = 0
     private static let memoryPressureReason = "메모리가 부족해 읽기를 쉬고 있어요 — 여유가 생기면 다시 시도해 주세요"
 
-    /// Recovery only admits a later edit or explicit request; it never reloads a model.
+    /// Recovery only admits a later edit, deactivation, or explicit request; it never reloads a model.
     public func setMemoryPressurePaused(_ paused: Bool) {
         guard memoryPressurePaused != paused else { return }
         memoryPressurePaused = paused
         if paused {
             setContinuityCandidates([])
             let hadManualWork = manualPassToken != nil
-            shutdown()
+            cancelActiveWork()
             manualPassToken = nil
             transientClearTask?.cancel()
             manualPhase = hadManualWork ? .blocked(reason: Self.memoryPressureReason) : .idle
@@ -175,8 +175,61 @@ public final class BackgroundIndexer {
             originalNamePreparation.runtimeIdentity == document.runtimeIdentity else { return nil }
         return originalNamePreparation.index
     }
+    @ObservationIgnored private var resignActiveObserver: NSObjectProtocol?
+    @ObservationIgnored private var foregroundCompletionBusy = false
+    @ObservationIgnored private var pendingIdleReschedule = false
+    @ObservationIgnored private var activeHydrateEntryID: UUID?
+    @ObservationIgnored private var activeHydrateForce = false
+    @ObservationIgnored private var pendingHydrateEntryID: UUID?
+    @ObservationIgnored private var pendingHydrateForce = false
+
     public func setForegroundCompletionBusy(_ busy: Bool) {
+        foregroundCompletionBusy = busy
         originalNamePreparation.setForegroundBusy(busy)
+        if busy {
+            // Yield background indexing/profiling immediately so foreground Ghost never contends on GPU,
+            // while preserving pending idle work and in-flight hydration to resume once Ghost finishes.
+            if !memoryPressurePaused {
+                if fastTimer != nil || deepTimer != nil || (passTask != nil && manualPassToken == nil) {
+                    pendingIdleReschedule = true
+                }
+                if hydrateTask != nil, let entryID = activeHydrateEntryID {
+                    pendingHydrateEntryID = entryID
+                    pendingHydrateForce = pendingHydrateForce || activeHydrateForce
+                }
+            }
+            cancelProfiles()
+            passGeneration += 1
+            hydrateGeneration += 1
+            fastTimer?.cancel()
+            fastTimer = nil
+            deepTimer?.cancel()
+            deepTimer = nil
+            hydrateTask?.cancel()
+            hydrateTask = nil
+            activeHydrateEntryID = nil
+            activeHydrateForce = false
+            passTask?.cancel()
+            passTask = nil
+            manualPassToken = nil
+            if case .queued = manualPhase { manualPhase = .idle }
+            else if case .reading = manualPhase { manualPhase = .idle }
+            setIsIndexing(false)
+            return
+        }
+        guard !memoryPressurePaused else { return }
+        let shouldReschedule = pendingIdleReschedule
+        pendingIdleReschedule = false
+        let hydrateEntryID = pendingHydrateEntryID
+        let hydrateForce = pendingHydrateForce
+        pendingHydrateEntryID = nil
+        pendingHydrateForce = false
+        if let hydrateEntryID {
+            hydrateIfNeeded(entryID: hydrateEntryID, force: hydrateForce)
+        }
+        if shouldReschedule, settings.autocompleteEnabled {
+            armIdleTimers()
+        }
     }
     private func prepareOriginalNameAnchors() {
         guard !memoryPressurePaused, originalNameAnchorsEnabled, let document = currentDocument(), document.isFiction else {
@@ -350,9 +403,8 @@ public final class BackgroundIndexer {
         self.settings = settings
         self.sidecarPersistence = sidecarPersistence ?? KnowledgeSidecarRepository()
         Self.current = self
-        // 앱 비활성 = 장기 유휴와 같은 신호 — 곧바로 깊은 패스 (PLAN §9).
-        // 앱 수명 싱글턴이라 옵저버를 해제하지 않는다 (weak self라 누수 없음).
-        NotificationCenter.default.addObserver(
+        // App deactivation acts as an idle signal to trigger a deep pass.
+        resignActiveObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didResignActiveNotification,
             object: nil, queue: .main
         ) { _ in
@@ -380,10 +432,9 @@ public final class BackgroundIndexer {
         }
     }
 
-    /// 앱 종료 직전 호출 — 유휴 타이머와 진행 패스를 접어, 엔진의 드레인이
-    /// 길어지지 않게 한다 (이슈 #65 Gate 0 teardown 세그폴트 수정). 종료 시점의
-    /// 백그라운드 이해는 어차피 버려질 결과다 — 원문은 flush로 이미 안전하다.
-    public func shutdown() {
+    /// Cancels in-flight tasks and timers without removing lifecycle observers so recoverable
+    /// pauses (such as memory pressure) can resume listening when pressure clears.
+    private func cancelActiveWork() {
         cancelProfiles()
         originalNamePreparation.shutdown()
         passGeneration += 1
@@ -394,11 +445,51 @@ public final class BackgroundIndexer {
         deepTimer = nil
         hydrateTask?.cancel()
         hydrateTask = nil
+        activeHydrateEntryID = nil
+        activeHydrateForce = false
+        pendingHydrateEntryID = nil
+        pendingHydrateForce = false
+        pendingIdleReschedule = false
         passTask?.cancel()
         passTask = nil
         resetTask?.cancel()
         resetTask = nil
         setIsIndexing(false)
+    }
+
+    /// 앱 종료 직전 호출 — 유휴 타이머와 진행 패스를 접어, 엔진의 드레인이
+    /// 길어지지 않게 한다 (이슈 #65 Gate 0 teardown 세그폴트 수정). 종료 시점의
+    /// 백그라운드 이해는 어차피 버려질 결과다 — 원문은 flush로 이미 안전하다.
+    public func shutdown() {
+        if let resignActiveObserver {
+            NotificationCenter.default.removeObserver(resignActiveObserver)
+            self.resignActiveObserver = nil
+        }
+        cancelActiveWork()
+    }
+
+    private func armIdleTimers() {
+        fastTimer?.cancel()
+        fastTimer = nil
+        deepTimer?.cancel()
+        deepTimer = nil
+        guard !memoryPressurePaused, settings.autocompleteEnabled else { return }
+        if foregroundCompletionBusy {
+            pendingIdleReschedule = true
+            return
+        }
+        fastTimer = Task { [weak self] in
+            try? await Task.sleep(for: Self.fastPassIdle)
+            guard !Task.isCancelled else { return }
+            self?.fastTimer = nil
+            self?.startPass(deep: false)
+        }
+        deepTimer = Task { [weak self] in
+            try? await Task.sleep(for: Self.deepPassIdle)
+            guard !Task.isCancelled else { return }
+            self?.deepTimer = nil
+            self?.startPass(deep: true)
+        }
     }
 
     // MARK: - 트리거
@@ -419,6 +510,7 @@ public final class BackgroundIndexer {
         // Original-backed actions retire synchronously, including while analysis is paused.
         setWarnings([])
         guard !memoryPressurePaused else { return }
+        cancelProfiles()
         prepareOriginalNameAnchors()
         // 선점: 백그라운드 생성은 예측(그리고 그 앞의 타이핑)에 항상 진다 (CLAUDE.md §2-6).
         // 세대를 먼저 올린다 — 취소가 늦게 끝난 이전 작업의 모든 발행/정리를 무효화 (#82).
@@ -443,23 +535,11 @@ public final class BackgroundIndexer {
         // 디스크엔 있는데 UI가 못 본 것. 스냅샷 entryID 비교라 타이핑 중엔 O(1).
         hydrateIfNeeded(entryID: entryID)
 
-        fastTimer?.cancel()
-        deepTimer?.cancel()
         // 자동완성이 꺼져 있으면 타이머조차 감지 않는다 — 어차피 패스가 거부되고,
         // 키 입력 경로에 태스크 생성 비용을 남길 이유가 없다 (랙 진단의 대조군:
         // 스위치를 끄면 백그라운드 이해 관련 작업이 문자 그대로 0이어야 한다).
         // (웜 로드는 위에서 이미 했다 — 읽기 전용이라 스위치와 무관.)
-        guard settings.autocompleteEnabled else { return }
-        fastTimer = Task { [weak self] in
-            try? await Task.sleep(for: Self.fastPassIdle)
-            guard !Task.isCancelled else { return }
-            self?.startPass(deep: false)
-        }
-        deepTimer = Task { [weak self] in
-            try? await Task.sleep(for: Self.deepPassIdle)
-            guard !Task.isCancelled else { return }
-            self?.startPass(deep: true)
-        }
+        armIdleTimers()
     }
 
     /// Project/document selection changes invalidate ownership even when the editor text
@@ -486,8 +566,15 @@ public final class BackgroundIndexer {
         resetTask = nil
         hydrateTask?.cancel()
         hydrateTask = nil
+        activeHydrateEntryID = nil
+        activeHydrateForce = false
+        pendingHydrateEntryID = nil
+        pendingHydrateForce = false
+        pendingIdleReschedule = false
         fastTimer?.cancel()
+        fastTimer = nil
         deepTimer?.cancel()
+        deepTimer = nil
         setIsIndexing(false)
         snapshot = nil
         snapshotRuntimeIdentity = nil
@@ -527,6 +614,11 @@ public final class BackgroundIndexer {
     /// 조립해 수정이 즉시 보이게 한다 (LLM 없음, 결정적 재조립).
     private func hydrateIfNeeded(entryID: UUID, force: Bool = false) {
         guard !memoryPressurePaused else { return }
+        if foregroundCompletionBusy {
+            pendingHydrateEntryID = entryID
+            pendingHydrateForce = pendingHydrateForce || force
+            return
+        }
         guard let entry = currentDocument(), entry.id == entryID else { return }
         let scope = entry.scope
         let runtimeIdentity = entry.runtimeIdentity
@@ -546,19 +638,38 @@ public final class BackgroundIndexer {
         hydrateGeneration += 1
         let token = hydrateGeneration
         hydrateTask?.cancel()
+        activeHydrateEntryID = entryID
+        activeHydrateForce = force
         // 파싱·디스크 읽기를 메인에서 떼어낸다 (30만 자 파싱이 메인을 막지 않게).
         let persistence = sidecarPersistence
         hydrateTask = Task.detached(priority: .utility) { [weak self] in
+            func clearActiveHydrate() async {
+                await MainActor.run { [weak self] in
+                    guard let self, self.hydrateGeneration == token else { return }
+                    self.hydrateTask = nil
+                    self.activeHydrateEntryID = nil
+                    self.activeHydrateForce = false
+                }
+            }
             // Repeated typing cancels preparation before any whole-source read. Load/recovery
             // still hydrates immediately; foreground completion retains its existing priority.
             if waitForIdle {
-                do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
+                do { try await Task.sleep(for: .milliseconds(200)) } catch {
+                    await clearActiveHydrate()
+                    return
+                }
             }
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled else { await clearActiveHydrate(); return }
             let body = source.string
-            guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                await clearActiveHydrate()
+                return
+            }
             let outline = DocumentOutline.parse(body)
-            guard !outline.scenes.isEmpty, !Task.isCancelled else { return }
+            guard !outline.scenes.isEmpty, !Task.isCancelled else {
+                await clearActiveHydrate()
+                return
+            }
             let loadStart = CFAbsoluteTimeGetCurrent()
             let sidecar: KnowledgeSidecar
             if let prepared {
@@ -566,7 +677,10 @@ public final class BackgroundIndexer {
             } else {
                 sidecar = await persistence.load(scope: scope)
             }
-            guard !Task.isCancelled, sidecar.scope == scope else { return }
+            guard !Task.isCancelled, sidecar.scope == scope else {
+                await clearActiveHydrate()
+                return
+            }
             let loadMs = (CFAbsoluteTimeGetCurrent() - loadStart) * 1000
             let utterances = DialogueAttribution.utterances(in: body, cards: characters)
             let deriveStart = CFAbsoluteTimeGetCurrent()
@@ -585,6 +699,9 @@ public final class BackgroundIndexer {
                 guard let self else { return }
                 // 늦은 이전 hydrate는 현재 문서에만, 자기 토큰이 유효할 때만 (#82).
                 guard self.hydrateGeneration == token else { return }
+                self.hydrateTask = nil
+                self.activeHydrateEntryID = nil
+                self.activeHydrateForce = false
                 guard let current = self.currentDocument(), current.id == entryID,
                     current.scope == scope, current.runtimeIdentity == runtimeIdentity,
                     current.source.isSameVersion(as: source) || current.body == body
@@ -780,6 +897,12 @@ public final class BackgroundIndexer {
 
     private func startPass(deep: Bool, userInitiated: Bool = false) {
         guard !memoryPressurePaused else { return }
+        if foregroundCompletionBusy {
+            if !userInitiated, settings.autocompleteEnabled {
+                pendingIdleReschedule = true
+            }
+            return
+        }
         guard passTask == nil else { return }  // 이미 도는 중 — 중복 금지
         // 자동완성이 꺼져 있으면 지식도 만들지 않는다 — 백그라운드 이해가
         // 대용량 모델 다운로드를 유발해서는 안 된다 (폴더 명명과 같은 규칙).
@@ -873,14 +996,11 @@ public final class BackgroundIndexer {
                 caretUTF16: caret,
                 gateStateProvider: gateStateProvider
             ) { snapshot in
-                // 일관성 검사는 스냅샷과 같은 주기 — 백그라운드에서 계산하고
-                // 결과만 메인으로 (렌더 경로 재계산 금지, docs/editor-perf.md 4차).
+                // Run consistency checks off the main thread using liveCharacters (including auto-registered cards).
                 let warnings = ConsistencyChecker.check(
-                    snapshot: snapshot, characters: characters, source: body)
+                    snapshot: snapshot, characters: liveCharacters, source: body)
                 let candidates = ContinuityCandidate.prepare(snapshot: snapshot, warnings: warnings, scope: identity.scope, source: body)
-                Task { @MainActor in
-                    // 이 새 Task는 부모 취소를 물려받지 않는다 — 소유권 가드가 대신
-                    // 걸러낸다 (토큰·문서 일치, #82).
+                await MainActor.run {
                     guard self.owns(identity) else { return }
                     self.setContinuityCandidates([])
                     self.snapshotRuntimeIdentity = identity.runtimeIdentity
@@ -1168,7 +1288,7 @@ public final class BackgroundIndexer {
         recordedConversations: [RecordedConversation] = [],
         caretUTF16: Int?,
         gateStateProvider: (@Sendable () -> (thermalState: ProcessInfo.ThermalState, lowPowerModeEnabled: Bool))? = nil,
-        publish: @Sendable @escaping (KnowledgeSnapshot) -> Void,
+        publish: @Sendable @escaping (KnowledgeSnapshot) async -> Void,
         publishMetrics: @Sendable @escaping (KnowledgeMetrics) -> Void = { _ in },
         /// 씬 단위 결정적 진행 (처리한 수, 전체 더티 수) — "지금 읽기" 표시용 (#35).
         progress: (@Sendable (Int, Int) -> Void)? = nil,
@@ -1220,18 +1340,30 @@ public final class BackgroundIndexer {
         guard sidecar.scope == scope else { return }
         let text = body as NSString
 
-        // 결정적 진행률의 분모 — 더티 항목 수 (요약·사건·앎·구간 중 하나라도 없는 씬).
-        let dirtyTotal = orderedScenes.filter { scene in
-            sidecar.sceneSummaries[scene.contentHash] == nil
-                || (!deep ? false :
-                    sidecar.events[scene.contentHash] == nil
-                    || sidecar.insights[scene.contentHash] == nil
-                    || sidecar.segments[scene.contentHash] == nil)
-        }.count
+        let liveHashes = Set(outline.scenes.map(\.contentHash))
+        var sidecarDirty = false
+        func checkpointIfDirty() async -> Bool {
+            guard sidecarDirty else { return true }
+            guard !Task.isCancelled else { return false }
+            let ok = await commit(sidecar, liveHashes)
+            if ok { sidecarDirty = false }
+            return ok
+        }
+
+        // Deterministic progress denominator counts each missing work unit across active phases.
+        let dirtyTotal = orderedScenes.reduce(into: 0) { total, scene in
+            if sidecar.sceneSummaries[scene.contentHash] == nil { total += 1 }
+            if deep {
+                if sidecar.events[scene.contentHash] == nil { total += 1 }
+                if sidecar.insights[scene.contentHash] == nil { total += 1 }
+                if sidecar.segments[scene.contentHash] == nil { total += 1 }
+            }
+        }
         var dirtyDone = 0
         func reportProgress() {
             guard let progress else { return }
-            progress(dirtyDone, max(dirtyTotal, 1))
+            let denominator = max(dirtyTotal, 1)
+            progress(min(dirtyDone, denominator), denominator)
         }
         reportProgress()
         // 대화 귀속 (PLAN §7·§6.4) — 결정적·LLM 없음이라 패스마다 재계산.
@@ -1244,7 +1376,10 @@ public final class BackgroundIndexer {
             guard callBudget > 0 else { break }
             guard sidecar.sceneSummaries[scene.contentHash] == nil else { continue }
             guard !Task.isCancelled else { return }
-            guard gateOrReport(deep) else { return }
+            guard gateOrReport(deep) else {
+                _ = await checkpointIfDirty()
+                return
+            }
 
             let sceneText = String(
                 text.substring(
@@ -1270,9 +1405,11 @@ public final class BackgroundIndexer {
                 pov: analysis.pov,
                 location: analysis.location,
                 updatedAt: .now)
+            sidecarDirty = true
             dirtyDone += 1
             reportProgress()
         }
+        guard await checkpointIfDirty() else { return }
 
         // ② 사건 추출 (깊은 패스 전용, PLAN §6.3) — 요약이 끝난 씬만.
         // 요약보다 뒤에 두는 이유: 빠른 패스의 LLM 예산은 요약이 먼저 쓴다
@@ -1281,7 +1418,10 @@ public final class BackgroundIndexer {
             relinkParticipants(sidecar: &sidecar, characters: characters)
             for scene in orderedScenes {
                 guard !Task.isCancelled else { return }
-                guard gateOrReport(true) else { return }
+                guard gateOrReport(true) else {
+                    _ = await checkpointIfDirty()
+                    return
+                }
                 // 키 존재 = 추출 완료(빈 배열이면 "사건 없음") — 메모 적중은 건너뛴다.
                 guard sidecar.events[scene.contentHash] == nil else { continue }
                 let sceneText = String(
@@ -1296,9 +1436,11 @@ public final class BackgroundIndexer {
                 guard !Task.isCancelled else { return }  // 취소 뒤 체크포인트 금지 (#82)
                 guard let extracted else { continue }  // 실패·인물 미등록 — 재시도 여지
                 sidecar.events[scene.contentHash] = extracted
+                sidecarDirty = true
                 dirtyDone += 1
                 reportProgress()
             }
+            guard await checkpointIfDirty() else { return }
         }
 
         // ②b 심화 추출 (깊은 패스 전용, v4 — 앎·관계). 사건과 별도
@@ -1306,7 +1448,10 @@ public final class BackgroundIndexer {
         if deep, !Task.isCancelled {
             for scene in orderedScenes {
                 guard !Task.isCancelled else { return }
-                guard gateOrReport(true) else { return }
+                guard gateOrReport(true) else {
+                    _ = await checkpointIfDirty()
+                    return
+                }
                 guard sidecar.insights[scene.contentHash] == nil else { continue }
                 let sceneText = String(
                     text.substring(
@@ -1320,9 +1465,11 @@ public final class BackgroundIndexer {
                 guard !Task.isCancelled else { return }  // 취소 뒤 체크포인트 금지 (#82)
                 guard let insights else { continue }  // 실패 — 다음 패스가 재시도
                 sidecar.insights[scene.contentHash] = insights
+                sidecarDirty = true
                 dirtyDone += 1
                 reportProgress()
             }
+            guard await checkpointIfDirty() else { return }
         }
 
         // ②c 서사 구간 분석 (깊은 패스 전용, v5 — 요구사항 §7–§10).
@@ -1331,7 +1478,10 @@ public final class BackgroundIndexer {
         if deep, !Task.isCancelled {
             for scene in orderedScenes {
                 guard !Task.isCancelled else { return }
-                guard gateOrReport(true) else { return }
+                guard gateOrReport(true) else {
+                    _ = await checkpointIfDirty()
+                    return
+                }
                 guard sidecar.segments[scene.contentHash] == nil else { continue }
                 let sceneText = String(
                     text.substring(
@@ -1346,6 +1496,9 @@ public final class BackgroundIndexer {
                     || TemporalShiftDetector.hasCandidate(in: sceneText)
                 guard hasShiftHint else {
                     sidecar.segments[scene.contentHash] = SceneSegmentation()  // 메모: 단일 서사
+                    sidecarDirty = true
+                    dirtyDone += 1
+                    reportProgress()
                     continue
                 }
                 let segments = await analyzeSegments(
@@ -1354,14 +1507,19 @@ public final class BackgroundIndexer {
                 guard !Task.isCancelled else { return }  // 취소 뒤 체크포인트 금지 (#82)
                 guard let segments else { continue }  // 실패 — 다음 패스가 재시도
                 sidecar.segments[scene.contentHash] = SceneSegmentation(segments: segments)
+                sidecarDirty = true
+                dirtyDone += 1
+                reportProgress()
             }
+            guard await checkpointIfDirty() else { return }
         }
 
         // ③ 상향 전파 (깊은 패스 전용) — 장 → 작품, 더티 경로만 (PLAN §6.1).
         if deep, !Task.isCancelled {
             await propagate(
                 outline: outline, sidecar: &sidecar,
-                parameters: parameters, engine: engine)
+                parameters: parameters, engine: engine,
+                gateAllows: { gateOrReport(true) })
             guard !Task.isCancelled else { return }  // 취소 뒤 체크포인트 금지 (#82)
             // 어떤 저널도 참조하지 않는 사이드카 정리 (삭제된 작품의 파생물).
             if case .legacy = scope {
@@ -1373,7 +1531,7 @@ public final class BackgroundIndexer {
         // ④ 사건 그래프 분석 (깊은 패스 전용, v5 — 요구사항 §3·§6·§12·§29).
         // 살아있는 씬의 사건 전체를 담화 순서로 모아 한 번의 호출로 인과·동일
         // 사건·시간 관계 후보를 뽑는다. 메모 키 = 사건 키 집합의 결합 해시.
-        if deep, !Task.isCancelled, gateAllows(deep: true) {
+        if deep, !Task.isCancelled, gateOrReport(true) {
             var orderedEvents: [StoryEvent] = []
             for scene in outline.scenes {
                 orderedEvents.append(contentsOf: sidecar.events[scene.contentHash] ?? [])
@@ -1393,6 +1551,7 @@ public final class BackgroundIndexer {
                         identities: analysis.identities,
                         chronoEdges: analysis.chronoEdges,
                         memoHash: memoHash)
+                    sidecarDirty = true
                 }
             }
         }
@@ -1401,7 +1560,7 @@ public final class BackgroundIndexer {
         // 한 번의 호출로 플롯 라인으로 묶는다. 메모 키 = 사건 키 집합 해시.
         // 재분석 결과는 이전 스레드에 멤버 겹침으로 이어(reconcile) stableID가
         // 유지된다 — 오버라이드·색·레인의 앵커가 흔들리지 않는다 (요구사항 §10).
-        if deep, !Task.isCancelled, gateAllows(deep: true) {
+        if deep, !Task.isCancelled, gateOrReport(true) {
             var orderedEvents: [StoryEvent] = []
             for scene in outline.scenes {
                 orderedEvents.append(contentsOf: sidecar.events[scene.contentHash] ?? [])
@@ -1420,6 +1579,7 @@ public final class BackgroundIndexer {
                             new: threads,
                             previous: sidecar.plotThreads?.threads ?? []),
                         memoHash: memoHash)
+                    sidecarDirty = true
                 }
             }
         }
@@ -1429,7 +1589,11 @@ public final class BackgroundIndexer {
         // 바뀌면 재분석). 사용자 기록 자체(entries.json)는 건드리지 않는다.
         if deep, !Task.isCancelled {
             for record in recordedConversations {
-                guard !Task.isCancelled, gateAllows(deep: true) else { return }
+                guard !Task.isCancelled else { return }
+                guard gateOrReport(true) else {
+                    _ = await checkpointIfDirty()
+                    return
+                }
                 let key = record.id.uuidString
                 if sidecar.conversationMeta[key]?.contentHash == record.contentHash { continue }
                 let anchored = ConversationDetector.reanchor(record, in: text) ?? record
@@ -1445,6 +1609,7 @@ public final class BackgroundIndexer {
                 guard !Task.isCancelled else { return }  // 취소 뒤 체크포인트 금지 (#82)
                 guard let meta else { continue }
                 sidecar.conversationMeta[key] = meta
+                sidecarDirty = true
             }
             // 기록이 삭제된 보완 데이터 정리.
             let liveIDs = Set(recordedConversations.map { $0.id.uuidString })
@@ -1455,7 +1620,7 @@ public final class BackgroundIndexer {
 
         guard !Task.isCancelled else { return }
         let saveStart = CFAbsoluteTimeGetCurrent()
-        guard await commit(sidecar, Set(outline.scenes.map(\.contentHash))) else { return }
+        guard await commit(sidecar, liveHashes) else { return }
         let saveMs = (CFAbsoluteTimeGetCurrent() - saveStart) * 1000
         let deriveStart = CFAbsoluteTimeGetCurrent()
         let snapshot = makeSnapshot(
@@ -1464,7 +1629,7 @@ public final class BackgroundIndexer {
             characters: characters,
             recordedConversations: recordedConversations)
         let deriveMs = (CFAbsoluteTimeGetCurrent() - deriveStart) * 1000
-        publish(snapshot)
+        await publish(snapshot)
         // 성능 지표 (요구사항 §33) — 깊은 패스 끝에서 한 번 갱신.
         publishMetrics(
             measure(
@@ -1478,7 +1643,8 @@ public final class BackgroundIndexer {
         outline: DocumentOutline,
         sidecar: inout KnowledgeSidecar,
         parameters: CompletionParameters,
-        engine: CompletionEngine
+        engine: CompletionEngine,
+        gateAllows: () -> Bool = { BackgroundIndexer.gateAllows(deep: true) }
     ) async {
         let changes = HierarchicalMemory.changes(previous: sidecar, outline: outline)
         let chapters = HierarchicalMemory.chapterGroups(in: outline)
@@ -1486,7 +1652,7 @@ public final class BackgroundIndexer {
         // 이번 패스에서 확보한 롤업 — 경로별 기록 후 아래에서 문서 순서로 조립한다.
         var madeByPath: [[String]: KnowledgeSidecar.ChapterSummary] = [:]
         for chapter in chapters {
-            guard !Task.isCancelled, gateAllows(deep: true) else { return }
+            guard !Task.isCancelled, gateAllows() else { return }
             let childSummaries = chapter.scenes.compactMap {
                 sidecar.sceneSummaries[$0.contentHash]?.summary
             }

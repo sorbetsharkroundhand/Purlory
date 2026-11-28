@@ -40,7 +40,6 @@ public final class ModelDownloadManager: ObservableObject {
     public func refresh(_ modelIDs: [String]) {
         for id in modelIDs where tasks[id] == nil {
             guard let pin = manifestForID(id) else { states[id] = .failed(ModelInstallError.metadata.localizedDescription); continue }
-            if let reason = startBlock() { states[id] = .failed(reason); continue }
             let token = UUID(); tokens[id] = token; states[id] = .verifying
             tasks[id] = Task(priority: .utility) { [weak self, store] in
                 let state = await store.state(for: pin)

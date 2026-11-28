@@ -1,9 +1,17 @@
 import Foundation
+import os
 
 struct WorkspaceWritingStatistics {
-    nonisolated(unsafe) static var scanCount = 0
-    private static let cacheLock = NSLock()
-    nonisolated(unsafe) private static var cached: (text: String, characters: Int, paragraphs: Int)?
+    private struct CacheState: Sendable {
+        var scanCount = 0
+        var cached: (text: String, characters: Int, paragraphs: Int)?
+    }
+
+    private static let cacheState = OSAllocatedUnfairLock(initialState: CacheState())
+    static var scanCount: Int {
+        get { cacheState.withLock { $0.scanCount } }
+        set { cacheState.withLock { $0.scanCount = newValue } }
+    }
 
     let characters: Int
     let paragraphs: Int
@@ -33,15 +41,13 @@ struct WorkspaceWritingStatistics {
     }
 
     private static func counts(for text: String) -> (characters: Int, paragraphs: Int) {
-        cacheLock.lock()
-        if let cached, cached.text == text {
-            let result = (cached.characters, cached.paragraphs)
-            cacheLock.unlock()
-            return result
+        if let hit = cacheState.withLock({ state -> (Int, Int)? in
+            guard let cached = state.cached, cached.text == text else { return nil }
+            return (cached.characters, cached.paragraphs)
+        }) {
+            return hit
         }
-        cacheLock.unlock()
 
-        scanCount += 1
         var newlines = 0
         let utf16 = text.utf16
         for unit in utf16 where unit == 0x000A {
@@ -50,9 +56,10 @@ struct WorkspaceWritingStatistics {
         let characters = utf16.count - newlines
         let paragraphs = max(1, newlines + 1)
 
-        cacheLock.lock()
-        cached = (text, characters, paragraphs)
-        cacheLock.unlock()
+        cacheState.withLock { state in
+            state.scanCount += 1
+            state.cached = (text, characters, paragraphs)
+        }
         return (characters, paragraphs)
     }
 

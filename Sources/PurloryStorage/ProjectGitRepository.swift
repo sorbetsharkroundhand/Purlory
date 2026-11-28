@@ -312,7 +312,7 @@ package enum ProjectGitRepository {
 
         var ordered: [(key: String, envelope: BackupVersionEnvelope)] = []
         var visited = Set<UUID>()
-        let byID = Dictionary(uniqueKeysWithValues: records.map { ($0.envelope.id, $0) })
+        let byID = Dictionary(records.map { ($0.envelope.id, $0) }, uniquingKeysWith: { _, latest in latest })
         func visit(_ item: (key: String, envelope: BackupVersionEnvelope)) {
             guard visited.insert(item.envelope.id).inserted else { return }
             for parentID in item.envelope.parentIDs ?? [] {
@@ -586,14 +586,23 @@ package enum ProjectGitRepository {
         return nil
     }
 
-    private static func zlibCompress(_ data: Data) throws -> Data {
+    package static func zlibCompress(_ data: Data) throws -> Data {
         var destLen = uLongf(compressBound(uLong(data.count)))
         var out = Data(count: Int(destLen))
-        let result = data.withUnsafeBytes { srcPtr -> Int32 in
-            out.withUnsafeMutableBytes { dstPtr -> Int32 in
+        let result: Int32
+        if data.isEmpty {
+            var empty: Bytef = 0
+            result = out.withUnsafeMutableBytes { dstPtr -> Int32 in
                 guard let dst = dstPtr.bindMemory(to: Bytef.self).baseAddress else { return Z_MEM_ERROR }
-                let src = srcPtr.bindMemory(to: Bytef.self).baseAddress
-                return compress2(dst, &destLen, src, uLong(data.count), Z_DEFAULT_COMPRESSION)
+                return compress2(dst, &destLen, &empty, 0, Z_DEFAULT_COMPRESSION)
+            }
+        } else {
+            result = data.withUnsafeBytes { srcPtr -> Int32 in
+                out.withUnsafeMutableBytes { dstPtr -> Int32 in
+                    guard let dst = dstPtr.bindMemory(to: Bytef.self).baseAddress,
+                          let src = srcPtr.bindMemory(to: Bytef.self).baseAddress else { return Z_MEM_ERROR }
+                    return compress2(dst, &destLen, src, uLong(data.count), Z_DEFAULT_COMPRESSION)
+                }
             }
         }
         guard result == Z_OK else { throw ProjectStoreError.damagedFile(".git/objects") }

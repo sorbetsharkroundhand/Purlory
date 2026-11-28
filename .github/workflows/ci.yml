@@ -35,6 +35,9 @@ jobs:
           swift --version
           xcodebuild -version
 
+      - name: Verify implementation module boundaries
+        run: python3 scripts/check-module-boundaries.py
+
       - name: Resolve dependencies
         # Local binary/resource inputs must exist before SwiftPM loads the manifest.
         run: |
@@ -54,9 +57,6 @@ jobs:
 
       - name: Build Purlory
         run: swift build --product Purlory
-
-      - name: Verify implementation module boundaries
-        run: python3 scripts/check-module-boundaries.py
 
       - name: Test PurloryCore
         run: swift test

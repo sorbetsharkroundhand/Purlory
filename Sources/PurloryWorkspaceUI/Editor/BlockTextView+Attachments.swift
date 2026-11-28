@@ -214,25 +214,29 @@ extension BlockTextView {
     static func objectKeyAction(
         _ raw: String, command: Bool, option: Bool
     ) -> ImageObjectKeyAction? {
-        // 특수키는 charactersIgnoringModifiers의 사유 코드로 온다 (F700~F703).
+        // AppKit special keys arrive as private-use Unicode scalars (F700..F703).
+        let upArrow = String(UnicodeScalar(NSEvent.SpecialKey.upArrow.rawValue)!)
+        let downArrow = String(UnicodeScalar(NSEvent.SpecialKey.downArrow.rawValue)!)
+        let leftArrow = String(UnicodeScalar(NSEvent.SpecialKey.leftArrow.rawValue)!)
+        let rightArrow = String(UnicodeScalar(NSEvent.SpecialKey.rightArrow.rawValue)!)
         switch (raw, command, option) {
-        case ("\u{F702}", false, false), ("\u{F700}", false, false):
+        case (leftArrow, false, false), (upArrow, false, false):
             return .exitBefore
-        case ("\u{F703}", false, false), ("\u{F704}", false, false):
+        case (rightArrow, false, false), (downArrow, false, false):
             return .exitAfter
-        case ("\u{F702}", true, _):
+        case (leftArrow, true, _):
             return .align("left")
-        case ("\u{F700}", true, _):
+        case (upArrow, true, _):
             return .align("center")
-        case ("\u{F703}", true, _):
+        case (rightArrow, true, _):
             return .align("right")
         case ("+", false, _), ("=", false, _):
             return .adjustWidth(10)
         case ("-", false, _), ("_", false, _):
             return .adjustWidth(-10)
-        case ("\u{F700}", false, true):
+        case (upArrow, false, true):
             return .move(-1)
-        case ("\u{F704}", false, true):
+        case (downArrow, false, true):
             return .move(1)
         case ("\r", false, false), (" ", false, false):
             return .revealToolbar
@@ -1090,75 +1094,69 @@ extension BlockTextView {
         moveParagraph(at: loc, as: .image, toViewPoint: p)
     }
 
-    /// 블록 문단(이미지·수식)을 통째로 드롭 지점의 문단 앞으로 옮긴다 (요구 B·6).
-    /// 다중 행 수식 그룹이면 그룹 전체를 옮긴다 (이슈 #20).
+    /// Moves a block paragraph (or multi-line math group) before the drop paragraph,
+    /// preserving attributed block/delimiter metadata and registering an atomic undo step.
     func moveParagraph(at loc: Int, as block: PurloryBlock, toViewPoint p: NSPoint) {
         imageDropIndicatorY = nil
         guard let storage = textStorage else { return }
         let ns = string as NSString
         var para = ns.paragraphRange(for: NSRange(location: min(loc, ns.length), length: 0))
-        // 수식 그룹 소속이면 이동 단위를 그룹 전체로 넓힌다.
         if block == .math, let group = mathGroup(containing: para.location) {
             para = group
         }
-        let isMathGroup = block == .math && para.length > 0
-            && ns.paragraphRange(for: NSRange(location: para.location, length: 0)).upperBound
-                != para.upperBound
-        let lineText = ns.substring(with: para).trimmingCharacters(in: CharacterSet(["\n"]))
         let dropIdx = min(characterIndexForInsertion(at: p), ns.length)
         let dropPara = ns.paragraphRange(for: NSRange(location: dropIdx, length: 0))
-        guard dropPara.location < para.location || dropPara.location >= para.upperBound else {
+        guard dropPara.location < para.location || dropPara.location > para.upperBound else {
             refreshRenderedBlocks(); return
         }
-        clearImageSelection()
 
-        // 지울 범위: 블록 문단(개행 포함). 마지막 줄이라 개행이 없으면 앞 개행을 지운다.
-        var removeRange = para
-        let endsNL =
-            para.length > 0
-            && ns.substring(
-                with: NSRange(location: para.location + para.length - 1, length: 1)) == "\n"
-        if !endsNL, para.location > 0 {
-            removeRange = NSRange(location: para.location - 1, length: para.length + 1)
-        }
-        var insertLoc = dropPara.location
+        let movedAttr = NSMutableAttributedString(attributedString: storage.attributedSubstring(from: para))
+        let span: NSRange
+        let replacement = NSMutableAttributedString()
+        let newParaLoc: Int
+        let newParaEnd: Int
 
-        guard shouldChangeText(
-            in: NSRange(location: 0, length: ns.length), replacementString: nil)
-        else { return }
-        nameCurrentUndo("블록 이동")
-        isTransforming = true
-        storage.replaceCharacters(in: removeRange, with: "")
-        // 삭제로 밀린 삽입 위치 보정.
-        if insertLoc >= removeRange.location + removeRange.length {
-            insertLoc -= removeRange.length
-        } else if insertLoc > removeRange.location {
-            insertLoc = removeRange.location
-        }
-        insertLoc = min(max(0, insertLoc), (string as NSString).length)
-        storage.replaceCharacters(
-            in: NSRange(location: insertLoc, length: 0), with: lineText + "\n")
-        isTransforming = false
-
-        let newPara = (string as NSString).paragraphRange(
-            for: NSRange(location: insertLoc, length: 0))
-        if !isMathGroup {
-            // 단일 문단만 속성 재부여 — 그룹은 열기/닫기 구분자 속성이 문단마다
-            // 다르므로 텍스트와 함께 이동한 속성을 건드리지 않는다 (이슈 #20).
-            applyBlock(block, to: newPara, registerUndo: false)
-        }
-        if block == .image {
-            setSelectedRange(NSRange(location: newPara.location, length: 0))
-            didChangeText()
-            // 옮긴 이미지를 다시 객체 선택해 박스를 이어서 보여준다.
-            selectImageObject(at: newPara)
+        if dropPara.location < para.location {
+            let middleRange = NSRange(location: dropPara.location, length: para.location - dropPara.location)
+            let middleAttr = NSMutableAttributedString(attributedString: storage.attributedSubstring(from: middleRange))
+            if !movedAttr.string.hasSuffix("\n"), middleAttr.string.hasSuffix("\n") {
+                let middleNLAttrs = middleAttr.attributes(at: middleAttr.length - 1, effectiveRange: nil)
+                let movedNLAttrs = movedAttr.length > 0
+                    ? movedAttr.attributes(at: movedAttr.length - 1, effectiveRange: nil)
+                    : middleNLAttrs
+                middleAttr.deleteCharacters(in: NSRange(location: middleAttr.length - 1, length: 1))
+                movedAttr.append(NSAttributedString(string: "\n", attributes: movedNLAttrs))
+            }
+            span = NSRange(location: dropPara.location, length: para.upperBound - dropPara.location)
+            replacement.append(movedAttr)
+            replacement.append(middleAttr)
+            newParaLoc = dropPara.location
+            newParaEnd = dropPara.location + movedAttr.length
         } else {
-            // 커서는 블록 **다음** 문단에 — 수식은 커서가 들어오면 소스로 풀리므로
-            // 옮긴 직후에도 렌더 상태를 유지한다.
-            setSelectedRange(NSRange(
-                location: min(newPara.upperBound, (string as NSString).length), length: 0))
-            didChangeText()
-            refreshRenderedBlocks()
+            let middleRange = NSRange(location: para.upperBound, length: dropPara.location - para.upperBound)
+            let middleAttr = NSMutableAttributedString(attributedString: storage.attributedSubstring(from: middleRange))
+            span = NSRange(location: para.location, length: dropPara.location - para.location)
+            replacement.append(middleAttr)
+            replacement.append(movedAttr)
+            newParaLoc = para.location + middleAttr.length
+            newParaEnd = newParaLoc + movedAttr.length
+        }
+
+        let targetSelection = block == .image
+            ? NSRange(location: newParaLoc, length: 0)
+            : NSRange(location: min(newParaEnd, storage.length), length: 0)
+        breakUndoCoalescing()
+        applyAttributedParagraphSwap(
+            in: span,
+            with: replacement,
+            selectionAfter: targetSelection,
+            actionName: "블록 이동",
+            reselectImageLocation: block == .image ? newParaLoc : nil
+        )
+        if block == .image {
+            let newPara = (string as NSString).paragraphRange(
+                for: NSRange(location: min(newParaLoc, (string as NSString).length), length: 0))
+            selectImageObject(at: newPara)
         }
     }
 
