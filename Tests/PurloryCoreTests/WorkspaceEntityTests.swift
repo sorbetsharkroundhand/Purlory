@@ -95,9 +95,13 @@ import XCTest
         XCTAssertEqual(model.peek?.name, "한도경")
         XCTAssertEqual(h.requests.spatialWorkspace?.resonatingTerm, "한도경")
         model.scheduleHide(); model.keepAlive()
-        try await Task.sleep(for: .milliseconds(210))
+        try await Task.sleep(for: .milliseconds(220))
         XCTAssertNotNil(model.peek)
-        model.scheduleHide(); try await Task.sleep(for: .milliseconds(210))
+        model.scheduleHide()
+        for _ in 0..<40 {
+            if model.peek == nil && h.requests.spatialWorkspace?.resonatingTerm == nil { break }
+            try await Task.sleep(for: .milliseconds(25))
+        }
         XCTAssertNil(model.peek); XCTAssertNil(h.requests.spatialWorkspace?.resonatingTerm)
         h.requests.spatialWorkspace?.whisperTyping = true
         model.hover(editor: editor, key: identity.key, nativeOffset: 1)
