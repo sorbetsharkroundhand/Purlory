@@ -70,4 +70,24 @@ final class WriterCompatibilityTests: XCTestCase {
         XCTAssertEqual(h.fixture.session.activeProject, before)
         XCTAssertEqual(h.fixture.session.selectedDocumentSnapshot?.userData[WriterDocumentData.key(for: writer.documentID)], bytes)
     }
+
+    func testLegacyCharacterCardJSONDecodesWithoutNarrativeArcFields() throws {
+        let cardID = UUID()
+        let legacyJSON = """
+        {
+          "id": "\(cardID.uuidString)",
+          "name": "한도경",
+          "aliases": "도경, 등대지기",
+          "note": "과묵하고 손놀림이 정확하다."
+        }
+        """
+        let decoded = try JSONDecoder().decode(CharacterCard.self, from: Data(legacyJSON.utf8))
+        XCTAssertEqual(decoded.id, cardID)
+        XCTAssertEqual(decoded.name, "한도경")
+        XCTAssertNil(decoded.motivation)
+        XCTAssertNil(decoded.goal)
+        XCTAssertNil(decoded.conflict)
+        XCTAssertNil(decoded.epiphany)
+        XCTAssertFalse(decoded.hasNarrativeArc)
+    }
 }
