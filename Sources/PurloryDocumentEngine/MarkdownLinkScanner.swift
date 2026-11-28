@@ -86,6 +86,7 @@ package enum MarkdownLinkScanner {
         let nextUnescapedMathDollar: [Int]
         let nextUnescapedDoubleDollar: [Int]
         let nextEnclosingCloseBracket: [Int]
+        let nextOpenBracket: [Int]
     }
 
     private static func normalizeProtected(_ ranges: [NSRange]) -> [NSRange] {
@@ -165,6 +166,7 @@ package enum MarkdownLinkScanner {
         var nextUnescapedMathDollar = Array(repeating: -1, count: n + 1)
         var nextUnescapedDoubleDollar = Array(repeating: -1, count: n + 1)
         var nextEnclosingCloseBracket = Array(repeating: -1, count: n + 1)
+        var nextOpenBracket = Array(repeating: -1, count: n + 1)
 
         var segEnd = n
         var segHasTrailingBackslash = n > 0 && units[n - 1] == backslash && !escaped[n - 1]
@@ -201,6 +203,7 @@ package enum MarkdownLinkScanner {
                 }
             }
             nextEnclosingCloseBracket[i] = unmatchedCloseBracketStack.last ?? -1
+            nextOpenBracket[i] = (!isEsc && u == openBracket) ? i : nextOpenBracket[i + 1]
 
             if !isEsc && sp {
                 segEnd = i
@@ -240,7 +243,8 @@ package enum MarkdownLinkScanner {
             nextAtom: nextAtom,
             nextUnescapedMathDollar: nextUnescapedMathDollar,
             nextUnescapedDoubleDollar: nextUnescapedDoubleDollar,
-            nextEnclosingCloseBracket: nextEnclosingCloseBracket
+            nextEnclosingCloseBracket: nextEnclosingCloseBracket,
+            nextOpenBracket: nextOpenBracket
         )
     }
 
@@ -265,6 +269,7 @@ package enum MarkdownLinkScanner {
         var nextUnescapedMathDollar = Array(repeating: -1, count: n + 1)
         var nextUnescapedDoubleDollar = Array(repeating: -1, count: n + 1)
         var nextEnclosingCloseBracket = Array(repeating: -1, count: n + 1)
+        var nextOpenBracket = Array(repeating: -1, count: n + 1)
 
         var segEnd = n
         var segHasTrailingBackslash = n > 0 && units[n - 1] == backslash && !escaped[n - 1]
@@ -306,6 +311,7 @@ package enum MarkdownLinkScanner {
                 }
             }
             nextEnclosingCloseBracket[i] = unmatchedCloseBracketStack.last ?? -1
+            nextOpenBracket[i] = (!isEsc && u == openBracket) ? i : nextOpenBracket[i + 1]
 
             if !isEsc && sp {
                 segEnd = i
@@ -346,7 +352,8 @@ package enum MarkdownLinkScanner {
             nextAtom: nextAtom,
             nextUnescapedMathDollar: nextUnescapedMathDollar,
             nextUnescapedDoubleDollar: nextUnescapedDoubleDollar,
-            nextEnclosingCloseBracket: nextEnclosingCloseBracket
+            nextEnclosingCloseBracket: nextEnclosingCloseBracket,
+            nextOpenBracket: nextOpenBracket
         )
     }
 
@@ -415,10 +422,33 @@ package enum MarkdownLinkScanner {
         guard paren < table.units.count, !table.escaped[paren], table.units[paren] == openParen else {
             return false
         }
-        if case .valid = resolveDestination(afterOpenParen: paren, image: isImageBracket(at: open, in: table), in: table) {
-            return true
+        let image = isImageBracket(at: open, in: table)
+        guard case .valid(let destEnd) = resolveDestination(afterOpenParen: paren, image: image, in: table) else {
+            return false
         }
-        return false
+        // If `open` still has a valid closing `](dest)` after `closeEnd` (with no unmatched `[`
+        // intervening between `destEnd` and `closeEnd`), then the `](...)` inside `[start...closeEnd]`
+        // is a literal inside a complete code/math span within the link label, not the real boundary.
+        if destEnd <= closeEnd {
+            let directLater = table.nextEnclosingCloseBracket[destEnd]
+            let noInterveningOpen = table.nextOpenBracket[destEnd] < 0 || table.nextOpenBracket[destEnd] > closeEnd
+            let candidateLater: Int
+            if directLater > closeEnd {
+                candidateLater = directLater
+            } else if noInterveningOpen, closeEnd + 1 <= table.units.count {
+                candidateLater = table.nextEnclosingCloseBracket[closeEnd + 1]
+            } else {
+                candidateLater = -1
+            }
+            if candidateLater > closeEnd {
+                let laterParen = candidateLater + 1
+                if laterParen < table.units.count, !table.escaped[laterParen], table.units[laterParen] == openParen,
+                   case .valid = resolveDestination(afterOpenParen: laterParen, image: image, in: table) {
+                    return false
+                }
+            }
+        }
+        return true
     }
 
     private static func nextProtectedLimit(after pos: Int, in protected: [NSRange], cursor: Int) -> Int {

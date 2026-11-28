@@ -1708,6 +1708,24 @@ final class WritingEditorProjectionTests: XCTestCase {
                 ["첫째", "QANORMAL", "둘째"],
                 ["unfinished", "/private"]
             ),
+            (
+                "code-span-with-link-closer-inside-label",
+                "[show `x](target)` here](https://example.test/private) QANORMAL `REALCODE` END",
+                ["show", "here", "QANORMAL", "END"],
+                ["target", "/private", "REALCODE"]
+            ),
+            (
+                "code-span-with-multiple-link-closers-inside-label",
+                "[show `a](1) b](2)` here](https://example.test/private) QANORMAL `REALCODE` END",
+                ["show", "here", "QANORMAL", "END"],
+                ["a](1)", "/private", "REALCODE"]
+            ),
+            (
+                "math-span-with-link-closer-inside-label",
+                "[show $x](target)$ here](https://example.test/private) QANORMAL $REALMATH$ END",
+                ["show", "here", "QANORMAL", "END"],
+                ["target", "/private", "REALMATH"]
+            ),
         ]
 
         let longPrefix = String(repeating: "가", count: 4_500) + " 🙂 "
