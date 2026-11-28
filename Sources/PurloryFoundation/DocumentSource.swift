@@ -140,9 +140,9 @@ public struct DocumentSource: Sendable, Equatable {
             let leftUTF16 = left.currentText.utf16
             let rightUTF16 = right.currentText.utf16
             if left.index == leftUTF16.startIndex && right.index == rightUTF16.startIndex
-                && left.currentText.utf16.count == right.currentText.utf16.count
+                && leftUTF16.count == rightUTF16.count
             {
-                if left.currentText != right.currentText { return false }
+                if !leftUTF16.elementsEqual(rightUTF16) { return false }
                 left.advanceChunk()
                 right.advanceChunk()
                 continue

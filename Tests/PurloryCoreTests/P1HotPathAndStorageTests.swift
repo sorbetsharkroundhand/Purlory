@@ -70,6 +70,36 @@ final class P1HotPathAndStorageTests: XCTestCase {
         XCTAssertEqual(unmaterializedB.materializationCount, 0, "Saving an edited sibling must not materialize unchanged documents")
     }
 
+    func testProjectStorePersistsCanonicallyEquivalentButByteDistinctUnicodeEdit() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Purlory-P1-UnicodeSave-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = ProjectStore(root: root)
+        let original = "\u{00C5}"
+        let replacement = "\u{212B}"
+        var project = WritingProject(
+            id: WritingProjectID(),
+            title: "Unicode Save Regression",
+            mode: .general,
+            documents: [
+                WritingDocument(id: WritingDocumentID(), title: "Draft", body: original, kind: .manuscript)
+            ]
+        )
+        try await store.save(project)
+
+        project.documents[0].body = replacement
+        try await store.save(project)
+
+        let reopened = try await ProjectStore(root: root).load(id: project.id).documents[0].body
+        XCTAssertTrue(
+            reopened.utf16.elementsEqual(replacement.utf16),
+            "Reopened manuscript must preserve exact edited UTF-16 scalar U+212B instead of stale U+00C5"
+        )
+        XCTAssertFalse(reopened.utf16.elementsEqual(original.utf16))
+    }
+
     // MARK: - 3. ProjectStore.projectSummary reads manifest only (does not fail or hash unrelated blobs)
 
     func testProjectStoreSummaryReadsManifestWithoutLoadingDocumentBlobs() async throws {

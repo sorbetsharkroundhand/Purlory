@@ -82,4 +82,25 @@ final class DocumentSourceTests: XCTestCase {
         XCTAssertEqual(Set(lengths), [source.utf16Length])
         XCTAssertEqual(source.materializationCount, 1)
     }
+
+    func testEqualityComparesExactUTF16UnitsForCanonicallyEquivalentStrings() {
+        let latinRingA = DocumentSource("\u{00C5}")
+        let angstrom = DocumentSource("\u{212B}")
+        XCTAssertNotEqual(latinRingA, angstrom, "Whole-chunk equality must compare exact UTF-16 code units, not canonical String equality")
+        XCTAssertEqual(latinRingA.materializationCount, 0)
+        XCTAssertEqual(angstrom.materializationCount, 0)
+
+        let alignedLeft = DocumentSource(chunks: ["앞", "\u{00C5}", "뒤"])
+        let alignedRight = DocumentSource(chunks: ["앞", "\u{212B}", "뒤"])
+        XCTAssertNotEqual(alignedLeft, alignedRight)
+        XCTAssertEqual(alignedLeft.materializationCount, 0)
+        XCTAssertEqual(alignedRight.materializationCount, 0)
+
+        let misalignedLeft = DocumentSource(chunks: ["앞\u{00C5}", "뒤"])
+        let misalignedRight = DocumentSource(chunks: ["앞", "\u{212B}뒤"])
+        XCTAssertNotEqual(misalignedLeft, misalignedRight)
+
+        XCTAssertNotEqual(DocumentSource("\u{00E9}"), DocumentSource("e\u{0301}"))
+        XCTAssertEqual(DocumentSource("\u{212B}"), DocumentSource("\u{212B}"))
+    }
 }
