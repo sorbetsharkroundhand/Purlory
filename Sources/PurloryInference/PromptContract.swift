@@ -5,7 +5,7 @@ import Foundation
 /// 넘지 않고, 카운트 클로저만 Sendable 값으로 통과한다 (메타 이슈 #65 Phase 4).
 /// encode는 어휘 사전에 대한 읽기 전용 변환이라 로드 이후 불변 — 동시 호출 안전을
 /// 전제로 한다 (swift-transformers PreTrainedTokenizer의 불변 어휘 구조).
-public struct TokenCounter: @unchecked Sendable {
+public struct TokenCounter: Sendable {
     private let impl: @Sendable (String) -> Int
     private let promptCost: (@Sendable (AssembledPrompt) -> Int)?
 

@@ -12,7 +12,7 @@ struct LegacyWorkspaceView: View {
     let updateBody: (String) -> Void
     @Environment(\.colorScheme) private var colorScheme
     @StateObject private var palette = PaletteSettings.shared
-    @AppStorage("purlory.sidebarVisible") private var sidebarVisible = true
+    @AppStorage(PurloryUserDefaultsKeys.sidebarVisible) private var sidebarVisible = true
     @State private var trafficLightMaxX: CGFloat?
 
     var body: some View {

@@ -159,7 +159,7 @@ struct WorkspaceSurface: View {
     @Bindable var projectSession: ProjectSession
     @ObservedObject var editorRequests: ProjectEditorRequests
     @Bindable var completion: CompletionController
-    @ObservedObject var livingMargin: LivingMarginModel
+    let livingMargin: LivingMarginModel
     let indexer: BackgroundIndexer
     var editorBridge: ProjectEditorBridge? = nil
     var positionStore: WritingPositionStore = .shared
@@ -176,9 +176,9 @@ struct WorkspaceSurface: View {
     @State private var diagnosticsVisible = false
     @State private var versionsVisible = false
     @State private var writerSection: SidebarSection?
-    @AppStorage("purlory.appearance") private var appearance = ""
-    @AppStorage("purlory.sidebarVisible") private var sidebarVisible = true
-    @AppStorage("purlory.sidebarSection") private var section = SidebarSection.files.rawValue
+    @AppStorage(PurloryUserDefaultsKeys.appearance) private var appearance = ""
+    @AppStorage(PurloryUserDefaultsKeys.sidebarVisible) private var sidebarVisible = true
+    @AppStorage(PurloryUserDefaultsKeys.sidebarSection) private var section = SidebarSection.files.rawValue
 
     var body: some View {
         let theme = palette.theme(for: colorScheme)
@@ -387,6 +387,7 @@ struct WorkspaceSurface: View {
                     editorRequests.pouch?.dismissTools(); versionsVisible = true
                 },
                 WorkspacePouchAction(id: "purlory.workspace.pouch.index.environment", label: "집필 환경", symbol: "slider.horizontal.3",
+                    showsLeadingSeparator: true,
                     selected: { spatial.pouchSection != nil && spatial.pouchSection != .note }) {
                     editorRequests.pouch?.showTools(.overview)
                 }

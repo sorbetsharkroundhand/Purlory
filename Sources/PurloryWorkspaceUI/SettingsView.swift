@@ -14,7 +14,7 @@ public struct SettingsView: View {
     @State private var metrics = AcceptanceMetrics.Summary()
     /// 외형(다크 모드) — 상단바 스위치에서 옮겨 왔다. 키는 그대로 둬서 기존
     /// 사용자의 선택이 유지된다. ""=시스템 따름 · "light" · "dark".
-    @AppStorage("purlory.appearance") private var appearance = ""
+    @AppStorage(PurloryUserDefaultsKeys.appearance) private var appearance = ""
     @Environment(\.colorScheme) private var colorScheme
     /// 색상 팔레트 — 고르는 즉시 앱 전체에 반영된다 (ContentView도 관찰).
     // 앱 수명 싱글턴 — StateObject 소유 의미 (#60).
@@ -22,8 +22,10 @@ public struct SettingsView: View {
     @State private var advancedPredictionSettingsExpanded = false
     /// 모델 ID 초안 — 커밋(Enter/적용)까지 settings에 쓰지 않는다 (#65 H2).
     @State private var modelIDDraft = ""
-    /// 초안 검증 실패 문구 — nil이면 오류 없음.
+    /// 초안 검증 실패 문구 (고급 설정 입력란 전용) — nil이면 오류 없음.
     @State private var modelIDError: String?
+    /// 모델 교체/삭제 실행 오류 문구 (모델 파일 섹션 전용) — nil이면 오류 없음.
+    @State private var modelFileError: String?
     @State private var ownedModelIDs: [String] = []
     @State private var isChangingModel = false
 
@@ -184,7 +186,12 @@ public struct SettingsView: View {
                     }
                 }
                 caption("모델 파일만 삭제합니다. 원고와 작품 정보는 그대로 유지합니다.")
-                if let modelIDError { Text(modelIDError).foregroundStyle(.red).font(.caption) }
+                if let modelFileError {
+                    Text(modelFileError)
+                        .purloryUIFont(11)
+                        .foregroundStyle(PurloryTheme.of(colorScheme).dangerC)
+                        .accessibilityLabel(Text("모델 파일 오류: \(modelFileError)"))
+                }
             }
 
             Section {
@@ -339,14 +346,15 @@ public struct SettingsView: View {
 
             Section("글쓰기") {
                 shortcut("⌘B / ⌘I / ⇧⌘C", "굵게 · 기울임 · 인라인 코드")
-                shortcut("⌥⌘1~3 / ⌥⌘0", "제목 1~3 · 본문")
+                shortcut("⌥⌘1~6 / ⌥⌘0", "제목 1~6 · 본문")
                 shortcut("⇧⌘I", "이미지 삽입 (붙여넣기·드래그 드롭도 돼요)")
                 shortcut("⌘+ / ⌘− / ⌘0", "글자 크게 · 작게 · 기본")
             }
 
             Section("찾기·이동") {
                 shortcut("⌘F / ⌘G / ⇧⌘G", "문서에서 찾기 · 다음 · 이전")
-                shortcut("⌘K / ⇧⌘K", "원문 검색 · 이전 집필 위치로 돌아가기")
+                shortcut("⇧⌘P", "빠른 명령 팔레트")
+                shortcut("⌥⌘K / ⇧⌘K", "원문 확인·질문 · 이전 집필 위치로 돌아가기")
                 shortcut("⇧⌘F", "프로젝트·라이브러리 검색")
             }
 
@@ -434,7 +442,7 @@ public struct SettingsView: View {
         do {
             guard let manifest = PinnedModelCatalog.manifest(for: id) else { throw ModelInstallError.metadata }
             try ModelMemoryPolicy.current.requireLoad(manifest: manifest)
-        } catch { modelIDError = error.localizedDescription; return }
+        } catch { modelFileError = error.localizedDescription; return }
         guard let completion else {
             settings.modelID = id
             return
@@ -442,8 +450,8 @@ public struct SettingsView: View {
         guard !isChangingModel else { return }
         isChangingModel = true
         Task {
-            do { try await completion.replaceModel(with: id); modelIDError = nil }
-            catch { modelIDError = error.localizedDescription }
+            do { try await completion.replaceModel(with: id); modelFileError = nil }
+            catch { modelFileError = error.localizedDescription }
             ownedModelIDs = await ModelInstallationStore.shared.ownedModelIDs()
             isChangingModel = false
         }
@@ -452,8 +460,8 @@ public struct SettingsView: View {
         guard let completion, !isChangingModel else { return }
         isChangingModel = true
         Task {
-            do { try await completion.removeModel(id); modelIDError = nil }
-            catch { modelIDError = error.localizedDescription }
+            do { try await completion.removeModel(id); modelFileError = nil }
+            catch { modelFileError = error.localizedDescription }
             ownedModelIDs = await ModelInstallationStore.shared.ownedModelIDs()
             isChangingModel = false
         }
@@ -488,6 +496,7 @@ public struct SettingsView: View {
     private func syncModelIDDraft() {
         modelIDDraft = settings.modelID
         modelIDError = nil
+        modelFileError = nil
     }
 
     // MARK: - 공용 조각

@@ -55,9 +55,9 @@ public struct PurloryCommands: Commands {
     /// 에디터 포커스 여부 — 없으면 서식·찾기 명령을 비활성화해 "눌러도 무반응"을
     /// 없앤다 (이슈 #26).
     @FocusedValue(\.hasPurloryEditor) private var hasPurloryEditor
-    @AppStorage("purlory.appearance") private var appearance = ""
-    @AppStorage("purlory.sidebarVisible") private var sidebarVisible = true
-    @AppStorage("purlory.chromeHidden") private var chromeHidden = false
+    @AppStorage(PurloryUserDefaultsKeys.appearance) private var appearance = ""
+    @AppStorage(PurloryUserDefaultsKeys.sidebarVisible) private var sidebarVisible = true
+    @AppStorage(PurloryUserDefaultsKeys.chromeHidden) private var chromeHidden = false
 
     public init(
         session: ProjectSession,

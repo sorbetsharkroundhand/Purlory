@@ -54,6 +54,14 @@ public actor ProjectStore {
         }
     }
 
+    /// Reads only manifest metadata without loading or hashing document/asset blobs.
+    public func projectSummary(id: WritingProjectID) throws -> (id: WritingProjectID, title: String, mode: WritingMode) {
+        try withStoreLock {
+            let manifest = try readManifest(id: id)
+            return (manifest.id, manifest.title, manifest.mode)
+        }
+    }
+
     public func activeProject() throws -> WritingProject? {
         try withStoreLock {
             let url = try rootURL("active-project.json")
@@ -364,7 +372,8 @@ public actor ProjectStore {
         for document in project.documents {
             try Task.checkCancellation()
             if let prior = previousDocuments[document.id], prior.kind == document.kind,
-               prior.body.utf8.elementsEqual(document.body.utf8), var record = previousRecords[document.id] {
+               (prior.source.isSameVersion(as: document.source) || prior.source == document.source),
+               var record = previousRecords[document.id] {
                 record.title = document.title
                 manifest.documents.append(record)
                 continue

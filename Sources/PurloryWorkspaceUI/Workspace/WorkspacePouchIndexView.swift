@@ -30,6 +30,7 @@ final class WorkspacePouchIndexView: NSView {
     private var lastPathGeometry: WorkspacePouchIndexGeometry?
     private var lastPathBounds: CGRect?
     private var lastPathProgress: CGFloat?
+    private var lastPathSeparators: [Bool] = []
     override var isFlipped: Bool { true }
     override var mouseDownCanMoveWindow: Bool { false }
 
@@ -124,6 +125,10 @@ final class WorkspacePouchIndexView: NSView {
                 }
                 visualsChanged = true
             }
+            if previousAction == nil || previousAction?.showsLeadingSeparator != snapshot.showsLeadingSeparator {
+                layoutChanged = true
+                visualsChanged = true
+            }
             if previousAction == nil || styleChanged || previousAction?.enabled != snapshot.enabled || previousAction?.selected != snapshot.selected {
                 button.isEnabled = snapshot.enabled
                 button.selected = snapshot.selected
@@ -166,29 +171,45 @@ final class WorkspacePouchIndexView: NSView {
     override func layout() {
         super.layout()
         guard let geometry else { return }
-        if lastPathGeometry != geometry || lastPathBounds != bounds || lastPathProgress != progress {
+        let separators = actions.map(\.showsLeadingSeparator)
+        var buttonOriginsY: [CGFloat] = []
+        buttonOriginsY.reserveCapacity(buttons.count)
+        var separatorYPositions: [CGFloat] = []
+        var cursorY: CGFloat = 0
+        for (i, _) in buttons.enumerated() {
+            if i < separators.count, separators[i] {
+                separatorYPositions.append(72 + cursorY + 2)
+                cursorY += 12
+            }
+            buttonOriginsY.append(cursorY)
+            cursorY += 52
+        }
+        if lastPathGeometry != geometry || lastPathBounds != bounds || lastPathProgress != progress || lastPathSeparators != separators {
             CATransaction.begin(); CATransaction.setDisableActions(true)
             material.frame = geometry.materialFrame; material.layoutSubtreeIfNeeded()
             silhouette.frame = bounds; silhouette.path = geometry.path.cgPath
             let edge = geometry.outerEdge
             if progress > 0.98 {
-                edge.move(to: CGPoint(x: geometry.controlsMidX - 10, y: 72 + 5 * 52 + 2))
-                edge.line(to: CGPoint(x: geometry.controlsMidX + 10, y: 72 + 5 * 52 + 2))
+                for separatorY in separatorYPositions {
+                    edge.move(to: CGPoint(x: geometry.controlsMidX - 10, y: separatorY))
+                    edge.line(to: CGPoint(x: geometry.controlsMidX + 10, y: separatorY))
+                }
             }
             contour.frame = bounds; contour.path = edge.cgPath
             CATransaction.commit()
             lastPathGeometry = geometry
             lastPathBounds = bounds
             lastPathProgress = progress
+            lastPathSeparators = separators
         }
         let center = geometry.controlsMidX
         let gripWidth = min(44, geometry.exposedWidth)
         grip.frame = CGRect(x: center - gripWidth / 2, y: 8, width: gripWidth, height: 44)
-        let listHeight = CGFloat(max(0, buttons.count - 1)) * 52 + 44 + 12
+        let listHeight = max(0, cursorY - 8) + 12
         list.frame = CGRect(x: 0, y: 0, width: 44, height: listHeight)
         scroll.frame = CGRect(x: center - 22, y: 72, width: 44, height: max(44, geometry.height - geometry.tail - 80))
         for (i, button) in buttons.enumerated() {
-            button.frame = CGRect(x: 0, y: CGFloat(i) * 52 + (i == 5 ? 12 : 0), width: 44, height: 44)
+            button.frame = CGRect(x: 0, y: buttonOriginsY[i], width: 44, height: 44)
         }
     }
 

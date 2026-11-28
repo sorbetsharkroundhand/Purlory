@@ -243,15 +243,11 @@ public enum ContextAssembler {
             knobs: BudgetKnobs.ladder[0], counter: counter, tokenBudget: budget)
         for index in BudgetKnobs.ladder.indices.dropFirst() {
             if (outcome.totalTokens ?? .max) <= budget { break }
-            // 다음 단계로 넘어가기 전에 C 창을 어절 경계에서 한 단계 줄인다 —
-            // 단어 중간 절단은 KV 재사용 모델의 LCP와 문장 품질을 함께 깬다.
-            let trimmed = Self.wordBoundaryTrimmed(window, keepingFraction: 0.8)
-            if trimmed != window { window = trimmed }
-            let windowStartUTF16 =
-                max(0, prefixStartUTF16) + max(0, prefix.utf16.count - window.utf16.count)
+            // Exhaust derived-knowledge reductions (flow events -> cards -> summaries) before trimming raw manuscript C,
+            // preserving immediate prose context and KV-cache prefix stability.
             outcome = assembleCore(
                 prefix: window, document: document, knowledge: knowledge,
-                prefixStartUTF16: windowStartUTF16,
+                prefixStartUTF16: prefixStartUTF16,
                 style: style,
                 knobs: BudgetKnobs.ladder[index], counter: counter, tokenBudget: budget)
         }

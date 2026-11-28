@@ -143,7 +143,7 @@ extension BlockTextView {
         // 드래그 중 깜빡임 방지 — 선택이 멈춘 뒤에 띄우되, 지연은 짧게(120ms)해 굼떠
         // 보이지 않게 한다.
         toolbarShowTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(120))
+            try? await Task.sleep(for: EditorTiming.selectionToolbarDelay)
             guard !Task.isCancelled else { return }
             self?.presentSelectionToolbar()
         }
@@ -321,7 +321,7 @@ extension BlockTextView {
         caretBlinkTimer?.invalidate()
         caretView.layer?.removeAllAnimations()
         caretView.alphaValue = 1
-        caretBlinkTimer = Timer.scheduledTimer(withTimeInterval: 0.55, repeats: true) {
+        caretBlinkTimer = Timer.scheduledTimer(withTimeInterval: EditorTiming.caretBlinkInterval, repeats: true) {
             [weak self] timer in
             guard self != nil else {
                 timer.invalidate()
@@ -331,7 +331,7 @@ extension BlockTextView {
                 guard let self else { return }
                 let target: CGFloat = self.caretView.alphaValue > 0.5 ? 0 : 1
                 NSAnimationContext.runAnimationGroup { context in
-                    context.duration = 0.18
+                    context.duration = EditorTiming.caretBlinkFadeDuration
                     self.caretView.animator().alphaValue = target
                 }
             }

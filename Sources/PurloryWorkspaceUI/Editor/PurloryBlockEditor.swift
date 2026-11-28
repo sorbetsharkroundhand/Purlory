@@ -271,7 +271,13 @@ public struct PurloryBlockEditor: NSViewRepresentable {
         }
         textView.isEditable = isEditable
         textView.editorWindowDidChange = onEditorWindowChange
-        if textView.window != nil { onEditorWindowChange?(textView) }
+        let windowChanged = textView.window !== context.coordinator.lastNotifiedWindow
+        if textView.window != nil, windowChanged || documentChanged || activationChanged {
+            context.coordinator.lastNotifiedWindow = textView.window
+            onEditorWindowChange?(textView)
+        } else if textView.window == nil {
+            context.coordinator.lastNotifiedWindow = nil
+        }
         configureAssets(textView)
         if documentChanged {
             context.coordinator.isDocumentTransitioning = true
@@ -284,27 +290,27 @@ public struct PurloryBlockEditor: NSViewRepresentable {
             else { textView.ghostText = nil; textView.showConversationPrompt(nil) }
         }
 
+        // Coalesce presentation changes into a single restyle pass, skipped when a document
+        // transition is about to reload the whole text storage below.
+        var needsRestyle = false
         if textView.proseLayout != proseLayout {
             textView.proseLayout = proseLayout
-            // A document transition loads its new presentation below.
-            if !documentChanged { textView.restyleAll() }
+            needsRestyle = true
         }
-
-        // 팔레트는 ink를 바꾸지 않을 수 있다 — 테마 **전체** 동등성으로 판정해야
-        // 선택색·현재 줄·코드 배경이 이전 팔레트에 남지 않는다 (이슈 #34, #54 Equatable).
         if textView.palette != theme {
             textView.palette = theme
             textView.insertionPointColor = theme.ink
-            textView.restyleAll()
+            needsRestyle = true
         }
-        // 줄 간격 설정이 바뀌면 전체 문단 스타일을 다시 적용한다.
         if textView.lineSpacing != lineSpacing {
             textView.lineSpacing = lineSpacing
-            textView.restyleAll()
+            needsRestyle = true
         }
-        // 글자 크기 설정이 바뀌면 폰트를 다시 만들고 전체 문단·수식을 다시 그린다.
         if textView.baseFontSize != baseFontSize {
             textView.baseFontSize = baseFontSize
+            needsRestyle = true
+        }
+        if needsRestyle && !documentChanged {
             textView.restyleAll()
         }
         // 저널이 바뀌면(전환) 직전 저널의 커서 위치를 저장해 둔다 — 아직 옛 내용을
@@ -432,6 +438,7 @@ public struct PurloryBlockEditor: NSViewRepresentable {
         var parent: PurloryBlockEditor
         /// 스크롤 경계 관찰자 소유 (#18 2단계) — 뷰 수명과 함께 해제.
         var scrollObserver: NSObjectProtocol?
+        weak var lastNotifiedWindow: NSWindow?
 
         /// 마지막으로 바인딩과 동기화된 마크다운 — updateNSView의 reload 기준.
         var lastSyncedText = ""
@@ -753,7 +760,7 @@ public struct PurloryBlockEditor: NSViewRepresentable {
             // 코드·수식·구분선 블록에서는 제안하지 않는다 (디자인 v3 게이트).
             let paragraph = storage.paragraphRange(for: NSRange(location: caret, length: 0))
             let block = textView.blockInfo(in: paragraph).block
-            let allowed = ![.code, .math, .divider, .image].contains(block)
+            let allowed = block.supportsInlineFormatting
 
             controller.noteEdit(
                 prefix: Self.prefix(

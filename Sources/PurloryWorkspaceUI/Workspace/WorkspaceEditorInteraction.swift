@@ -8,6 +8,7 @@ import Combine
     private weak var editor: BlockTextView?
     private weak var session: ProjectSession?
     private weak var requests: ProjectEditorRequests?
+    weak var settings: CompletionSettings?
     private(set) weak var model: SpatialWorkspaceController?
     private var subscription: AnyCancellable?
     private var postPresentationSubscription: AnyCancellable?
@@ -15,8 +16,11 @@ import Combine
     var suppressesEditorWritingDiagnostics: Bool {
         guard let model else { return false }
         if model.layout.contains(.margin) { return false }
+        if let settings, !settings.showsWritingDiagnosticsInEditor {
+            return true
+        }
         if let prefs = session?.presentationPreferences,
-           let shows = prefs.object(forKey: "editor.showsWritingDiagnostics") as? Bool, !shows {
+           let shows = prefs.object(forKey: PurloryUserDefaultsKeys.showsWritingDiagnosticsInEditor) as? Bool, !shows {
             return true
         }
         return model.focusDimming

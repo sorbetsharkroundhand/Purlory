@@ -10,17 +10,42 @@ struct WorkspacePouchAction {
         let symbol: String
         let enabled: Bool
         let selected: Bool
+        let showsLeadingSeparator: Bool
+
+        init(
+            id: String,
+            label: String,
+            symbol: String,
+            enabled: Bool,
+            selected: Bool,
+            showsLeadingSeparator: Bool = false
+        ) {
+            self.id = id
+            self.label = label
+            self.symbol = symbol
+            self.enabled = enabled
+            self.selected = selected
+            self.showsLeadingSeparator = showsLeadingSeparator
+        }
     }
 
     let id: String
     let label: String
     let symbol: String
+    var showsLeadingSeparator: Bool = false
     var selected: () -> Bool = { false }
     var enabled: () -> Bool = { true }
     let perform: () -> Void
 
     var snapshot: Snapshot {
-        Snapshot(id: id, label: label, symbol: symbol, enabled: enabled(), selected: selected())
+        Snapshot(
+            id: id,
+            label: label,
+            symbol: symbol,
+            enabled: enabled(),
+            selected: selected(),
+            showsLeadingSeparator: showsLeadingSeparator
+        )
     }
 }
 
@@ -78,7 +103,6 @@ struct WorkspacePouchAction {
     private weak var workspaceView: NSView?
     private weak var previousResponder: NSResponder?
     private let model: SpatialWorkspaceController
-    private let defaults: UserDefaults
     private var content: WorkspacePouchView?
     private var latestTools: AnyView?
     private var isBatchUpdating = false
@@ -127,8 +151,8 @@ struct WorkspacePouchAction {
     var snapshotAnimationTime: () -> Double = { ProcessInfo.processInfo.systemUptime }
     private var isAttached: Bool { content?.superview === model.canvas && model.canvas != nil }
 
-    init(model: SpatialWorkspaceController, defaults: UserDefaults = .standard) {
-        self.model = model; self.defaults = defaults
+    init(model: SpatialWorkspaceController, defaults _: UserDefaults = .standard) {
+        self.model = model
         super.init()
         subscription = model.presentationWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { [weak self] in

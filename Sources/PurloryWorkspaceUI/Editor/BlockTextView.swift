@@ -137,8 +137,8 @@ final class BlockTextView: NSTextView {
     /// `refreshRenderedBlocks()`이 갱신하고 레이아웃 매니저가 그린다.
     /// 다중 행 display 그룹은 그룹 전체 범위가 하나의 항목으로 들어간다 (이슈 #20).
     nonisolated(unsafe) var mathRenders: [(range: NSRange, image: NSImage)] = []
-    /// 무효 수식 문단(location) → 파싱 오류 원인 — 우클릭 메뉴·접근성 안내용 (이슈 #22).
-    nonisolated(unsafe) var mathRenderErrors: [Int: String] = [:]
+    /// Invalid math paragraph location → parse error message for context menu and accessibility.
+    var mathRenderErrors: [Int: String] = [:]
 
     /// 직전 패스에서 감지된 다중 행 수식 그룹 범위 — 구조 편집 후 줄 높이 잔상을
     /// 되돌리는 기준 (이슈 #22 valid→invalid→valid 잔상 예방).

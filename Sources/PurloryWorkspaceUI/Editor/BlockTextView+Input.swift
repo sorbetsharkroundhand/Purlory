@@ -188,7 +188,7 @@ extension BlockTextView {
         let para = ns.paragraphRange(for: sel)
         guard sel.location > para.location else { return }
         let info = blockInfo(in: para)
-        guard ![PurloryBlock.code, .math, .divider, .image].contains(info.block) else { return }
+        guard info.block.supportsInlineFormatting else { return }
         let text = paragraphContent(para)
         let nsText = text as NSString
         let caretInPara = sel.location - para.location
@@ -685,7 +685,7 @@ extension BlockTextView {
                 let info = blockInfo(in: para)
                 // ⌘+클릭: 인라인 마크다운 링크(`[텍스트](URL)`) 열기.
                 if event.modifierFlags.contains(.command),
-                   ![PurloryBlock.code, .math, .divider, .image].contains(info.block),
+                   info.block.supportsInlineFormatting,
                    openInlineMarkdownLink(at: index, inParagraph: para) {
                     return
                 }
