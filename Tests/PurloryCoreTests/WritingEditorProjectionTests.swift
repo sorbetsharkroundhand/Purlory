@@ -1628,6 +1628,236 @@ final class WritingEditorProjectionTests: XCTestCase {
         }
     }
 
+    func testSuccessiveURLDelimitersPreserveInterveningProseAndSecondLabelLiveAndReloaded() async {
+        let fragments: [(name: String, text: String, expectedEligible: [String], expectedExcluded: [String])] = [
+            (
+                "math-urls",
+                "[첫째](https://example.test/a$1) QANORMAL [둘째](https://example.test/b$2/private)",
+                ["첫째", "QANORMAL", "둘째"],
+                ["https://example.test/a$1", "/private"]
+            ),
+            (
+                "code-urls",
+                "[첫째](https://example.test/a`1) QANORMAL [둘째](https://example.test/b`2/private)",
+                ["첫째", "QANORMAL", "둘째"],
+                ["https://example.test/a`1", "/private"]
+            ),
+            (
+                "display-math-urls",
+                "[첫째](https://example.test/a$$1) QANORMAL [둘째](https://example.test/b$$2/private)",
+                ["첫째", "QANORMAL", "둘째"],
+                ["https://example.test/a$$1", "/private"]
+            ),
+            (
+                "mixed-math-code-urls",
+                "[첫째](https://example.test/a$1`x) QANORMAL [둘째](https://example.test/b$2`y/private)",
+                ["첫째", "QANORMAL", "둘째"],
+                ["https://example.test/a$1`x", "/private"]
+            ),
+            (
+                "italic-urls",
+                "[첫째](https://example.test/a*1) QANORMAL [둘째](https://example.test/b*2/private)",
+                ["첫째", "QANORMAL", "둘째"],
+                ["https://example.test/a*1", "/private"]
+            ),
+            (
+                "real-code-between-code-urls",
+                "[첫째](https://example.test/a`1) `REALCODE` QANORMAL [둘째](https://example.test/b`2/private)",
+                ["첫째", "QANORMAL", "둘째"],
+                ["REALCODE", "/private"]
+            ),
+            (
+                "real-math-between-math-urls",
+                "[첫째](https://example.test/a$1),$REALMATH$,QANORMAL [둘째](https://example.test/b$2/private)",
+                ["첫째", "QANORMAL", "둘째"],
+                ["REALMATH", "/private"]
+            ),
+            (
+                "image-options-math-to-link",
+                "![사진](image.png){custom=$p} QANORMAL [둘째](https://example.test/b$2/private)",
+                ["QANORMAL", "둘째"],
+                ["사진", "custom=$p", "/private"]
+            ),
+            (
+                "image-options-code-to-link",
+                "![사진](image.png){custom=`p} QANORMAL [둘째](https://example.test/b`2/private)",
+                ["QANORMAL", "둘째"],
+                ["사진", "custom=`p", "/private"]
+            ),
+            (
+                "label-stray-dollar-before-url-dollar",
+                "[첫$째](https://example.test/a) QANORMAL [둘째](https://example.test/b$2/private)",
+                ["첫$째", "QANORMAL", "둘째"],
+                ["https://example.test/a", "/private"]
+            ),
+            (
+                "label-stray-tick-before-url-tick",
+                "[첫`째](https://example.test/a) QANORMAL [둘째](https://example.test/b`2/private)",
+                ["첫`째", "QANORMAL", "둘째"],
+                ["https://example.test/a", "/private"]
+            ),
+            (
+                "balanced-parens-and-angle-urls-with-delimiters",
+                "🙂 [첫째](https://example.test/(a$1`x)) QANORMAL [둘째](<https://example.test/b $2 `y/private>)",
+                ["첫째", "QANORMAL", "둘째"],
+                ["(a$1`x)", "/private"]
+            ),
+            (
+                "protected-code-then-successive-code-urls",
+                "`[x](<unfinished` [첫째](https://example.test/a`1) QANORMAL [둘째](https://example.test/b`2/private)",
+                ["첫째", "QANORMAL", "둘째"],
+                ["unfinished", "/private"]
+            ),
+            (
+                "code-span-with-link-closer-inside-label",
+                "[show `x](target)` here](https://example.test/private) QANORMAL `REALCODE` END",
+                ["show", "here", "QANORMAL", "END"],
+                ["target", "/private", "REALCODE"]
+            ),
+            (
+                "code-span-with-multiple-link-closers-inside-label",
+                "[show `a](1) b](2)` here](https://example.test/private) QANORMAL `REALCODE` END",
+                ["show", "here", "QANORMAL", "END"],
+                ["a](1)", "/private", "REALCODE"]
+            ),
+            (
+                "math-span-with-link-closer-inside-label",
+                "[show $x](target)$ here](https://example.test/private) QANORMAL $REALMATH$ END",
+                ["show", "here", "QANORMAL", "END"],
+                ["target", "/private", "REALMATH"]
+            ),
+        ]
+
+        let longPrefix = String(repeating: "가", count: 4_500) + " 🙂 "
+        let baseDoc = "첫 문단입니다.\n" + String(repeating: "중간 문단 내용입니다.\n", count: 40) + "마지막 문단입니다."
+        let baseNS = baseDoc as NSString
+        let positions: [(name: String, range: NSRange, prefix: String)] = [
+            ("start", NSRange(location: 0, length: 0), ""),
+            ("middle-long", NSRange(location: baseNS.length / 2, length: 0), longPrefix),
+            ("end", NSRange(location: baseNS.length, length: 0), "\n"),
+        ]
+
+        for pos in positions {
+            for item in fragments {
+                let inserted = pos.prefix + item.text + "\n"
+                let edited = WritingEditorHarness(baseDoc)
+                defer { edited.close() }
+                edited.edit(inserted, range: pos.range)
+                // Move caret away so collapseRawInlineMath exercises the away-from-caret path too.
+                let awayLoc = pos.range.location == 0 ? (edited.editor.string as NSString).length : 0
+                edited.editor.setSelectedRange(NSRange(location: awayLoc, length: 0))
+                await waitForDeferredProjection(edited)
+
+                let expectedSource = baseNS.replacingCharacters(in: pos.range, with: inserted)
+                XCTAssertEqual(edited.body, expectedSource, "\(pos.name)/\(item.name): live body must preserve exact source")
+                XCTAssertEqual(edited.projectedSource, expectedSource, "\(pos.name)/\(item.name): projected source must match body")
+
+                let fresh = WritingEditorHarness(expectedSource)
+                defer { fresh.close() }
+                XCTAssertEqual(fresh.body, expectedSource, "\(pos.name)/\(item.name): fresh reload must preserve exact source")
+
+                for quote in item.expectedEligible {
+                    let sourceRange = (expectedSource as NSString).range(of: quote)
+                    XCTAssertNotEqual(sourceRange.location, NSNotFound, "\(pos.name)/\(item.name)/\(quote)")
+                    for (side, harness) in [("live", edited), ("fresh", fresh)] {
+                        let mapped = harness.editor.nativeRange(
+                            forSource: .init(sourceRange),
+                            revision: harness.editor.writingNativeRevision,
+                            expectedQuote: quote
+                        )
+                        XCTAssertNotNil(mapped, "\(pos.name)/\(item.name) marker=\(quote) side=\(side) must be eligible")
+                        if let mapped, let storage = harness.editor.textStorage {
+                            let attrs = storage.attributes(at: mapped.location, effectiveRange: nil)
+                            XCTAssertNil(attrs[.purloryCode], "\(pos.name)/\(item.name) marker=\(quote) side=\(side) must not be code")
+                            XCTAssertNil(attrs[.purloryMath], "\(pos.name)/\(item.name) marker=\(quote) side=\(side) must not be math")
+                            XCTAssertNil(attrs[.attachment], "\(pos.name)/\(item.name) marker=\(quote) side=\(side) must not be attachment")
+                        }
+                    }
+                }
+                for quote in item.expectedExcluded {
+                    let sourceRange = (expectedSource as NSString).range(of: quote)
+                    XCTAssertNotEqual(sourceRange.location, NSNotFound, "\(pos.name)/\(item.name)/\(quote)")
+                    for (side, harness) in [("live", edited), ("fresh", fresh)] {
+                        XCTAssertNil(
+                            harness.editor.nativeRange(
+                                forSource: .init(sourceRange),
+                                revision: harness.editor.writingNativeRevision,
+                                expectedQuote: quote
+                            ),
+                            "\(pos.name)/\(item.name) excluded=\(quote) side=\(side) must remain excluded"
+                        )
+                    }
+                }
+                XCTAssertEqual(
+                    eligibleProseText(of: edited.editor.writingProjectionCapture.sourceProjection),
+                    eligibleProseText(of: fresh.editor.writingProjectionCapture.sourceProjection),
+                    "\(pos.name)/\(item.name): live eligible prose must match fresh reload"
+                )
+            }
+        }
+    }
+
+    func testLiveTypingDelimiterInSecondURLDoesNotCorruptInterveningProse() async {
+        let cases: [(name: String, initial: String, typed: String, suffix: String)] = [
+            ("code-typing", "[첫째](https://a/`p) QANORMAL [둘째](https://b/q", "`", ")"),
+            ("math-typing", "[첫째](https://a/$p) QANORMAL [둘째](https://b/q", "$", ")"),
+            ("italic-typing", "[첫째](https://a/*p) QANORMAL [둘째](https://b/q", "*", ")"),
+        ]
+        for testCase in cases {
+            let harness = WritingEditorHarness(testCase.initial)
+            defer { harness.close() }
+            let endLoc = (harness.editor.string as NSString).length
+            harness.editor.setSelectedRange(NSRange(location: endLoc, length: 0))
+            harness.edit(testCase.typed, range: NSRange(location: endLoc, length: 0))
+            let afterTyped = (harness.editor.string as NSString).length
+            harness.edit(testCase.suffix, range: NSRange(location: afterTyped, length: 0))
+            await waitForDeferredProjection(harness)
+
+            let expected = testCase.initial + testCase.typed + testCase.suffix
+            XCTAssertEqual(harness.body, expected, "\(testCase.name): source must round-trip")
+            XCTAssertEqual(harness.editor.string, expected, "\(testCase.name): native text must not strip delimiters or attach math")
+            for quote in ["QANORMAL", "둘째"] {
+                let range = (expected as NSString).range(of: quote)
+                let mapped = harness.editor.nativeRange(
+                    forSource: .init(range),
+                    revision: harness.editor.writingNativeRevision,
+                    expectedQuote: quote
+                )
+                XCTAssertNotNil(mapped, "\(testCase.name): \(quote) must stay eligible after live typing")
+                if let mapped, let storage = harness.editor.textStorage {
+                    let attrs = storage.attributes(at: mapped.location, effectiveRange: nil)
+                    XCTAssertNil(attrs[.purloryCode], "\(testCase.name): \(quote) must not get code attr")
+                    XCTAssertNil(attrs[.purloryMath], "\(testCase.name): \(quote) must not get math attr")
+                    XCTAssertNil(attrs[.purloryItalic], "\(testCase.name): \(quote) must not get italic attr")
+                }
+            }
+        }
+    }
+
+    func testManySuccessiveURLsWithDelimitersStayLinear() async throws {
+        let unit = "[첫](https://a/$1`x*y) 사이 [둘](https://b/$2`z*w) "
+        let line = String(repeating: unit, count: 400)
+        let start = ContinuousClock.now
+        var yields = 0
+        let asyncRuns = await WritingProseProjection.deferredLineRuns(in: line, checkpoint: {
+            yields += 1
+            await Task.yield()
+            return true
+        })
+        let elapsed = start.duration(to: .now)
+        let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+        let runs = try XCTUnwrap(asyncRuns)
+        XCTAssertGreaterThan(yields, 0, "Long multi-URL line must cooperatively yield")
+        XCTAssertLessThan(seconds, 0.5, "Many successive delimiter-bearing URLs must stay linear (took \(seconds)s)")
+        let syncRuns = WritingProseProjection.inlineRuns(line, offset: 0)
+        let ns = line as NSString
+        let eligibleText = syncRuns.filter(\.eligible).map { ns.substring(with: $0.source) }.joined()
+        XCTAssertEqual(eligibleText.components(separatedBy: "사이").count - 1, 400)
+        XCTAssertEqual(eligibleText.components(separatedBy: "둘").count - 1, 400)
+        XCTAssertFalse(eligibleText.contains("https://"))
+        XCTAssertEqual(runs.filter(\.eligible).map(\.source), syncRuns.filter(\.eligible).map(\.source))
+    }
+
     func testInvalidOuterLinkDoesNotSuppressValidInnerLink() async throws {
         let cases: [(name: String, line: String)] = [
             ("short-inner-angle", "[outer [i](<INNERTARGET>) end](<bad> nope)"),

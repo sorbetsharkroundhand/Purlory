@@ -171,6 +171,49 @@ final class WritingDiagnosticsEditorTests: XCTestCase {
         XCTAssertEqual(harness.editor.applyWritingCorrection(correction, identity: other), .refused(reason: .stale))
         XCTAssertEqual(harness.body, "됬다")
     }
+
+    func testCorrectionAppliesBetweenAndInsideSuccessiveDelimiterURLs() throws {
+        let templates = [
+            "[첫째](https://example.test/a$1) 됬다 [둘째](https://example.test/b$2)",
+            "[첫째](https://example.test/a`1) 됬다 [둘째](https://example.test/b`2)",
+            "[첫째](https://example.test/a$1) 일반 [됬다](https://example.test/b$2)",
+            "[첫째](https://example.test/a`1) 일반 [됬다](https://example.test/b`2)",
+        ]
+        for original in templates {
+            for liveEdit in [false, true] {
+                let harness: WritingEditorHarness
+                if liveEdit {
+                    harness = WritingEditorHarness("기\n다음 문단")
+                    harness.edit(original, range: NSRange(location: 0, length: 1))
+                } else {
+                    harness = WritingEditorHarness(original + "\n다음 문단")
+                }
+                defer { harness.close() }
+                let expectedOriginal = original + "\n다음 문단"
+                XCTAssertEqual(harness.body, expectedOriginal)
+
+                let target = (harness.body as NSString).range(of: "됬다")
+                let finding = writingEditorFinding(harness, range: target)
+                let correction = WritingCorrection(
+                    finding: finding,
+                    expectedSource: "됬다",
+                    expectedNative: "됬다",
+                    replacement: "됐다"
+                )
+                XCTAssertEqual(
+                    harness.editor.applyWritingCorrection(correction, identity: harness.snapshot.identity),
+                    .applied,
+                    "\(original) live=\(liveEdit)"
+                )
+                let expected = expectedOriginal.replacingOccurrences(of: "됬다", with: "됐다")
+                XCTAssertEqual(harness.body, expected)
+                XCTAssertEqual(harness.editor.serialize(), expected)
+                XCTAssertEqual(harness.projectedSource, expected)
+                harness.window.testUndo.undo()
+                XCTAssertEqual(harness.body, expectedOriginal)
+            }
+        }
+    }
 }
 
 @MainActor

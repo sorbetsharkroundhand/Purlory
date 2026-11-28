@@ -172,7 +172,7 @@ extension BlockTextView {
             let info = storageBlockInfo(in: para)
             guard ![PurloryBlock.code, .math, .divider, .image].contains(info.block) else { continue }
             let text = paragraphContent(para)
-            for link in WritingProseProjection.links(in: text) where !link.image {
+            for link in inlineLinks(in: para, content: text) where !link.image {
                 let fullRange = NSRange(location: para.location + link.source.location, length: link.source.length)
                 let labelRange = NSRange(location: para.location + link.label.location, length: link.label.length)
                 let openBracket = NSRange(location: fullRange.location, length: max(0, labelRange.location - fullRange.location))
