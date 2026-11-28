@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import PurloryFoundation
 
 /// Report-only reconstruction. It never owns or mutates the controller's local findings.
 actor WritingReportMapper {

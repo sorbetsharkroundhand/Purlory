@@ -1,4 +1,5 @@
 import SwiftUI
+import PurloryDocumentEngine
 
 /// Explicit manual indexing trigger and phase status display shared across workspace cards and writer tools.
 struct ManualIndexButton: View {

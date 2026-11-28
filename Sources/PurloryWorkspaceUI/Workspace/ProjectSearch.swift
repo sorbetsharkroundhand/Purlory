@@ -1,4 +1,6 @@
 import Foundation
+import PurloryFoundation
+import PurloryIntelligence
 
 public struct ProjectSearchResult: Equatable, Identifiable, Sendable {
     public let projectID: WritingProjectID

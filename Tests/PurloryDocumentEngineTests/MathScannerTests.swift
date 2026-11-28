@@ -1,10 +1,8 @@
-@testable import PurloryIntelligence
-@testable import PurloryDocumentEngine
 import Foundation
 import XCTest
+@testable import PurloryFoundation
+@testable import PurloryDocumentEngine
 
-@testable import PurloryCore
-@testable import PurloryWorkspaceUI
 
 /// MathScanner golden 테스트 — 인라인 `$…$`, 한 줄 display `$$…$$`,
 /// 이스케이프·통화 오인 방지 (이슈 #20 완료 조건 2).

@@ -1,4 +1,5 @@
 import Foundation
+import PurloryFoundation
 
 public struct WritingProviderOutcome: Sendable, Equatable {
     public enum Status: String, Sendable { case success, failed, unavailable }

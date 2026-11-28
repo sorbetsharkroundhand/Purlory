@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import PurloryDocumentEngine
 
 /// Patterns describe original evidence in adjacent clauses; none is an automatic rewrite.
 package enum KoreanRepetitionRules {

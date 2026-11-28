@@ -1,4 +1,7 @@
 import AppKit
+import PurloryFoundation
+import PurloryDocumentEngine
+import PurloryIntelligence
 
 struct SourceWritingPosition: Equatable, Sendable {
     let key: ProjectDocumentKey

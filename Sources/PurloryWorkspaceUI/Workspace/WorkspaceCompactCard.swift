@@ -1,5 +1,9 @@
 import AppKit
 import SwiftUI
+import PurloryFoundation
+import PurloryDocumentEngine
+import PurloryInference
+import PurloryIntelligence
 
 struct WorkspaceCompactCard<Content: View>: View {
     @Bindable var model: SpatialWorkspaceController

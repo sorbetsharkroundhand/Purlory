@@ -1,4 +1,6 @@
 import Foundation
+import PurloryFoundation
+import PurloryDocumentEngine
 
 // Narrative Graph (v5, PLAN §6.6) — 씬 내부 서사 구간(Segment), 서사 흐름(Flow),
 // 정본 사건(Canonical Event)과 관점(Perspective), 사건 인과(CausalLink),

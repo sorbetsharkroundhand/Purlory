@@ -1,4 +1,5 @@
 import Foundation
+import PurloryDocumentEngine
 
 /// Active-document, byte-accounted LRU. Only successfully assessed relative results enter it.
 package final class WritingDiagnosticsCache {

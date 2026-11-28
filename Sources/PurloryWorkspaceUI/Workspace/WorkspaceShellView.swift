@@ -1,4 +1,6 @@
 import SwiftUI
+import PurloryFoundation
+import PurloryInference
 
 /// The shell owns presentation only; document lifetime, storage and indexing belong to the session.
 struct WorkspaceShellView<Navigator: View, Editor: View, Context: View, Rail: View>: View {

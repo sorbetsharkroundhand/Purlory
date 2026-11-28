@@ -1,4 +1,5 @@
 import Foundation
+import PurloryFoundation
 
 /// Shared identifier check for in-memory mutations and durable manifest paths.
 package enum ProjectUserDataKey {

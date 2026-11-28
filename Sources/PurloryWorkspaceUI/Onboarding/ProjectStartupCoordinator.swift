@@ -1,4 +1,6 @@
 import Foundation
+import PurloryFoundation
+import PurloryStorage
 
 /// Legacy data is copied into the project runtime; startup never creates an EntryStore.
 @MainActor

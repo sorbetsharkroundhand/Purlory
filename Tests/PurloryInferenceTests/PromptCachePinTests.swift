@@ -2,7 +2,8 @@ import Foundation
 import MLX
 import MLXLMCommon
 import XCTest
-@testable import PurloryInference
+@testable import PurloryFoundation
+@_spi(Benchmark) @testable import PurloryInference
 
 final class PromptCachePinTests: XCTestCase {
     private func prepareTensors() throws {

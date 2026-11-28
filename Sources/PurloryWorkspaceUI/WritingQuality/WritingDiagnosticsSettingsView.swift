@@ -1,4 +1,7 @@
 import SwiftUI
+import PurloryFoundation
+import PurloryInference
+import PurloryIntelligence
 
 /// Project decisions use the prepared record, never an analysis task or global preferences.
 struct WritingDiagnosticsSettingsView: View {

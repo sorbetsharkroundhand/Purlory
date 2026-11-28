@@ -1,4 +1,6 @@
 import AppKit
+import PurloryFoundation
+import PurloryIntelligence
 
 /// Derived native spans, separate from author attributes and temporary search/selection layers.
 @MainActor
@@ -171,12 +173,13 @@ extension PurloryLayoutManager {
     func drawWritingDiagnostics(forGlyphRange visible: NSRange, at origin: NSPoint, view: BlockTextView) {
         guard Thread.isMainThread, let container = textContainers.first else { return }
         let characters = characterRange(forGlyphRange: visible, actualGlyphRange: nil)
-        // TextKit's drawing override is nonisolated; Purlory paints editor chrome on main.
-        let ranges = MainActor.assumeIsolated { view.writingDecorationRanges(visible: characters) }
+        let (ranges, dangerColor) = MainActor.assumeIsolated {
+            (view.writingDecorationRanges(visible: characters), view.palette.danger)
+        }
         guard !ranges.isEmpty else { return }
         NSGraphicsContext.saveGraphicsState()
         defer { NSGraphicsContext.restoreGraphicsState() }
-        view.palette.danger.setStroke()
+        dangerColor.setStroke()
         for range in ranges {
             let glyphs = glyphRange(forCharacterRange: range, actualCharacterRange: nil)
             enumerateEnclosingRects(forGlyphRange: glyphs, withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0), in: container) { rect, _ in

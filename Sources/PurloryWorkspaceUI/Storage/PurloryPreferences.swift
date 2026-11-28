@@ -1,4 +1,5 @@
 import Foundation
+import PurloryIntelligence
 
 /// The only legacy preference-name boundary. Never mutates the previous application's domain.
 @MainActor

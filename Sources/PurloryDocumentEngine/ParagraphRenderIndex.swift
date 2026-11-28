@@ -1,4 +1,5 @@
 import Foundation
+import PurloryFoundation
 
 /// Paragraph metadata over UTF-16 lengths. An implicit treap keeps later offsets
 /// derived from subtree totals, so an early edit never shifts every later record.

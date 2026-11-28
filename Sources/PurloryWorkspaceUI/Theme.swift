@@ -1,6 +1,8 @@
 import AppKit
 import CoreText
 import SwiftUI
+import PurloryDocumentEngine
+import PurloryIntelligence
 
 /// Editorial paper and botanical purlory, shared by AppKit and SwiftUI.
 /// Small meaningful text retains AA contrast rather than the mockup's decorative opacity.

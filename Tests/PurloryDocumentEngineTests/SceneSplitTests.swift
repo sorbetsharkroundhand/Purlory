@@ -1,9 +1,7 @@
-@testable import PurloryIntelligence
-@testable import PurloryDocumentEngine
 import XCTest
+@testable import PurloryFoundation
+@testable import PurloryDocumentEngine
 
-@testable import PurloryCore
-@testable import PurloryWorkspaceUI
 
 /// 씬 분할 회귀 테스트 (docs/m6-scene-split.md) — 전부 결정적, 모델 없음.
 ///

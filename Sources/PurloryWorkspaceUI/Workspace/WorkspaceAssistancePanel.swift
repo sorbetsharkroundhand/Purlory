@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import SwiftUI
+import PurloryDocumentEngine
 
 @MainActor final class WorkspaceAssistancePanel: NSWindowController, NSWindowDelegate {
     private static var active: WorkspaceAssistancePanel?

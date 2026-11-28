@@ -1,4 +1,6 @@
 import AppKit
+import PurloryDocumentEngine
+import PurloryIntelligence
 
 /// 인라인 서식 속성 키 (서식 툴바 · `**…**` 타이핑 변환).
 ///

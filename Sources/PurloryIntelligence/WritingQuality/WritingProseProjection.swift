@@ -1,4 +1,5 @@
 import Foundation
+import PurloryDocumentEngine
 
 package struct WritingProseSegment: Sendable {
     package let source: NSRange

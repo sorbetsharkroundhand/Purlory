@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import PurloryDocumentEngine
 
 enum WorkspacePouchStyle {
     static let width: CGFloat = 304

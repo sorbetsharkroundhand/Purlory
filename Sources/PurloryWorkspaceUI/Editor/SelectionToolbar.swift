@@ -1,5 +1,7 @@
 import AppKit
 import SwiftUI
+import PurloryDocumentEngine
+import PurloryInference
 
 /// 서식 툴바 액션 — `BlockTextView.perform(_:)`이 처리한다.
 enum SelectionToolbarAction {

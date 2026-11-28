@@ -1,6 +1,8 @@
 import Foundation
 import SQLite3
 import Darwin
+import PurloryFoundation
+import PurloryInference
 
 /// One synchronous connection per storage lease. Never used on the prediction path.
 /// Only rebuildable data belongs in this database; writer records stay in UserData.

@@ -1,4 +1,5 @@
 import Foundation
+import PurloryInference
 
 /// One app-owned monitor for the existing shared engine. Project storage and writer
 /// decisions never participate in pressure shedding; only derived/model work pauses.

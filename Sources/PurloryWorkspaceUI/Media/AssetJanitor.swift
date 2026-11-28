@@ -1,4 +1,6 @@
 import Foundation
+import PurloryFoundation
+import PurloryDocumentEngine
 
 /// asset 수명 장부 — 저장된 asset을 후보로 적어 두고, 유예 기간이 지난 뒤
 /// **참조가 없는 것만** 지운다 (이슈 #17, 완료 조건 4).

@@ -2,6 +2,7 @@ import CryptoKit
 import Darwin
 import Foundation
 import zlib
+import PurloryFoundation
 
 public struct ProjectGitCommitRecord: Codable, Equatable, Sendable {
     public let sha: String

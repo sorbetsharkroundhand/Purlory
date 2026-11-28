@@ -1,4 +1,7 @@
 import Foundation
+import PurloryFoundation
+import PurloryDocumentEngine
+import PurloryInference
 
 /// 실사용 수락률 지표 (M7, PLAN §13 온라인 지표) — **로컬 전용, 원격 전송 절대
 /// 금지** (CLAUDE.md §1-3). `~/Documents/Purlory/metrics.jsonl`에 한 줄 한 사건.

@@ -1,4 +1,5 @@
 import Foundation
+import PurloryInference
 
 extension AskAnswerGeneration {
     static func local(engine: CompletionEngine, packet: AskEvidencePacket, question: String, parameters: CompletionParameters) throws -> Self {

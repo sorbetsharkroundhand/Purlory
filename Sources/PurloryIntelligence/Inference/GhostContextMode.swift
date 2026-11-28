@@ -1,4 +1,5 @@
 import Foundation
+import PurloryInference
 
 extension ContextAssembler {
     package static func assembleRaw(

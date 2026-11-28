@@ -1,4 +1,5 @@
 import Foundation
+import PurloryFoundation
 
 /// 인물 감지의 언어 지식 (M6, PLAN §7) — 조사·어미·품사 부류를 데이터로 담는다.
 ///

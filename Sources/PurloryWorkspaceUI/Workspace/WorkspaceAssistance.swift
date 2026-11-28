@@ -1,5 +1,8 @@
 import AppKit
 import Combine
+import PurloryFoundation
+import PurloryInference
+import PurloryIntelligence
 
 /// Captured-source assistance. Coauthor requires Insert; explicit inline actions apply with undo.
 @MainActor final class WorkspaceAssistance: ObservableObject {

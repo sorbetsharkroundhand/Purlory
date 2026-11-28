@@ -1,4 +1,5 @@
 import Foundation
+import PurloryDocumentEngine
 
 // Conversation Capture (요구사항 §18–§21) — 작성 중 대화 블록의 실시간 감지와
 // 사용자 기록.

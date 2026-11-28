@@ -1,5 +1,6 @@
 import Foundation
 import HuggingFace
+import PurloryFoundation
 
 /// Prefetch and load share the same revision-pinned, verified installation store.
 @MainActor

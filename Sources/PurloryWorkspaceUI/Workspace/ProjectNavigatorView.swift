@@ -1,4 +1,5 @@
 import SwiftUI
+import PurloryFoundation
 
 /// Transient editor requests shared by the project workspace and menu commands. Manuscript
 /// state remains exclusively owned by `ProjectSession`.

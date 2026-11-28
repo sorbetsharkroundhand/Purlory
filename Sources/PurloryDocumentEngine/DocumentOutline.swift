@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import PurloryFoundation
 
 /// 작품 아웃라인 — 마크다운 헤딩(`#`·`##`·`###`)을 장·절·씬 트리로 읽는
 /// 결정적 파서 (PLAN §5). LLM 없음 (CLAUDE.md §2-5).

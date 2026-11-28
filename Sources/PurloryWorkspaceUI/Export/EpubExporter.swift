@@ -3,6 +3,9 @@ import ImageIO
 import PurloryDocumentEngine
 import SwiftMath
 import UniformTypeIdentifiers
+import PurloryFoundation
+import PurloryStorage
+import PurloryIntelligence
 
 /// Exports manuscripts and notes through one EPUB 3 package builder.
 ///

@@ -1,6 +1,7 @@
 import Observation
 import Combine
 import AppKit
+import PurloryFoundation
 
 struct SpatialNavigatorDrop: Equatable {
     let source: WritingDocumentID

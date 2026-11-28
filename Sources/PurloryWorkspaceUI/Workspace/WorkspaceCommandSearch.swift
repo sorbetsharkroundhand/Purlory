@@ -1,6 +1,9 @@
 import Foundation
 import CryptoKit
 import os
+import PurloryFoundation
+import PurloryDocumentEngine
+import PurloryIntelligence
 
 struct WorkspaceCommandItem: Identifiable, Sendable {
     enum Kind: String, Sendable { case command = "명령", file = "파일", character = "인물", source = "원문" }

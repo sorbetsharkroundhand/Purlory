@@ -1,6 +1,11 @@
 import Observation
 import Combine
 import Foundation
+import PurloryFoundation
+import PurloryStorage
+import PurloryDocumentEngine
+import PurloryInference
+import PurloryIntelligence
 
 /// Sole mutable in-memory owner for the active writing project.
 ///

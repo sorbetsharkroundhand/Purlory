@@ -1,5 +1,9 @@
 import AppKit
 import SwiftUI
+import PurloryFoundation
+import PurloryDocumentEngine
+import PurloryInference
+import PurloryIntelligence
 
 /// Progressive-disclosure version control for manuscripts:
 /// 1. Save Version  2. Compare Versions  3. Split Branch  4. Merge Drafts  5. Restore Version.

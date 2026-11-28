@@ -1,4 +1,8 @@
 import Foundation
+import PurloryFoundation
+import PurloryDocumentEngine
+import PurloryInference
+import PurloryIntelligence
 
 struct AskAnswerCitation: Equatable, Sendable {
     let sourceID: String

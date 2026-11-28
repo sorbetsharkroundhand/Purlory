@@ -1,4 +1,5 @@
 import Foundation
+import PurloryFoundation
 
 /// Stable TextKit identity. Runtime generations are deliberately excluded so ordinary body
 /// edits do not look like document transitions and cannot discard native undo state.

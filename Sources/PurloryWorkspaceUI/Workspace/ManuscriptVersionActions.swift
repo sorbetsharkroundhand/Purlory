@@ -1,5 +1,8 @@
 import AppKit
 import Foundation
+import PurloryFoundation
+import PurloryDocumentEngine
+import PurloryIntelligence
 
 @MainActor enum ManuscriptVersionActions {
     private static var inFlightDocuments: Set<ProjectDocumentKey> = []

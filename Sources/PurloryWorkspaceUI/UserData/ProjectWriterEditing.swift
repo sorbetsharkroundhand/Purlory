@@ -1,4 +1,7 @@
 import Foundation
+import PurloryFoundation
+import PurloryDocumentEngine
+import PurloryIntelligence
 
 public enum ProjectWriterEdit {
     case genre(String), character(CharacterCard), removeCharacter(UUID)

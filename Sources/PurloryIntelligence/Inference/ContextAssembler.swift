@@ -1,4 +1,7 @@
 import Foundation
+import PurloryFoundation
+import PurloryDocumentEngine
+import PurloryInference
 
 /// 활성 문서의 메타·바이블 스냅샷 (PLAN §10) — MainActor(EntryStore)에서
 /// 값 복사로 격리 경계를 넘긴다 (CompletionParameters와 같은 패턴).

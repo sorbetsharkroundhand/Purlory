@@ -1,7 +1,10 @@
 import AppKit
+import os
+import PurloryDocumentEngine
 import SwiftMath
 import SwiftUI
 import UniformTypeIdentifiers
+import PurloryIntelligence
 
 // Attributed presentation and TextKit block drawing.
 extension BlockTextView {
@@ -384,27 +387,36 @@ extension BlockTextView {
 }
 
 final class PurloryLayoutManager: NSLayoutManager {
-    private(set) var processingStorageEdit = false
+    private let processingEditState = OSAllocatedUnfairLock(initialState: false)
+    var processingStorageEdit: Bool { processingEditState.withLock { $0 } }
 
-    override func textStorage(_ textStorage: NSTextStorage, edited editedMask: Int,
-                              range editedRange: NSRange, changeInLength delta: Int,
-                              invalidatedRange invalidatedCharRange: NSRange) {
-        let wasProcessing = processingStorageEdit
-        processingStorageEdit = true
-        defer { processingStorageEdit = wasProcessing }
-        super.textStorage(textStorage, edited: editedMask, range: editedRange,
-                          changeInLength: delta, invalidatedRange: invalidatedCharRange)
+    override func processEditing(
+        for textStorage: NSTextStorage,
+        edited editMask: NSTextStorageEditActions,
+        range newCharRange: NSRange,
+        changeInLength delta: Int,
+        invalidatedRange invalidatedCharRange: NSRange
+    ) {
+        let wasProcessing = processingEditState.withLock { state -> Bool in
+            let previous = state
+            state = true
+            return previous
+        }
+        defer { processingEditState.withLock { $0 = wasProcessing } }
+        super.processEditing(
+            for: textStorage,
+            edited: editMask,
+            range: newCharRange,
+            changeInLength: delta,
+            invalidatedRange: invalidatedCharRange
+        )
     }
-
-    // TextKit drawing uses this snapshot rather than actor-isolated view state.
-    nonisolated(unsafe) var editorialWorkspaceStyle = false
 
     private var view: BlockTextView? {
         firstTextView as? BlockTextView
     }
 
-    /// 문단 블록 정보 — storage 속성에서 직접 읽는다 (nonisolated 드로잉용).
-    /// 문서 끝 빈 문단은 뷰의 tailBlockInfo 스냅샷으로 보완한다.
+    /// Paragraph block metadata read from text storage, falling back to `tailBlockInfo` for an empty trailing line.
     private func blockInfo(
         _ storage: NSTextStorage, in paragraph: NSRange, view: BlockTextView
     ) -> (block: PurloryBlock, checked: Bool, marker: String?, indent: Int, codeLang: String?) {
@@ -419,22 +431,17 @@ final class PurloryLayoutManager: NSLayoutManager {
                 attrs[.purloryCodeLang] as? String
             )
         }
-        let snapshot = view.tailBlockInfo
+        let snapshot = MainActor.assumeIsolated { view.tailBlockInfo }
         return (
             snapshot.block.flatMap(PurloryBlock.init(rawValue:)) ?? .p,
             snapshot.checked, snapshot.marker, snapshot.indent, snapshot.codeLang
         )
     }
 
-    /// 배경(코드·수식 블록) 그리기 — **보이는 문단만** 훑는다.
-    ///
-    /// 예전엔 `glyphsToShow`를 인자로 받아놓고 무시한 채 문서 전체 문단을 돌았다.
-    /// 그리기는 키 입력마다 일어나므로 그대로 키 입력당 O(문서)였다 —
-    /// 30만 자에서 5.15ms (측정: docs/editor-perf.md). 이제 문서 길이와 무관하다.
     override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
-        guard let view, let storage = textStorage else { return }
-        let theme = view.palette
+        guard Thread.isMainThread, let view, let storage = textStorage else { return }
+        let theme = MainActor.assumeIsolated { view.palette }
         let ns = storage.string as NSString
         guard ns.length > 0, glyphsToShow.length > 0 else { return }
 
@@ -444,9 +451,6 @@ final class PurloryLayoutManager: NSLayoutManager {
         let lastPara = ns.paragraphRange(
             for: NSRange(location: min(shown.upperBound, ns.length - 1), length: 0))
 
-        // 코드 런은 여러 문단을 하나의 라운드 사각형으로 병합해 그린다 (디자인).
-        // 화면 위/아래로 이어지는 런은 잘린 배경이 되므로 런의 시작·끝까지만
-        // 넓힌다 — 넓히는 비용은 **런 길이**에 비례하지 문서 길이가 아니다.
         var start = firstPara.location
         while start > 0 {
             let prev = ns.paragraphRange(for: NSRange(location: start - 1, length: 0))
@@ -475,11 +479,9 @@ final class PurloryLayoutManager: NSLayoutManager {
                     codeStart = nil
                 }
                 if block == .math {
-                    // 렌더 모드 수식의 박스는 drawGlyphs가 **수식 크기에 맞춰**
-                    // 그린다 (요구 5) — 여기선 소스 편집 중일 때만 문단 폭 배경.
-                    // 다중 행 그룹 소속 문단도 렌더 중이면 박스를 생략한다 (이슈 #20).
-                    let rendered = view.mathRenders.contains {
-                        NSLocationInRange(para.location, $0.range)
+                    let paraLocation = para.location
+                    let rendered = MainActor.assumeIsolated {
+                        view.mediaState.mathRenders.contains { NSLocationInRange(paraLocation, $0.range) }
                     }
                     if !rendered {
                         drawGroupBackground(
@@ -490,7 +492,6 @@ final class PurloryLayoutManager: NSLayoutManager {
             location = para.upperBound
         }
         if let runStart = codeStart {
-            // end까지 넓혀 둔 덕에 여기가 곧 런의 끝이다.
             drawGroupBackground(
                 charRange: NSRange(location: runStart, length: end - runStart),
                 origin: origin, color: theme.codeBg)
@@ -499,9 +500,10 @@ final class PurloryLayoutManager: NSLayoutManager {
 
     override func drawGlyphs(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
         super.drawGlyphs(forGlyphRange: glyphsToShow, at: origin)
-        guard let view, let storage = textStorage, storage.length > 0 else { return }
-        let theme = view.palette
-        let markerSize: CGFloat = Thread.isMainThread ? MainActor.assumeIsolated { view.bodyFont.pointSize } : 20
+        guard Thread.isMainThread, let view, let storage = textStorage, storage.length > 0 else { return }
+        let (theme, markerSize, editorialStyle) = MainActor.assumeIsolated {
+            (view.palette, view.bodyFont.pointSize, view.editorialWorkspaceStyle)
+        }
         let ns = storage.string as NSString
         let shownChars = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
         drawWritingDiagnostics(forGlyphRange: glyphsToShow, at: origin, view: view)
@@ -518,8 +520,8 @@ final class PurloryLayoutManager: NSLayoutManager {
 
             switch info.block {
             case .quote:
-                (editorialWorkspaceStyle ? theme.workspaceTerracotta : theme.ink2).setFill()
-                let barWidth: CGFloat = editorialWorkspaceStyle ? 2 : 3
+                (editorialStyle ? theme.workspaceTerracotta : theme.ink2).setFill()
+                let barWidth: CGFloat = editorialStyle ? 2 : 3
                 for level in 0...max(0, info.indent) {
                     let barX = rect.minX + CGFloat(level) * BlockTextView.quoteIndentStep
                     NSRect(x: barX, y: rect.minY + 2, width: barWidth, height: rect.height - 4)
@@ -564,18 +566,20 @@ final class PurloryLayoutManager: NSLayoutManager {
                 theme.sepStrong.setFill()
                 NSRect(x: rect.minX, y: rect.midY, width: rect.width, height: 1).fill()
             case .math:
-                if let render = view.mathRenders.first(
-                    where: { NSLocationInRange(para.location, $0.range) })
-                {
-                    // 다중 행 그룹이면 그룹 **전체** rect에 한 번만 그린다 —
-                    // 문단별로 그리면 같은 이미지가 줄마다 찍힌다 (이슈 #20).
-                    if para.location == render.range.location {
-                        let unionRect = paragraphRect(
-                            charRange: render.range, origin: origin) ?? rect
-                        drawMath(render.image, in: unionRect, theme: theme)
+                let paraLocation = para.location
+                let mathRange = MainActor.assumeIsolated {
+                    view.mediaState.mathRenders.first(where: { NSLocationInRange(paraLocation, $0.range) })?.range
+                }
+                if let mathRange {
+                    if paraLocation == mathRange.location {
+                        let unionRect = paragraphRect(charRange: mathRange, origin: origin) ?? rect
+                        MainActor.assumeIsolated {
+                            if let render = view.mediaState.mathRenders.first(where: { $0.range == mathRange }) {
+                                Self.drawMath(render.image, in: unionRect, theme: theme)
+                            }
+                        }
                     }
                 } else {
-                    // 편집 중이거나 아직 파싱 안 되는 소스 — "수식" 태그만.
                     let tag = NSAttributedString(
                         string: "수식",
                         attributes: [
@@ -585,13 +589,16 @@ final class PurloryLayoutManager: NSLayoutManager {
                     tag.draw(at: NSPoint(x: rect.maxX - tag.size().width - 12, y: rect.minY + 6))
                 }
             case .image:
-                if let render = view.imageRenders.first(
-                    where: { $0.range.location == para.location }) {
-                    drawImage(
+                let paraLocation = para.location
+                let drewImage = MainActor.assumeIsolated { () -> Bool in
+                    guard let render = view.mediaState.imageRenders.first(
+                        where: { $0.range.location == paraLocation }) else { return false }
+                    Self.drawImage(
                         render.image, in: rect, display: render.size,
                         align: render.align, selected: render.selected, theme: theme)
-                } else {
-                    // 편집 중이거나 파일을 못 읽음 — "이미지" 태그만.
+                    return true
+                }
+                if !drewImage {
                     let tag = NSAttributedString(
                         string: "이미지",
                         attributes: [
@@ -675,7 +682,7 @@ final class PurloryLayoutManager: NSLayoutManager {
     /// 렌더된 LaTeX 이미지를 수식 문단 중앙에 그린다 (폭 초과 시 축소).
     /// 배경 박스는 문단 폭이 아니라 **수식 크기 + 사방 mathBoxMargin(10pt)** —
     /// 분수처럼 큰 수식이면 박스도 함께 커진다 (요구 5).
-    private func drawMath(_ image: NSImage, in rect: NSRect, theme: PurloryTheme) {
+    private static func drawMath(_ image: NSImage, in rect: NSRect, theme: PurloryTheme) {
         var size = image.size
         guard size.width > 0, size.height > 0 else { return }
         let maxWidth = max(40, rect.width - 32)
@@ -697,7 +704,7 @@ final class PurloryLayoutManager: NSLayoutManager {
 
     /// 렌더된 이미지를 지정 크기(`display`)·정렬(`align`)로 그린다. 객체 선택 시엔
     /// 선택 테두리도 두른다 (요구 3). display는 뷰의 `imageDisplaySize`가 계산한 값.
-    private func drawImage(
+    private static func drawImage(
         _ image: NSImage, in rect: NSRect, display: NSSize,
         align: String, selected: Bool, theme: PurloryTheme
     ) {

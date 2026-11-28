@@ -1,5 +1,7 @@
 import Foundation
 import CryptoKit
+import PurloryFoundation
+import PurloryDocumentEngine
 
 /// Adapts existing whole-scene inference without inventing time, confidence or writer authority.
 public enum StoryKnowledgeProjection {

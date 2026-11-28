@@ -2,6 +2,10 @@ import AppKit
 import SwiftMath
 import SwiftUI
 import UniformTypeIdentifiers
+import PurloryFoundation
+import PurloryStorage
+import PurloryDocumentEngine
+import PurloryIntelligence
 
 /// Presentation policy supplied by the workspace; storage stays independent of writing modes.
 public enum EditorProseLayout: Sendable {

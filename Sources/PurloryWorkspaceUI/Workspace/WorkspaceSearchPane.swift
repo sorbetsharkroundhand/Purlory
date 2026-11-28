@@ -1,5 +1,8 @@
 import AppKit
 import SwiftUI
+import PurloryFoundation
+import PurloryDocumentEngine
+import PurloryIntelligence
 
 enum WorkspaceSearchScope: String, CaseIterable, Sendable {
     case document = "현재 문서", project = "프로젝트", commands = "도구·명령"

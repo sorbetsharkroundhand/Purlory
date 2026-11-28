@@ -1,6 +1,8 @@
 import AppKit
 import Combine
 import Foundation
+import PurloryFoundation
+import PurloryIntelligence
 
 /// One workspace consumer of prepared diagnostics. Surface opening has no execution role.
 @MainActor

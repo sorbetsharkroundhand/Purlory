@@ -1,6 +1,9 @@
 import AppKit
 import SwiftUI
 import QuartzCore
+import PurloryFoundation
+import PurloryDocumentEngine
+import PurloryInference
 
 struct SpatialWorkspaceCanvas: NSViewRepresentable {
     @Bindable var model: SpatialWorkspaceController

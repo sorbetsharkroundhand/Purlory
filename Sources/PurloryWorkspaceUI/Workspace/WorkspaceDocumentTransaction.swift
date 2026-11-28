@@ -1,4 +1,5 @@
 import AppKit
+import PurloryFoundation
 
 /// One atomic source mutation, with coordinated native Undo in each affected open document.
 @MainActor final class WorkspaceDocumentTransaction {

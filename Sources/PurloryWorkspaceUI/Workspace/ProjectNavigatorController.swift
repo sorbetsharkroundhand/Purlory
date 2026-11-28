@@ -1,6 +1,9 @@
 import AppKit
 import Combine
 import SwiftUI
+import PurloryFoundation
+import PurloryDocumentEngine
+import PurloryIntelligence
 
 @MainActor final class ProjectNavigatorController: ObservableObject {
     @Published private(set) var organization = ProjectNavigation()

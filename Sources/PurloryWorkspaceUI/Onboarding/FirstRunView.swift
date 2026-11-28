@@ -1,5 +1,8 @@
 import AppKit
 import SwiftUI
+import PurloryFoundation
+import PurloryStorage
+import PurloryInference
 
 /// Onboarding actions stay on the verified ProjectSession/ProjectStore coordinator path.
 @MainActor

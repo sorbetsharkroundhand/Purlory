@@ -1,5 +1,7 @@
 import CryptoKit
 import Foundation
+import PurloryFoundation
+import PurloryDocumentEngine
 
 package struct WritingAnalysisWindow: Sendable {
     package let text: String

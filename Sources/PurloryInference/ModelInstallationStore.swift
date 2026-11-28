@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import PurloryFoundation
 
 public actor ModelInstallationStore {
     public enum State: Equatable, Sendable {

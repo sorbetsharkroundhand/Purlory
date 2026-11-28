@@ -1,4 +1,6 @@
 import Foundation
+import PurloryFoundation
+import PurloryDocumentEngine
 
 enum ProjectNavigationNode: Hashable, Codable, Sendable {
     case document(WritingDocumentID)

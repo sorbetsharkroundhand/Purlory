@@ -1,8 +1,6 @@
-@testable import PurloryIntelligence
 import XCTest
+@testable import PurloryFoundation
 
-@testable import PurloryCore
-@testable import PurloryWorkspaceUI
 
 final class EvidenceAnchorTests: XCTestCase {
     private let documentID = WritingDocumentID()

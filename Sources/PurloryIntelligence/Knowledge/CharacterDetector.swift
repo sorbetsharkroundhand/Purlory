@@ -1,4 +1,5 @@
 import Foundation
+import PurloryDocumentEngine
 
 /// 인물 후보 감지 — 결정적 깔때기 1단 (M6, PLAN §7).
 ///

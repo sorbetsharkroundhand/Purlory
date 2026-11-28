@@ -1,4 +1,6 @@
 import Foundation
+import PurloryFoundation
+import PurloryDocumentEngine
 
 /// Explicit writer actions are durable even when their original evidence becomes stale.
 public struct WriterDecision: Codable, Equatable, Sendable, Identifiable {

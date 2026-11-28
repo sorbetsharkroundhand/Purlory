@@ -1,5 +1,7 @@
 import AppKit
 import SwiftUI
+import PurloryDocumentEngine
+import PurloryIntelligence
 
 /// Values transcribed from purlory.html. Keep motion timing shared across native surfaces.
 enum WorkspaceHTMLStyle {

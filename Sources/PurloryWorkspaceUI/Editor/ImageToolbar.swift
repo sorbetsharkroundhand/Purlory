@@ -1,5 +1,7 @@
 import AppKit
 import SwiftUI
+import PurloryDocumentEngine
+import PurloryInference
 
 /// 이미지 객체 선택 시 뜨는 툴바 액션 — `BlockTextView.performImage(_:)`이 처리한다.
 enum ImageObjectAction {

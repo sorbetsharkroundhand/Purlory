@@ -1,5 +1,8 @@
 import AppKit
 import SwiftUI
+import PurloryDocumentEngine
+import PurloryInference
+import PurloryIntelligence
 
 struct WorkspaceFrame<Content: View>: View {
     let theme: PurloryTheme

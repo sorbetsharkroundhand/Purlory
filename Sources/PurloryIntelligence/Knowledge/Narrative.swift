@@ -1,4 +1,6 @@
 import Foundation
+import PurloryFoundation
+import PurloryDocumentEngine
 
 // Narrative Intelligence 공통 타입 (PLAN §6.5·§8) — 씬 메타·앎·관계·
 // 브랜치·대화 인덱스. 원문을 복제하지 않고 씬 해시 + 짧은 인용(quote)으로

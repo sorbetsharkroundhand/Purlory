@@ -1,4 +1,5 @@
 import AppKit
+import PurloryFoundation
 
 struct WorkspaceParagraphAnchor {
     let key: ProjectDocumentKey

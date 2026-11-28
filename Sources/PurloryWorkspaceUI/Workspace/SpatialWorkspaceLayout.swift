@@ -1,4 +1,5 @@
 import Foundation
+import PurloryFoundation
 
 enum WorkspaceTileID: Hashable, Codable, Sendable, Identifiable {
     case document(WritingDocumentID)

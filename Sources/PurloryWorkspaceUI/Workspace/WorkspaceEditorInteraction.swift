@@ -1,5 +1,7 @@
 import AppKit
 import Combine
+import PurloryFoundation
+import PurloryDocumentEngine
 
 /// Workspace-owned gestures/decorations. The editor exposes only native presentation hooks.
 @MainActor final class WorkspaceEditorInteraction: EditorWorkspaceInteraction {

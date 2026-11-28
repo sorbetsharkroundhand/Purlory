@@ -1,5 +1,7 @@
 import Foundation
 import SwiftUI
+import PurloryInference
+import PurloryIntelligence
 
 /// 값은 `UserDefaults`에 보존된다. UI(SettingsView)는 이 객체에 바인딩하고,
 /// 추론 쪽에는 `parameters` 스냅샷만 넘긴다.

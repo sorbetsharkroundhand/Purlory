@@ -1,4 +1,5 @@
 import Foundation
+import PurloryFoundation
 
 /// Explicit story order on one timeline; unrelated timelines have no total ordering.
 public struct StoryInstant: Codable, Hashable, Sendable {

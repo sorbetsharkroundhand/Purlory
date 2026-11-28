@@ -1,5 +1,8 @@
 import Combine
 import Foundation
+import PurloryFoundation
+import PurloryInference
+import PurloryIntelligence
 
 /// Explicit owner-scoped answers. Presentation consumes only validated records, never raw model prose.
 @MainActor

@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import PurloryFoundation
 
 public protocol ProjectFileSystem: Sendable {
     func createDirectory(at url: URL) throws

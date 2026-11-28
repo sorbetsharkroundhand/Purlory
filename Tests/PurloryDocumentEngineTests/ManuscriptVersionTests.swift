@@ -1,5 +1,6 @@
 import XCTest
-@testable import PurloryCore
+@testable import PurloryFoundation
+@testable import PurloryDocumentEngine
 
 final class ManuscriptVersionTests: XCTestCase {
     private let key = ProjectDocumentKey(projectID: WritingProjectID(), documentID: WritingDocumentID())

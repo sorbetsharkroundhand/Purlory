@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import PurloryFoundation
 
 public enum StoryFactResolution: Equatable, Sendable { case resolved(StoryFact), unknown }
 

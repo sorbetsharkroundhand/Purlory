@@ -1,4 +1,5 @@
 import Foundation
+import PurloryDocumentEngine
 
 /// 발화의 존대 수준 (PLAN §6.4) — 한국어 대화 예측의 핵심 축.
 public enum Politeness: String, Equatable, Sendable {

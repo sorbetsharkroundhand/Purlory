@@ -1,4 +1,5 @@
 import Foundation
+import PurloryFoundation
 
 /// A verified local previous revision; the fingerprint binds restore to this preview.
 public struct ProjectBackupPreview: Sendable {

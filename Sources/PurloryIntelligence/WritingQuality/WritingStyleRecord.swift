@@ -1,4 +1,5 @@
 import Foundation
+import PurloryFoundation
 
 package struct WritingStyleRecord: Codable, Equatable, Sendable {
     package let version: Int

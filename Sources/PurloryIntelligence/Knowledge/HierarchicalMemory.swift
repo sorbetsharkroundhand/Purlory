@@ -1,4 +1,6 @@
 import Foundation
+import PurloryFoundation
+import PurloryDocumentEngine
 
 /// The persistence and publication boundary for one document's derived story memory.
 /// Project and legacy scopes are separate cases so project data can never silently fall

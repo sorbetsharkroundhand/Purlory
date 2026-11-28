@@ -1,4 +1,6 @@
 import Foundation
+import PurloryFoundation
+import PurloryDocumentEngine
 
 // 서사 구간 분석 (요구사항 §7–§10) — 씬 내부 시간·관점 전환의 다단계 파이프라인.
 //

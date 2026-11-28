@@ -1,4 +1,5 @@
 import Foundation
+import PurloryFoundation
 
 package struct WritingSerializedBlockStyle: Sendable, Equatable {
     package let block: String

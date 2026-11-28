@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import PurloryFoundation
 
 /// Export paths are checked before any output and again at the atomic commit boundary.
 enum ExportDestination {

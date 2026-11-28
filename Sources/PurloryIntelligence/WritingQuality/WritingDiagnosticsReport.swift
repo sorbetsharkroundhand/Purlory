@@ -1,4 +1,6 @@
 import Foundation
+import PurloryFoundation
+import PurloryDocumentEngine
 
 package protocol WritingDiagnosticsChunkProvider: Sendable {
     func analyzeChunks(_ request: WritingDiagnosticsRequest,

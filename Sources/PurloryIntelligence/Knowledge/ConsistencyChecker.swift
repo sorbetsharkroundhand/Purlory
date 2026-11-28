@@ -1,4 +1,6 @@
 import Foundation
+import PurloryFoundation
+import PurloryDocumentEngine
 
 /// A derived candidate; production visibility requires verified original evidence.
 public struct ConsistencyWarning: Equatable, Sendable, Identifiable {

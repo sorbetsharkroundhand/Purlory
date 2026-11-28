@@ -1,5 +1,9 @@
 import AppKit
 import SwiftUI
+import PurloryFoundation
+import PurloryDocumentEngine
+import PurloryInference
+import PurloryIntelligence
 
 struct ProjectNavigatorView: View {
     @Bindable var session: ProjectSession

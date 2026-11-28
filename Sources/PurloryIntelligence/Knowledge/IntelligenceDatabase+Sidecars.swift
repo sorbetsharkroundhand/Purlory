@@ -1,5 +1,7 @@
 import Foundation
 import SQLite3
+import PurloryFoundation
+import PurloryInference
 
 extension IntelligenceDatabase {
     private struct SceneRecord: Codable {

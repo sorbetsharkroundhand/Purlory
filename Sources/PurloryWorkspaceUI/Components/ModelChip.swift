@@ -1,4 +1,6 @@
 import SwiftUI
+import PurloryDocumentEngine
+import PurloryInference
 
 /// Shared local completion controls for the editor toolbar and spatial document headers.
 struct ModelChip: View {

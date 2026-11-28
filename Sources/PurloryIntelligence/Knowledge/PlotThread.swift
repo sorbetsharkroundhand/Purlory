@@ -1,4 +1,5 @@
 import Foundation
+import PurloryDocumentEngine
 
 // Plot Thread (Narrative Graph의 branch 단위) — 하나의 지속적인 서사적 문제·
 // 목표·갈등·미스터리·관계 변화를 추적하는 흐름.

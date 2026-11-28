@@ -1,5 +1,7 @@
 import AppKit
 import SwiftUI
+import PurloryInference
+import PurloryIntelligence
 
 /// 사이드바-에디터 사이 커스텀 분할 divider — 근접 감지·확대 히트영역·리사이즈 커서.
 ///

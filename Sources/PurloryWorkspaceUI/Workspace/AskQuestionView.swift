@@ -1,4 +1,5 @@
 import AppKit
+import PurloryIntelligence
 
 @MainActor
 final class AskQuestionView: NSView, NSTextFieldDelegate {

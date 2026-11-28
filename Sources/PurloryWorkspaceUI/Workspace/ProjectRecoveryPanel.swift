@@ -1,4 +1,5 @@
 import AppKit
+import PurloryStorage
 
 @MainActor
 enum ProjectRecoveryPanel {

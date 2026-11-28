@@ -1,5 +1,8 @@
 import CryptoKit
 import Foundation
+import PurloryFoundation
+import PurloryDocumentEngine
+import PurloryInference
 
 /// Immutable original evidence for one explicit request; never retains the manuscript.
 package struct JudgeEvidencePacket: Sendable {

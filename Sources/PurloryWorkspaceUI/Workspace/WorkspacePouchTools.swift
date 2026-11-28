@@ -1,5 +1,7 @@
 import AppKit
 import SwiftUI
+import PurloryDocumentEngine
+import PurloryInference
 
 enum WorkspacePouchSection: String, CaseIterable {
     case overview, format, ai, view, object, note

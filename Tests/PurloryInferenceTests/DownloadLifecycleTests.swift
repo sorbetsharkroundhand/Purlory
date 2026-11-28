@@ -1,9 +1,7 @@
-@testable import PurloryIntelligence
-@_spi(Benchmark) @testable import PurloryInference
 import XCTest
+@testable import PurloryFoundation
+@_spi(Benchmark) @testable import PurloryInference
 
-@testable import PurloryCore
-@testable import PurloryWorkspaceUI
 
 /// 모델 다운로드 수명주기 회귀 (이슈 #46).
 ///

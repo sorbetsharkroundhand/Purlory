@@ -1,6 +1,10 @@
 import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
+import PurloryFoundation
+import PurloryStorage
+import PurloryDocumentEngine
+import PurloryIntelligence
 
 /// 메뉴 막대 명령 (에디터 v3 — 상용 v1.0).
 ///

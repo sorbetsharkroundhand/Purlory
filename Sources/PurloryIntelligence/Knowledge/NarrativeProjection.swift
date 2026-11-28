@@ -1,4 +1,6 @@
 import Foundation
+import PurloryFoundation
+import PurloryDocumentEngine
 
 /// Pure snapshot-to-row/lane projection; colors and gestures belong to NarrativeView.
 /// The view caches results by snapshot generation, projection and minor-group expansion.

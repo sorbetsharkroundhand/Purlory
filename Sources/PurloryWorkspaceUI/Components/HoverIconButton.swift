@@ -1,4 +1,5 @@
 import SwiftUI
+import PurloryInference
 
 /// hover 시 라운드 배경이 깔리는 아이콘 버튼의 **단일 구현** (이슈 #61 PR3).
 ///

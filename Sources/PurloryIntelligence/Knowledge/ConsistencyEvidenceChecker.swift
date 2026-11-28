@@ -1,4 +1,6 @@
 import Foundation
+import PurloryFoundation
+import PurloryDocumentEngine
 
 extension ConsistencyChecker {
     /// Production visibility gate. All work uses the captured original, outside prediction.

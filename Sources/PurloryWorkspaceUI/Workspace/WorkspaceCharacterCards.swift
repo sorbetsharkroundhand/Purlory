@@ -1,4 +1,7 @@
 import SwiftUI
+import PurloryFoundation
+import PurloryDocumentEngine
+import PurloryIntelligence
 
 struct WorkspaceCharacterCards: View {
     @Bindable var session: ProjectSession

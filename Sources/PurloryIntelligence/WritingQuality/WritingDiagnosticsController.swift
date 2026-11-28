@@ -1,6 +1,9 @@
 import Combine
 import CryptoKit
 import Foundation
+import PurloryFoundation
+import PurloryDocumentEngine
+import PurloryInference
 
 /// Maps exact, bounded provider windows under post-binding editor authority.
 @MainActor

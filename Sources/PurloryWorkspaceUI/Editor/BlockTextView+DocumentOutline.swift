@@ -1,4 +1,6 @@
 import AppKit
+import PurloryFoundation
+import PurloryDocumentEngine
 
 struct OutlineSourceTarget: Equatable, Sendable {
     let identity: ProjectRuntimeIdentity

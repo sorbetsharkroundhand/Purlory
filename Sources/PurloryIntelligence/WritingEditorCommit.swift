@@ -1,4 +1,5 @@
 import Foundation
+import PurloryFoundation
 
 package struct WritingEditorCommit: Sendable {
     package let baseIdentity: ProjectRuntimeIdentity

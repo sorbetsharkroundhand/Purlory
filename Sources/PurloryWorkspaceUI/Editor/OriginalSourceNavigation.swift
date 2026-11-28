@@ -1,6 +1,8 @@
 import AppKit
 import Combine
 import CryptoKit
+import PurloryFoundation
+import PurloryDocumentEngine
 
 /// A literal original reference has no authority to edit or to select an editor runtime.
 struct OriginalSourceReference: Equatable, Sendable {

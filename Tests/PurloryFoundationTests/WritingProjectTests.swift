@@ -1,6 +1,5 @@
-@testable import PurloryIntelligence
 import XCTest
-import PurloryCore
+@testable import PurloryFoundation
 
 final class WritingProjectTests: XCTestCase {
     func testMissingTrashFieldDecodesAsEmptyAndRoundTripsTrash() throws {

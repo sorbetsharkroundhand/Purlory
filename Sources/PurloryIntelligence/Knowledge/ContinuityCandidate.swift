@@ -1,5 +1,7 @@
 import CryptoKit
 import Foundation
+import PurloryFoundation
+import PurloryDocumentEngine
 
 /// A scoped request for evidence-bounded review, never a verdict or writer canon.
 public struct ContinuityCandidate: Equatable, Sendable, Identifiable {

@@ -2,6 +2,9 @@ import AppKit
 import SwiftMath
 import SwiftUI
 import UniformTypeIdentifiers
+import PurloryFoundation
+import PurloryDocumentEngine
+import PurloryIntelligence
 
 // Markdown round-trip, source coordinates and serialization cache.
 extension BlockTextView {
@@ -108,8 +111,8 @@ extension BlockTextView {
         // 행렬·cases 내용 줄이 헤딩·목록으로 오독되면 원문 구조가 깨진다 (이슈 #20).
         var inMathGroup = false
         let definitions = ImageReferenceParser.collectDefinitions(in: markdown)
-        imageDefinitions = definitions
-        imageDefinitionsDirty = false
+        mediaState.imageDefinitions = definitions
+        mediaState.imageDefinitionsDirty = false
         let lines = markdown.components(separatedBy: "\n")
         if sourceMode {
             result.append(NSAttributedString(string: markdown, attributes: styleAttributes(for: .p, checked: false)))
@@ -242,7 +245,7 @@ extension BlockTextView {
         }
         syncTypingAttributes()
         isTransforming = false
-        selectedImageLocation = nil
+        mediaState.selectedImageLocation = nil
         hideImageToolbar()
         hideSelectionToolbar()
         // 새 문서의 마커 캐시를 실측으로 초기화 — 로드는 드물어 전체 스캔이 싸다.
@@ -350,14 +353,14 @@ extension BlockTextView {
         if isSourceMode { return DocumentSource(string) }
         writingProjectionCapture.serializationInvocationCount += 1
         writingProjectionCapture.beginSerialization(storage: textStorage)
-        if !serialLinesValid {
+        if !serializationCache.isValid {
             rebuildSerialCache()
-        } else if let dirty = serialDirtyRange {
+        } else if let dirty = serializationCache.dirtyRange {
             applySerialDirtyRangeUpdate(dirty)
-        } else if serialFastDirty {
+        } else if serializationCache.isFastDirty {
             applyFastSerialUpdate()
         }
-        return markdownCodec.source
+        return serializationCache.markdownCodec.source
     }
 
     /// Explicit inspection maps the native caret to original Markdown coordinates.
@@ -368,24 +371,24 @@ extension BlockTextView {
             return min(max(0, requestedOffset ?? selectedRange().location), ns.length)
         }
         let ns = string as NSString, caret = min(max(0, requestedOffset ?? selectedRange().location), ns.length)
-        if ns.length > 0, mediaParagraphIndex?.utf16Length != ns.length {
+        if ns.length > 0, mediaState.paragraphIndex?.utf16Length != ns.length {
             _ = indexedMediaParagraphs(in: NSRange(location: 0, length: 0))
         }
         if ns.length > 0,
-           serialLinesValid,
-           serialDirtyRange == nil,
-           !serialFastDirty,
-           serialSyncedLength == ns.length,
-           let index = mediaParagraphIndex,
+           serializationCache.isValid,
+           serializationCache.dirtyRange == nil,
+           !serializationCache.isFastDirty,
+           serializationCache.syncedLength == ns.length,
+           let index = mediaState.paragraphIndex,
            index.utf16Length == ns.length,
-           index.paragraphCount == serialLines.count,
-           markdownCodec.source.chunkCount == serialLines.count {
+           index.paragraphCount == serializationCache.lines.count,
+           serializationCache.markdownCodec.source.chunkCount == serializationCache.lines.count {
             let para = ns.paragraphRange(for: NSRange(location: min(caret, ns.length - 1), length: 0))
             if let rank = index.paragraphRank(forParagraphAt: para.location),
-               rank >= 0, rank < serialLines.count {
-                let line = serialLines[rank]
-                let wasCode = rank > 0 && serialLines[rank - 1].isCode
-                let beforeFence = markdownCodec.source.chunkOffset(at: rank) + (rank > 0 ? 1 : 0)
+               rank >= 0, rank < serializationCache.lines.count {
+                let line = serializationCache.lines[rank]
+                let wasCode = rank > 0 && serializationCache.lines[rank - 1].isCode
+                let beforeFence = serializationCache.markdownCodec.source.chunkOffset(at: rank) + (rank > 0 ? 1 : 0)
                 let fenceDelta = line.isCode != wasCode
                     ? (line.isCode ? 4 + (line.codeLang?.utf16.count ?? 0) : 4)
                     : 0
@@ -478,42 +481,42 @@ extension BlockTextView {
         let ns = string as NSString
         guard range.location >= 0, range.length > 0, range.location <= ns.length,
               range.length <= ns.length - range.location else { return nil }
-        if ns.length > 0, mediaParagraphIndex?.utf16Length != ns.length {
+        if ns.length > 0, mediaState.paragraphIndex?.utf16Length != ns.length {
             _ = indexedMediaParagraphs(in: NSRange(location: 0, length: 0))
         }
         if ns.length > 0,
-           serialLinesValid,
-           serialDirtyRange == nil,
-           !serialFastDirty,
-           serialSyncedLength == ns.length,
-           let index = mediaParagraphIndex,
+           serializationCache.isValid,
+           serializationCache.dirtyRange == nil,
+           !serializationCache.isFastDirty,
+           serializationCache.syncedLength == ns.length,
+           let index = mediaState.paragraphIndex,
            index.utf16Length == ns.length,
-           index.paragraphCount == serialLines.count,
-           markdownCodec.source.chunkCount == serialLines.count {
+           index.paragraphCount == serializationCache.lines.count,
+           serializationCache.markdownCodec.source.chunkCount == serializationCache.lines.count {
             guard let startRank = index.paragraphRank(forParagraphAt: range.location),
                   let endRank = index.paragraphRank(forParagraphAt: range.upperBound),
-                  startRank >= 0, endRank > startRank, endRank <= serialLines.count else {
+                  startRank >= 0, endRank > startRank, endRank <= serializationCache.lines.count else {
                 return nil
             }
-            let firstLine = serialLines[startRank]
-            let wasCodeBeforeFirst = startRank > 0 && serialLines[startRank - 1].isCode
-            let beforeFirstFence = markdownCodec.source.chunkOffset(at: startRank) + (startRank > 0 ? 1 : 0)
+            let firstLine = serializationCache.lines[startRank]
+            let wasCodeBeforeFirst = startRank > 0 && serializationCache.lines[startRank - 1].isCode
+            let beforeFirstFence = serializationCache.markdownCodec.source.chunkOffset(at: startRank) + (startRank > 0 ? 1 : 0)
             let firstFenceDelta = firstLine.isCode != wasCodeBeforeFirst
                 ? (firstLine.isCode ? 4 + (firstLine.codeLang?.utf16.count ?? 0) : 4)
                 : 0
             let start = firstLine.isCode && !wasCodeBeforeFirst ? beforeFirstFence : (beforeFirstFence + firstFenceDelta)
 
             let lastRank = endRank - 1
-            let lastLine = serialLines[lastRank]
-            let wasCodeBeforeLast = lastRank > 0 && serialLines[lastRank - 1].isCode
-            let beforeLastFence = markdownCodec.source.chunkOffset(at: lastRank) + (lastRank > 0 ? 1 : 0)
+            let lastLine = serializationCache.lines[lastRank]
+            let wasCodeBeforeLast = lastRank > 0 && serializationCache.lines[lastRank - 1].isCode
+            let beforeLastFence = serializationCache.markdownCodec.source.chunkOffset(at: lastRank) + (lastRank > 0 ? 1 : 0)
             let lastFenceDelta = lastLine.isCode != wasCodeBeforeLast
                 ? (lastLine.isCode ? 4 + (lastLine.codeLang?.utf16.count ?? 0) : 4)
                 : 0
             var endSource = beforeLastFence + lastFenceDelta + lastLine.text.utf16.count
                 + (ns.character(at: range.upperBound - 1) == 10 ? 1 : 0)
             if lastLine.isCode {
-                let nextCode = endRank < serialLines.count ? serialLines[endRank].isCode : false
+                let nextCode = endRank < serializationCache.lines.count ? serializationCache.lines[endRank].isCode : false
                 if !nextCode { endSource += 4 }
             }
             return NSRange(location: start, length: endSource - start)
@@ -595,7 +598,7 @@ extension BlockTextView {
     /// 전체 재구축 — 예전 serialize의 전체 순회. `serialLinesValid`가 false일 때만
     /// 돈다(첫 호출·구조 변화·불확실). 이후 증분 갱신의 기준선이 된다.
     func rebuildSerialCache() {
-        serialCacheRebuildCount += 1
+        serializationCache.rebuildCount += 1
         let ns = string as NSString
         var lines: [(text: String, isCode: Bool, codeLang: String?)] = []
         let selLoc = min(selectedRange().location, ns.length)
@@ -617,54 +620,54 @@ extension BlockTextView {
             }
             location = para.upperBound
         } while location < ns.length
-        serialLines = lines
-        markdownCodec.reset(lines, trailingLineFeed: ns.length > 0 && ns.character(at: ns.length - 1) == 0x0A)
-        serialLinesValid = true
-        serialFastDirty = false
-        serialDirtyRange = nil
-        serialSyncedLength = ns.length
-        serialFastIndex = fastIdx
-        serialFastStart = fastStart
-        if ns.length > 0, mediaParagraphIndex?.utf16Length != ns.length {
+        serializationCache.lines = lines
+        serializationCache.markdownCodec.reset(lines, trailingLineFeed: ns.length > 0 && ns.character(at: ns.length - 1) == 0x0A)
+        serializationCache.isValid = true
+        serializationCache.isFastDirty = false
+        serializationCache.dirtyRange = nil
+        serializationCache.syncedLength = ns.length
+        serializationCache.fastIndex = fastIdx
+        serializationCache.fastStart = fastStart
+        if ns.length > 0, mediaState.paragraphIndex?.utf16Length != ns.length {
             _ = indexedMediaParagraphs(in: NSRange(location: 0, length: 0))
         }
     }
 
     /// 빠른 경로: 추적 중인 문단 하나만 다시 브리지해 캐시에 splice.
     func applyFastSerialUpdate() {
-        serialFastDirty = false
-        guard let idx = serialFastIndex, idx < serialLines.count else {
+        serializationCache.isFastDirty = false
+        guard let idx = serializationCache.fastIndex, idx < serializationCache.lines.count else {
             rebuildSerialCache()
             return
         }
         let ns = string as NSString
-        guard serialFastStart <= ns.length else {
+        guard serializationCache.fastStart <= ns.length else {
             rebuildSerialCache()
             return
         }
-        let anchor = min(serialFastStart, max(0, ns.length - 1))
+        let anchor = min(serializationCache.fastStart, max(0, ns.length - 1))
         let para = ns.paragraphRange(for: NSRange(location: anchor, length: 0))
         // 추적하던 문단의 시작이 어긋났으면(예상 못 한 구조 변화) 전체로 후퇴.
-        guard para.location == serialFastStart else {
+        guard para.location == serializationCache.fastStart else {
             rebuildSerialCache()
             return
         }
         var line = serializedLine(of: para)
         line.text.makeContiguousUTF8()
-        let codeBoundaryChanged = serialLines[idx].isCode != line.isCode
-        serialLines[idx] = line
-        markdownCodec.update(serialLines, at: idx, codeBoundaryChanged: codeBoundaryChanged,
+        let codeBoundaryChanged = serializationCache.lines[idx].isCode != line.isCode
+        serializationCache.lines[idx] = line
+        serializationCache.markdownCodec.update(serializationCache.lines, at: idx, codeBoundaryChanged: codeBoundaryChanged,
             trailingLineFeed: ns.length > 0 && ns.character(at: ns.length - 1) == 0x0A)
-        serialSyncedLength = ns.length
+        serializationCache.syncedLength = ns.length
     }
 
     /// 문단 이동·줄바꿈·병합·속성 편집 시 더티 문단 범위만 다시 직렬화해 캐시에 splice한다.
     func applySerialDirtyRangeUpdate(_ dirty: NSRange) {
-        serialDirtyRange = nil
-        serialFastDirty = false
+        serializationCache.dirtyRange = nil
+        serializationCache.isFastDirty = false
         let ns = string as NSString
-        guard serialSyncedLength > 0, ns.length > 0, !serialLines.isEmpty,
-              let index = mediaParagraphIndex, index.utf16Length == ns.length else {
+        guard serializationCache.syncedLength > 0, ns.length > 0, !serializationCache.lines.isEmpty,
+              let index = mediaState.paragraphIndex, index.utf16Length == ns.length else {
             rebuildSerialCache()
             return
         }
@@ -684,7 +687,7 @@ extension BlockTextView {
             return
         }
         let newTotalRows = index.paragraphCount
-        let oldTotalRows = serialLines.count
+        let oldTotalRows = serializationCache.lines.count
         let oldEndRank = oldTotalRows - (newTotalRows - newEndRank)
         guard startRank >= 0, startRank <= oldEndRank, oldEndRank <= oldTotalRows,
               startRank <= newEndRank, newEndRank <= newTotalRows else {
@@ -716,21 +719,21 @@ extension BlockTextView {
             return
         }
         let trailingLineFeed = ns.length > 0 && ns.character(at: ns.length - 1) == 0x0A
-        serialLines.replaceSubrange(startRank..<oldEndRank, with: updatedLines)
-        markdownCodec.replaceSubrange(
+        serializationCache.lines.replaceSubrange(startRank..<oldEndRank, with: updatedLines)
+        serializationCache.markdownCodec.replaceSubrange(
             startRank..<oldEndRank, with: updatedLines.count,
-            in: serialLines, trailingLineFeed: trailingLineFeed)
-        serialSyncedLength = ns.length
+            in: serializationCache.lines, trailingLineFeed: trailingLineFeed)
+        serializationCache.syncedLength = ns.length
         if let fastIdx {
-            serialFastIndex = fastIdx
-            serialFastStart = fastStart
+            serializationCache.fastIndex = fastIdx
+            serializationCache.fastStart = fastStart
         } else {
             let caretPara = ns.paragraphRange(for: NSRange(location: selLoc, length: 0))
-            if let rank = index.paragraphRank(forParagraphAt: caretPara.location), rank < serialLines.count {
-                serialFastIndex = rank
-                serialFastStart = caretPara.location
+            if let rank = index.paragraphRank(forParagraphAt: caretPara.location), rank < serializationCache.lines.count {
+                serializationCache.fastIndex = rank
+                serializationCache.fastStart = caretPara.location
             } else {
-                serialFastIndex = nil
+                serializationCache.fastIndex = nil
             }
         }
     }
@@ -848,14 +851,14 @@ extension BlockTextView {
         editedMask: NSTextStorageEditActions, editedRange: NSRange, delta: Int
     ) {
         let hasCharacterEdit = editedMask.contains(.editedCharacters)
-        let tracked = hasCharacterEdit ? serialPendingTracked : false
-        let removedNewlines = hasCharacterEdit ? serialPendingRemovedNewlines : 0
+        let tracked = hasCharacterEdit ? serializationCache.pendingTracked : false
+        let removedNewlines = hasCharacterEdit ? serializationCache.pendingRemovedNewlines : 0
         if hasCharacterEdit {
-            serialPendingTracked = false
-            serialPendingRemovedNewlines = 0
+            serializationCache.pendingTracked = false
+            serializationCache.pendingRemovedNewlines = 0
         }
 
-        guard serialLinesValid, !editedMask.isEmpty else { return }
+        guard serializationCache.isValid, !editedMask.isEmpty else { return }
 
         let ns = string as NSString
         let clamped = NSRange(
@@ -868,7 +871,7 @@ extension BlockTextView {
         }
 
         // 단일 문단 내 문자 편집이고 기존 범위 더티가 없을 때:
-        if serialDirtyRange == nil, editedMask.contains(.editedCharacters), tracked, removedNewlines == 0,
+        if serializationCache.dirtyRange == nil, editedMask.contains(.editedCharacters), tracked, removedNewlines == 0,
            clamped.length == 0 || ns.rangeOfCharacter(from: .newlines, options: [], range: clamped).location == NSNotFound {
             let para = ns.paragraphRange(
                 for: NSRange(location: min(editedRange.location, max(0, ns.length)), length: 0))
@@ -880,18 +883,18 @@ extension BlockTextView {
                 $0.location >= para.location && $0.upperBound <= para.upperBound
             } ?? true
             if withinParagraph, captureWithinParagraph, ns.length > 0,
-               let index = mediaParagraphIndex, index.utf16Length == ns.length,
-               index.paragraphCount == serialLines.count {
-                if para.location == serialFastStart, let fastIdx = serialFastIndex, fastIdx < serialLines.count {
-                    serialFastDirty = true
+               let index = mediaState.paragraphIndex, index.utf16Length == ns.length,
+               index.paragraphCount == serializationCache.lines.count {
+                if para.location == serializationCache.fastStart, let fastIdx = serializationCache.fastIndex, fastIdx < serializationCache.lines.count {
+                    serializationCache.isFastDirty = true
                     return
                 }
-                if !serialFastDirty,
+                if !serializationCache.isFastDirty,
                    let rank = index.paragraphRank(forParagraphAt: para.location),
-                   rank < serialLines.count {
-                    serialFastIndex = rank
-                    serialFastStart = para.location
-                    serialFastDirty = true
+                   rank < serializationCache.lines.count {
+                    serializationCache.fastIndex = rank
+                    serializationCache.fastStart = para.location
+                    serializationCache.isFastDirty = true
                     return
                 }
             }
@@ -901,19 +904,19 @@ extension BlockTextView {
         let oldRange = NSRange(
             location: editedRange.location,
             length: max(0, editedRange.length - delta))
-        var baseDirty = serialDirtyRange
-        if baseDirty == nil, serialFastDirty {
-            let fastEnd = min(ns.length, max(serialFastStart, editedRange.location))
-            baseDirty = NSRange(location: min(serialFastStart, fastEnd), length: max(0, fastEnd - serialFastStart))
-            serialFastDirty = false
+        var baseDirty = serializationCache.dirtyRange
+        if baseDirty == nil, serializationCache.isFastDirty {
+            let fastEnd = min(ns.length, max(serializationCache.fastStart, editedRange.location))
+            baseDirty = NSRange(location: min(serializationCache.fastStart, fastEnd), length: max(0, fastEnd - serializationCache.fastStart))
+            serializationCache.isFastDirty = false
         }
         if let previous = baseDirty {
             let rebased = rebaseMediaRange(previous, replacing: oldRange, withLength: clamped.length)
             let start = min(rebased.location, clamped.location)
             let end = max(rebased.upperBound, clamped.upperBound)
-            serialDirtyRange = NSRange(location: start, length: max(0, end - start))
+            serializationCache.dirtyRange = NSRange(location: start, length: max(0, end - start))
         } else {
-            serialDirtyRange = clamped
+            serializationCache.dirtyRange = clamped
         }
     }
 

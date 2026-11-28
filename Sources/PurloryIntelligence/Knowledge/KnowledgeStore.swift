@@ -1,4 +1,6 @@
 import Foundation
+import PurloryFoundation
+import PurloryDocumentEngine
 
 /// 작품별 지식 사이드카 (PLAN §6 저장 형식) — 요약 피라미드의 디스크 형태.
 ///
