@@ -1250,9 +1250,8 @@ extension BlockTextView {
     }
 
 
-    /// 수식 스캔 제외 범위(문단 상대) — 인라인 코드 스팬과 **이미 존재하는
-    /// 수식 원자**. 원자를 끼고 `$`가 재결합하면 이중 변환으로 내용이 삼켜진다.
-    func inlineCodeSkips(in paragraph: NSRange) -> [NSRange] {
+    /// Native `.purloryCode` and `.purloryMath` attribute ranges relative to `paragraph.location`.
+    func inlineProtectedAttributeRanges(in paragraph: NSRange) -> [NSRange] {
         guard let storage = textStorage else { return [] }
         var skips: [NSRange] = []
         storage.enumerateAttribute(.purloryCode, in: paragraph, options: []) { value, range, _ in
@@ -1272,6 +1271,32 @@ extension BlockTextView {
         return skips
     }
 
+    /// Resolved Markdown links/images in `paragraph`, respecting already-applied native code/math attributes.
+    func inlineLinks(in paragraph: NSRange, content: String? = nil) -> [MarkdownLinkScanner.Link] {
+        let text = content ?? paragraphContent(paragraph)
+        guard (text as NSString).range(of: "](", options: .literal).location != NSNotFound else {
+            return []
+        }
+        return MarkdownLinkScanner.links(
+            in: text,
+            preProtectedRanges: inlineProtectedAttributeRanges(in: paragraph)
+        )
+    }
+
+    /// 수식 스캔 제외 범위(문단 상대) — 인라인 코드 스팬, **이미 존재하는
+    /// 수식 원자**, 그리고 인라인 링크/이미지 목적지. 원자를 끼거나 URL 안의 `$`가
+    /// 결합해 본문이 삼켜지는 것을 막는다.
+    func inlineCodeSkips(in paragraph: NSRange, content: String? = nil) -> [NSRange] {
+        var skips = inlineProtectedAttributeRanges(in: paragraph)
+        let text = content ?? paragraphContent(paragraph)
+        if (text as NSString).range(of: "](", options: .literal).location != NSNotFound {
+            for link in MarkdownLinkScanner.links(in: text, preProtectedRanges: skips) {
+                skips.append(link.opaqueRange)
+            }
+        }
+        return skips
+    }
+
     /// 산문 문단의 `$…$` 스팬을 렌더 원자(attachment 한 글자)로 바꾼다.
     /// 변환한 스팬 수를 돌려준다. 코드 블록·수식/이미지/구분선 블록은 처음부터 건너뛴다.
     @discardableResult
@@ -1284,7 +1309,7 @@ extension BlockTextView {
         // 단일-$ 복원으로 되돌릴 때 경계가 흔들려(파싱 비대칭) 원문 텍스트로
         // 남긴다 — 블록 렌더는 문단 단위 그룹이 담당한다 (이슈 #20).
         let regions = MathScanner.regions(
-            in: content, skipping: inlineCodeSkips(in: paragraph)
+            in: content, skipping: inlineCodeSkips(in: paragraph, content: content)
         ).filter { $0.kind == .inlineText }
         guard !regions.isEmpty else { return 0 }
 
@@ -1363,8 +1388,9 @@ extension BlockTextView {
 
     /// 문단에 지금 접을 수 있는 raw `$…$`가 있는가.
     func hasConvertibleRawMath(in paragraph: NSRange) -> Bool {
-        !MathScanner.regions(
-            in: paragraphContent(paragraph), skipping: inlineCodeSkips(in: paragraph)).isEmpty
+        let content = paragraphContent(paragraph)
+        return !MathScanner.regions(
+            in: content, skipping: inlineCodeSkips(in: paragraph, content: content)).isEmpty
     }
 
     /// 실측으로 플래그 정리 — 전체 경로를 한 번 탄 뒤 호출한다 (syncMarkerFlag 짝).

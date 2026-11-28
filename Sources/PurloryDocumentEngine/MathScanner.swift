@@ -123,17 +123,24 @@ package enum MathScanner {
     /// `$`를 누른 순간 완성되는 쌍만 소비해 편집 중 오변환을 막는다 (bold·code와
     /// 같은 타이밍 규칙 — transformInlineMarkerIfNeeded의 관습).
     @discardableResult
-    package static func closingInline(in line: String, atCaret caret: Int) -> Region? {
+    package static func closingInline(
+        in line: String, atCaret caret: Int, skipping skipRanges: [NSRange] = []
+    ) -> Region? {
         let ns = line as NSString
         guard caret >= 2, caret <= ns.length, character(ns, caret - 1) == dollar else {
             return nil
         }
+        let skips = normalizedSkips(skipRanges)
+        if inSkipped(NSRange(location: caret - 1, length: 1), skips) {
+            return nil
+        }
+        let minOpen = lastSkipUpperBound(atOrBefore: caret - 1, in: skips)
         // 커서 직전 `$`가 닫는 구분자인지 검사 — 열린 위치를 역방향으로 훑는다.
         var open = -1
         var j = caret - 2
-        while j >= 0 {
+        while j >= minOpen {
             let ch = character(ns, j)
-            if ch == newline { break }
+            if ch == newline || ch == atomChar { break }
             if ch == dollar {
                 if j > 0, character(ns, j - 1) == backslash { j -= 1; continue }
                 open = j
@@ -141,17 +148,17 @@ package enum MathScanner {
             }
             j -= 1
         }
-        guard open >= 0 else { return nil }
+        guard open >= minOpen else { return nil }
         if open > 0, character(ns, open - 1) == dollar,
             (open < 2 || character(ns, open - 2) != backslash) {
             // Adjacent dollars may belong to display or to two inline formulas.
             // Resolve only this ambiguity with the shared scanner; ordinary
             // inline typing retains its bounded backward search.
-            return regions(in: line).first {
+            return regions(in: line, skipping: skips).first {
                 $0.kind == .inlineText && $0.range.upperBound == caret
             }
         }
-        return scanInline(ns, at: open).flatMap { $0.range.upperBound == caret ? $0 : nil }
+        return scanInline(ns, at: open, skipping: skips).flatMap { $0.range.upperBound == caret ? $0 : nil }
     }
 
     // MARK: - 내부
@@ -202,19 +209,52 @@ package enum MathScanner {
         return skips[low].location < range.upperBound
     }
 
+    /// Smallest start location of a normalized skip range strictly after `offset`, or `Int.max`.
+    private static func nextSkipLocation(after offset: Int, in skips: [NSRange]) -> Int {
+        guard !skips.isEmpty else { return Int.max }
+        var low = 0, high = skips.count
+        while low < high {
+            let mid = low + (high - low) / 2
+            if skips[mid].upperBound <= offset {
+                low = mid + 1
+            } else {
+                high = mid
+            }
+        }
+        guard low < skips.count else { return Int.max }
+        return skips[low].location
+    }
+
+    /// Largest upper bound of a normalized skip range ending at or before `offset`, or `0`.
+    private static func lastSkipUpperBound(atOrBefore offset: Int, in skips: [NSRange]) -> Int {
+        guard !skips.isEmpty else { return 0 }
+        var low = 0, high = skips.count
+        while low < high {
+            let mid = low + (high - low) / 2
+            if skips[mid].upperBound <= offset {
+                low = mid + 1
+            } else {
+                high = mid
+            }
+        }
+        return low > 0 ? skips[low - 1].upperBound : 0
+    }
+
     /// `$…$` — 여는 규칙: 다음 문자가 공백·또 다른 `$`면 실패.
     /// 닫는 규칙: 바로 앞이 공백이면 실패, 바로 뒤가 숫자면 통화로 보고 실패.
+    /// 어떤 `skipRanges`(코드·수식 원자·링크 목적지)와도 겹치거나 가로지르지 않는다.
     private static func scanInline(
         _ ns: NSString, at open: Int, skipping skipRanges: [NSRange] = []
     ) -> Region? {
         let length = ns.length
+        let limit = min(length, nextSkipLocation(after: open, in: skipRanges))
         // 내용은 최소 1글자 — "$$"·"$ $"는 수식이 아니다.
-        guard open + 2 <= length else { return nil }
+        guard open + 2 <= limit else { return nil }
         let first = character(ns, open + 1)
         if first == dollar || first == space || first == tab { return nil }
         var close = -1
         var j = open + 1
-        while j < length {
+        while j < limit {
             let ch = character(ns, j)
             if ch == dollar {
                 // 이스케이프된 달러는 내용의 일부 — 건너뛴다.
@@ -222,7 +262,7 @@ package enum MathScanner {
                 close = j
                 break
             }
-            if ch == tick, !inSkipped(NSRange(location: j, length: 1), skipRanges) {
+            if ch == tick {
                 return nil  // 인라인 코드가 먼저 끊는다 — `$a `b` c$`는 수식이 아니다
             }
             if ch == atomChar {
@@ -247,15 +287,15 @@ package enum MathScanner {
         _ ns: NSString, from open: Int, skipping skipRanges: [NSRange]
     ) -> Region? {
         let length = ns.length
+        let limit = min(length, nextSkipLocation(after: open, in: skipRanges))
+        guard open + 4 <= limit else { return nil }
         var close = -1
         var j = open + 2
-        while j < length - 1 {
+        while j < limit - 1 {
             if character(ns, j) == atomChar || character(ns, j + 1) == atomChar {
                 return nil
             }
-            if character(ns, j) == dollar, character(ns, j + 1) == dollar,
-                !inSkipped(NSRange(location: j, length: 2), skipRanges)
-            {
+            if character(ns, j) == dollar, character(ns, j + 1) == dollar {
                 if j > open + 2, character(ns, j - 1) == backslash { j += 1; continue }
                 close = j
                 break

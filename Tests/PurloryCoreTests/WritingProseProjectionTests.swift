@@ -165,4 +165,50 @@ final class WritingProseProjectionTests: XCTestCase {
         XCTAssertTrue(regions.isEmpty)
         XCTAssertLessThan(seconds, 0.1, "Asymmetric display skip ranges must stay linear (took \(seconds)s)")
     }
+
+    func testLinkDestinationsIsolateInlineDelimitersWhilePreservingWrappedAndLabelFormatting() {
+        let successive = [
+            "[첫째](https://a/$1) 사이 [둘째](https://b/$2)",
+            "[첫째](https://a/`1) 사이 [둘째](https://b/`2)",
+            "[첫째](https://a/*1) 사이 [둘째](https://b/*2)",
+            "[첫째](https://a/**1**) 사이 [둘째](https://b/~~2~~)",
+            "[첫째](https://a/1 '<font color=\"#112233\">') 사이 [둘째](https://b/2 '</font>')",
+            "[첫째](https://a/1 \"title $1\") 사이 [둘째](https://b/2 \"title $2\")",
+            "[첫째](https://a/1 \"title `1\") 사이 [둘째](https://b/2 \"title `2\")",
+        ]
+        for line in successive {
+            let spans = MarkdownInlineScanner.scan(line)
+            XCTAssertEqual(spans.map(\.text).joined(), line, "Delimiters inside URLs must not strip markers in \(line)")
+            XCTAssertTrue(spans.allSatisfy { !$0.style.code && !$0.style.italic && !$0.style.bold && !$0.style.strikethrough && $0.style.color == nil }, line)
+
+            let index = WritingProjectionIndex()
+            index.reset(source: line)
+            let prose = index.windows(intersecting: .init(location: 0, length: line.utf16.count)).map(\.text).joined()
+            XCTAssertTrue(prose.contains("첫째"), line)
+            XCTAssertTrue(prose.contains("사이"), line)
+            XCTAssertTrue(prose.contains("둘째"), line)
+            XCTAssertFalse(prose.contains("https://"), line)
+        }
+
+        // Bold wrapping a complete link must keep round-trip styling and prose eligibility.
+        let wrapped = "**[보이는 말](https://a/$1)** 끝"
+        let wrappedSpans = MarkdownInlineScanner.scan(wrapped)
+        XCTAssertEqual(wrappedSpans.first?.style.bold, true)
+        XCTAssertEqual(wrappedSpans.first?.text, "[보이는 말](https://a/$1)")
+        let wrappedIndex = WritingProjectionIndex()
+        wrappedIndex.reset(source: wrapped)
+        let wrappedProse = wrappedIndex.windows(intersecting: .init(location: 0, length: wrapped.utf16.count)).map(\.text).joined()
+        XCTAssertTrue(wrappedProse.contains("보이는 말"))
+        XCTAssertTrue(wrappedProse.contains("끝"))
+        XCTAssertFalse(wrappedProse.contains("https://"))
+
+        // Parenthetical inline code/math containing link openers must stay protected.
+        for parenthetical in ["(예: `[a](url`) 다음 문장", "(예: $[a](url$) 다음 문장"] {
+            let index = WritingProjectionIndex()
+            index.reset(source: parenthetical)
+            let prose = index.windows(intersecting: .init(location: 0, length: parenthetical.utf16.count)).map(\.text).joined()
+            XCTAssertTrue(prose.contains("다음 문장"), parenthetical)
+            XCTAssertFalse(prose.contains("url"), parenthetical)
+        }
+    }
 }

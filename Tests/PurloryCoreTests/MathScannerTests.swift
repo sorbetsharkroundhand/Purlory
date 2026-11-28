@@ -139,4 +139,27 @@ final class MathScannerTests: XCTestCase {
         let caret = (line as NSString).length
         XCTAssertNil(MathScanner.closingInline(in: line, atCaret: caret))
     }
+
+    func testSkippedRangesPreventCrossingOrClosingInlineAndDisplayMath() {
+        let line = "[첫$째](https://a/p) 본문 [둘째](https://b/q$)"
+        let ns = line as NSString
+        let dest1 = ns.range(of: "](https://a/p)")
+        let dest2 = ns.range(of: "](https://b/q$)")
+        XCTAssertEqual(MathScanner.regions(in: line, skipping: [dest1, dest2]), [])
+
+        let partial = "[첫째](https://a/$p) 본문 [둘째](https://b/q$"
+        let partialNS = partial as NSString
+        let partialDest1 = partialNS.range(of: "](https://a/$p)")
+        XCTAssertNil(MathScanner.closingInline(in: partial, atCaret: partialNS.length, skipping: [partialDest1]))
+
+        let validAfterLink = "[첫째](https://a/$p) $x$"
+        let validNS = validAfterLink as NSString
+        let validDest1 = validNS.range(of: "](https://a/$p)")
+        XCTAssertEqual(MathScanner.closingInline(in: validAfterLink, atCaret: validNS.length, skipping: [validDest1])?.latex, "x")
+
+        let displayCrossing = "$$a [링크](https://a/$$1) b$$"
+        let dispNS = displayCrossing as NSString
+        let dispDest = dispNS.range(of: "](https://a/$$1)")
+        XCTAssertEqual(MathScanner.regions(in: displayCrossing, skipping: [dispDest]), [])
+    }
 }

@@ -190,24 +190,20 @@ package enum WritingProseProjection {
     }
 
     package static func inlineRuns(_ text: String, offset: Int) -> [Run] {
-        let spans = MarkdownInlineScanner.scan(text)
         let ns = text as NSString
-        let codeRanges = spans.filter { $0.style.code }.map(\.sourceRange)
+        let links = ns.range(of: "](", options: .literal).location != NSNotFound
+            ? MarkdownLinkScanner.links(in: text)
+            : []
+        let spans = MarkdownInlineScanner.scan(text, links: links)
         let mathRanges: [NSRange]
         if ns.range(of: "$", options: .literal).location != NSNotFound {
-            mathRanges = MathScanner.regions(in: text, skipping: codeRanges).map(\.range)
+            let codeRanges = spans.filter { $0.style.code }.map(\.sourceRange)
+            let mathSkips = links.isEmpty ? codeRanges : (codeRanges + links.map(\.opaqueRange))
+            mathRanges = MathScanner.regions(in: text, skipping: mathSkips).map(\.range)
         } else {
             mathRanges = []
         }
-        let links = scanLinks(in: text, protectedRanges: protectedRanges(code: codeRanges, math: mathRanges)).links
         return buildInlineRuns(spans: spans, mathRanges: mathRanges, links: links, offset: offset, limit: nil)
-    }
-
-    private static func protectedRanges(code: [NSRange], math: [NSRange]) -> [NSRange] {
-        if math.isEmpty { return code }
-        if code.isEmpty { return math }
-        // MathScanner skips code. Keep adjacent spans separate so each owns its own delimiters.
-        return (code + math).sorted { $0.location < $1.location }
     }
 
     private static func mergeSortedRanges(_ ranges: [NSRange]) -> [NSRange] {
@@ -290,11 +286,8 @@ package enum WritingProseProjection {
         return result
     }
 
-    package struct Link: Sendable { package let source: NSRange; package let label: NSRange; package let image: Bool }
-    package struct LinkScanResult: Sendable {
-        package let links: [Link]
-        package let unclosedDestinationStart: Int?
-    }
+    package typealias Link = MarkdownLinkScanner.Link
+    package typealias LinkScanResult = MarkdownLinkScanner.ScanResult
 
     package static func isEscaped(_ index: Substring.Index, in body: Substring) -> Bool {
         var previous = index, count = 0
@@ -306,491 +299,38 @@ package enum WritingProseProjection {
         return count % 2 == 1
     }
 
-    private struct LinkScanTable {
-        let chars: [Character]
-        let escaped: [Bool]
-        let utf16Prefix: [Int]
-        let candidates: [(open: Int, close: Int)]
-        let nextNonSpace: [Int]
-        let nextAngle: [Int]
-        let nextBrace: [Int]
-        let nextDoubleQuote: [Int]
-        let nextSingleQuote: [Int]
-        let nextCloseParen: [Int]
-        let plainStop: [Int]
-    }
-
-    private struct ForwardLinkScan {
-        let chars: [Character]
-        let escaped: [Bool]
-        let utf16Prefix: [Int]
-        let candidates: [(open: Int, close: Int)]
-        let sawUnescapedCloseParen: Bool
-    }
-
-    private static func scanForwardLinkTokens(in text: String) -> ForwardLinkScan {
-        var chars: [Character] = []
-        var escaped: [Bool] = []
-        var utf16Prefix: [Int] = [0]
-        let estimate = text.utf8.count
-        chars.reserveCapacity(estimate)
-        escaped.reserveCapacity(estimate)
-        utf16Prefix.reserveCapacity(estimate + 1)
-
-        var openStack: [Int] = []
-        var candidates: [(open: Int, close: Int)] = []
-        var sawUnescapedCloseParen = false
-        var pendingCloseForOpen: Int? = nil
-        var nextIsEscaped = false
-        var utf16Total = 0
-        var index = 0
-
-        for ch in text {
-            let isEsc = nextIsEscaped
-            nextIsEscaped = false
-
-            if let closeOpen = pendingCloseForOpen {
-                if !isEsc && ch == "(" {
-                    candidates.append((open: closeOpen, close: index - 1))
-                }
-                pendingCloseForOpen = nil
-            }
-
-            chars.append(ch)
-            escaped.append(isEsc)
-            utf16Total += ch.utf16.count
-            utf16Prefix.append(utf16Total)
-
-            if !isEsc {
-                switch ch {
-                case "\\":
-                    nextIsEscaped = true
-                case "[":
-                    openStack.append(index)
-                case "]":
-                    if let open = openStack.popLast() {
-                        pendingCloseForOpen = open
-                    }
-                case ")":
-                    sawUnescapedCloseParen = true
-                default:
-                    break
-                }
-            }
-            index += 1
-        }
-
-        if candidates.count > 1 {
-            candidates.sort { $0.open < $1.open }
-        }
-        return ForwardLinkScan(
-            chars: chars,
-            escaped: escaped,
-            utf16Prefix: utf16Prefix,
-            candidates: candidates,
-            sawUnescapedCloseParen: sawUnescapedCloseParen
-        )
-    }
-
-    private static func scanForwardLinkTokensAsync(
-        in text: String,
-        isolation: isolated (any Actor)? = #isolation,
-        checkpoint: () async -> Bool
-    ) async -> ForwardLinkScan? {
-        var chars: [Character] = []
-        var escaped: [Bool] = []
-        var utf16Prefix: [Int] = [0]
-        let estimate = text.utf8.count
-        chars.reserveCapacity(estimate)
-        escaped.reserveCapacity(estimate)
-        utf16Prefix.reserveCapacity(estimate + 1)
-
-        var openStack: [Int] = []
-        var candidates: [(open: Int, close: Int)] = []
-        var sawUnescapedCloseParen = false
-        var pendingCloseForOpen: Int? = nil
-        var nextIsEscaped = false
-        var utf16Total = 0
-        var index = 0
-        var stepsSinceYield = 0
-
-        for ch in text {
-            if stepsSinceYield >= 2_048 {
-                guard await checkpoint() else { return nil }
-                stepsSinceYield = 0
-            }
-            let isEsc = nextIsEscaped
-            nextIsEscaped = false
-
-            if let closeOpen = pendingCloseForOpen {
-                if !isEsc && ch == "(" {
-                    candidates.append((open: closeOpen, close: index - 1))
-                }
-                pendingCloseForOpen = nil
-            }
-
-            chars.append(ch)
-            escaped.append(isEsc)
-            utf16Total += ch.utf16.count
-            utf16Prefix.append(utf16Total)
-
-            if !isEsc {
-                switch ch {
-                case "\\":
-                    nextIsEscaped = true
-                case "[":
-                    openStack.append(index)
-                case "]":
-                    if let open = openStack.popLast() {
-                        pendingCloseForOpen = open
-                    }
-                case ")":
-                    sawUnescapedCloseParen = true
-                default:
-                    break
-                }
-            }
-            index += 1
-            stepsSinceYield += 1
-        }
-
-        if candidates.count > 1 {
-            candidates.sort { $0.open < $1.open }
-        }
-        return ForwardLinkScan(
-            chars: chars,
-            escaped: escaped,
-            utf16Prefix: utf16Prefix,
-            candidates: candidates,
-            sawUnescapedCloseParen: sawUnescapedCloseParen
-        )
-    }
-
-    private static func buildLinkScanTable(from forward: ForwardLinkScan) -> LinkScanTable {
-        let chars = forward.chars
-        let escaped = forward.escaped
-        let n = chars.count
-        var nextNonSpace = Array(repeating: n, count: n + 1)
-        var nextAngle = Array(repeating: -1, count: n + 1)
-        var nextBrace = Array(repeating: -1, count: n + 1)
-        var nextDoubleQuote = Array(repeating: -1, count: n + 1)
-        var nextSingleQuote = Array(repeating: -1, count: n + 1)
-        var nextCloseParen = Array(repeating: -1, count: n + 1)
-        var plainStop = Array(repeating: -1, count: n + 1)
-
-        var segEnd = n
-        var segHasTrailingBackslash = n > 0 && chars[n - 1] == "\\" && !escaped[n - 1]
-        var unmatchedCloseStack: [Int] = []
-
-        var i = n - 1
-        while i >= 0 {
-            let ch = chars[i]
-            let isEsc = escaped[i]
-            let isSpace = (ch == " " || ch == "\t")
-
-            nextNonSpace[i] = isSpace ? nextNonSpace[i + 1] : i
-            nextAngle[i] = (!isEsc && ch == ">") ? i : nextAngle[i + 1]
-            nextBrace[i] = (!isEsc && ch == "}") ? i : nextBrace[i + 1]
-            nextDoubleQuote[i] = (!isEsc && ch == "\"") ? i : nextDoubleQuote[i + 1]
-            nextSingleQuote[i] = (!isEsc && ch == "'") ? i : nextSingleQuote[i + 1]
-            nextCloseParen[i] = (!isEsc && ch == ")") ? i : nextCloseParen[i + 1]
-
-            if !isEsc && isSpace {
-                segEnd = i
-                segHasTrailingBackslash = false
-                if !unmatchedCloseStack.isEmpty { unmatchedCloseStack.removeAll(keepingCapacity: true) }
-                plainStop[i] = -1
-            } else {
-                if !isEsc {
-                    if ch == ")" {
-                        unmatchedCloseStack.append(i)
-                    } else if ch == "(" {
-                        if !unmatchedCloseStack.isEmpty { _ = unmatchedCloseStack.popLast() }
-                    }
-                }
-                if let closeParen = unmatchedCloseStack.last {
-                    plainStop[i] = closeParen
-                } else {
-                    plainStop[i] = segHasTrailingBackslash ? -1 : segEnd
-                }
-            }
-            i -= 1
-        }
-
-        return LinkScanTable(
-            chars: chars,
-            escaped: escaped,
-            utf16Prefix: forward.utf16Prefix,
-            candidates: forward.candidates,
-            nextNonSpace: nextNonSpace,
-            nextAngle: nextAngle,
-            nextBrace: nextBrace,
-            nextDoubleQuote: nextDoubleQuote,
-            nextSingleQuote: nextSingleQuote,
-            nextCloseParen: nextCloseParen,
-            plainStop: plainStop
-        )
-    }
-
-    private static func buildLinkScanTableAsync(
-        from forward: ForwardLinkScan,
-        isolation: isolated (any Actor)? = #isolation,
-        checkpoint: () async -> Bool
-    ) async -> LinkScanTable? {
-        let chars = forward.chars
-        let escaped = forward.escaped
-        let n = chars.count
-        var nextNonSpace = Array(repeating: n, count: n + 1)
-        var nextAngle = Array(repeating: -1, count: n + 1)
-        var nextBrace = Array(repeating: -1, count: n + 1)
-        var nextDoubleQuote = Array(repeating: -1, count: n + 1)
-        var nextSingleQuote = Array(repeating: -1, count: n + 1)
-        var nextCloseParen = Array(repeating: -1, count: n + 1)
-        var plainStop = Array(repeating: -1, count: n + 1)
-
-        var segEnd = n
-        var segHasTrailingBackslash = n > 0 && chars[n - 1] == "\\" && !escaped[n - 1]
-        var unmatchedCloseStack: [Int] = []
-
-        var i = n - 1
-        var stepsSinceYield = 0
-        while i >= 0 {
-            if stepsSinceYield >= 2_048 {
-                guard await checkpoint() else { return nil }
-                stepsSinceYield = 0
-            }
-            let ch = chars[i]
-            let isEsc = escaped[i]
-            let isSpace = (ch == " " || ch == "\t")
-
-            nextNonSpace[i] = isSpace ? nextNonSpace[i + 1] : i
-            nextAngle[i] = (!isEsc && ch == ">") ? i : nextAngle[i + 1]
-            nextBrace[i] = (!isEsc && ch == "}") ? i : nextBrace[i + 1]
-            nextDoubleQuote[i] = (!isEsc && ch == "\"") ? i : nextDoubleQuote[i + 1]
-            nextSingleQuote[i] = (!isEsc && ch == "'") ? i : nextSingleQuote[i + 1]
-            nextCloseParen[i] = (!isEsc && ch == ")") ? i : nextCloseParen[i + 1]
-
-            if !isEsc && isSpace {
-                segEnd = i
-                segHasTrailingBackslash = false
-                if !unmatchedCloseStack.isEmpty { unmatchedCloseStack.removeAll(keepingCapacity: true) }
-                plainStop[i] = -1
-            } else {
-                if !isEsc {
-                    if ch == ")" {
-                        unmatchedCloseStack.append(i)
-                    } else if ch == "(" {
-                        if !unmatchedCloseStack.isEmpty { _ = unmatchedCloseStack.popLast() }
-                    }
-                }
-                if let closeParen = unmatchedCloseStack.last {
-                    plainStop[i] = closeParen
-                } else {
-                    plainStop[i] = segHasTrailingBackslash ? -1 : segEnd
-                }
-            }
-            i -= 1
-            stepsSinceYield += 1
-        }
-
-        return LinkScanTable(
-            chars: chars,
-            escaped: escaped,
-            utf16Prefix: forward.utf16Prefix,
-            candidates: forward.candidates,
-            nextNonSpace: nextNonSpace,
-            nextAngle: nextAngle,
-            nextBrace: nextBrace,
-            nextDoubleQuote: nextDoubleQuote,
-            nextSingleQuote: nextSingleQuote,
-            nextCloseParen: nextCloseParen,
-            plainStop: plainStop
-        )
-    }
-
-    private static func resolveCandidate(
-        _ candidate: (open: Int, close: Int),
-        in table: LinkScanTable,
-        trackUnclosed: Bool,
-        protectedRanges: inout ArraySlice<NSRange>,
-        cursor: inout Int,
-        links: inout [Link]
-    ) -> Int? {
-        let start = candidate.open
-        guard start >= cursor else { return nil }
-        let close = candidate.close
-        let labelStart = start + 1
-        let open = close + 1
-        let image = start > 0 && table.chars[start - 1] == "!" && !table.escaped[start - 1]
-        let sourceStart = image ? start - 1 : start
-
-        // Candidates arrive in source order. Ignore a literal "[label](" inside one code or
-        // math span. A bracket in a formatted label can still pair with a closer outside it.
-        let offset = table.utf16Prefix[start]
-        while let range = protectedRanges.first, range.upperBound <= offset {
-            protectedRanges.removeFirst()
-        }
-        let openingIsProtected = protectedRanges.first.map { $0.location <= offset } ?? false
-        if openingIsProtected, let range = protectedRanges.first, table.utf16Prefix[open + 1] <= range.upperBound {
-            return nil
-        }
-        let unclosedOffset = trackUnclosed && !openingIsProtected ? table.utf16Prefix[sourceStart] : nil
-
-        let n = table.chars.count
-        var end = table.nextNonSpace[open + 1]
-        if end < n, table.chars[end] == "<" {
-            let angle = table.nextAngle[end + 1]
-            guard angle >= 0 else { return unclosedOffset }
-            end = angle + 1
-        } else {
-            let destination = table.plainStop[end]
-            guard destination >= 0 else { return unclosedOffset }
-            end = destination
-        }
-
-        let beforeSpace = end
-        end = table.nextNonSpace[end]
-        if beforeSpace != end, end < n {
-            let titleClose: Int
-            switch table.chars[end] {
-            case "\"": titleClose = table.nextDoubleQuote[end + 1]
-            case "'": titleClose = table.nextSingleQuote[end + 1]
-            case "(": titleClose = table.nextCloseParen[end + 1]
-            default: titleClose = -1
-            }
-            if titleClose >= 0 {
-                end = table.nextNonSpace[titleClose + 1]
-            }
-        }
-
-        guard end < n else { return unclosedOffset }
-        guard table.chars[end] == ")" else { return nil }
-
-        end += 1
-        if image, end < n, table.chars[end] == "{" {
-            let brace = table.nextBrace[end + 1]
-            if brace >= 0 {
-                end = brace + 1
-            }
-        }
-
-        let srcLoc = table.utf16Prefix[sourceStart]
-        let lblLoc = table.utf16Prefix[labelStart]
-        let lblEnd = table.utf16Prefix[close]
-        let srcEnd = table.utf16Prefix[end]
-        links.append(Link(
-            source: NSRange(location: srcLoc, length: srcEnd - srcLoc),
-            label: NSRange(location: lblLoc, length: lblEnd - lblLoc),
-            image: image
-        ))
-        // A delimiter originating inside an accepted link or image cannot suppress a later link.
-        while let range = protectedRanges.first, range.location < srcEnd {
-            protectedRanges.removeFirst()
-        }
-        cursor = end
-        return nil
-    }
-
-    /// Strictly O(N) Markdown link/image scanner sharing Purlory's balanced/escaped destination grammar.
-    /// Precomputed next-delimiter and paren-balance tables resolve every candidate in O(1) without mutable failure caches.
-    /// Sorted code and math ranges keep literal link openers from consuming following prose.
+    /// Strictly O(N) Markdown link/image scanner sharing Purlory's balanced/escaped destination grammar
+    /// coordinated in source order with inline code and math delimiters.
     package static func scanLinks(
         in text: String,
         trackUnclosed: Bool = false,
         protectedRanges: [NSRange] = []
     ) -> LinkScanResult {
-        guard (text as NSString).range(of: "](", options: .literal).location != NSNotFound else {
-            return LinkScanResult(links: [], unclosedDestinationStart: nil)
-        }
-        let forward = scanForwardLinkTokens(in: text)
-        guard !forward.candidates.isEmpty else {
-            return LinkScanResult(links: [], unclosedDestinationStart: nil)
-        }
-        if !trackUnclosed, !forward.sawUnescapedCloseParen {
-            return LinkScanResult(links: [], unclosedDestinationStart: nil)
-        }
-        let table = buildLinkScanTable(from: forward)
-        var cursor = 0
-        var remainingProtected = protectedRanges[...]
-        var links: [Link] = []
-        for candidate in table.candidates {
-            if let unclosed = resolveCandidate(
-                candidate,
-                in: table,
-                trackUnclosed: trackUnclosed,
-                protectedRanges: &remainingProtected,
-                cursor: &cursor,
-                links: &links
-            ) {
-                return LinkScanResult(links: links, unclosedDestinationStart: unclosed)
-            }
-        }
-        return LinkScanResult(links: links, unclosedDestinationStart: nil)
-    }
-
-    private static func scanLinksAsync(
-        in text: String,
-        trackUnclosed: Bool,
-        protectedRanges: [NSRange],
-        isolation: isolated (any Actor)? = #isolation,
-        checkpoint: () async -> Bool
-    ) async -> LinkScanResult? {
-        guard (text as NSString).range(of: "](", options: .literal).location != NSNotFound else {
-            return LinkScanResult(links: [], unclosedDestinationStart: nil)
-        }
-        guard let forward = await scanForwardLinkTokensAsync(in: text, isolation: isolation, checkpoint: checkpoint) else {
-            return nil
-        }
-        guard !forward.candidates.isEmpty else {
-            return LinkScanResult(links: [], unclosedDestinationStart: nil)
-        }
-        if !trackUnclosed, !forward.sawUnescapedCloseParen {
-            return LinkScanResult(links: [], unclosedDestinationStart: nil)
-        }
-        guard let table = await buildLinkScanTableAsync(from: forward, isolation: isolation, checkpoint: checkpoint) else {
-            return nil
-        }
-        var cursor = 0
-        var remainingProtected = protectedRanges[...]
-        var links: [Link] = []
-        var processed = 0
-        for candidate in table.candidates {
-            if processed >= 2_048 {
-                guard await checkpoint() else { return nil }
-                processed = 0
-            }
-            if let unclosed = resolveCandidate(
-                candidate,
-                in: table,
-                trackUnclosed: trackUnclosed,
-                protectedRanges: &remainingProtected,
-                cursor: &cursor,
-                links: &links
-            ) {
-                return LinkScanResult(links: links, unclosedDestinationStart: unclosed)
-            }
-            processed += 1
-        }
-        return LinkScanResult(links: links, unclosedDestinationStart: nil)
+        MarkdownLinkScanner.scan(in: text, trackUnclosed: trackUnclosed, preProtectedRanges: protectedRanges)
     }
 
     /// Reuse Purlory's balanced/escaped destination grammar; never expose a URL tail as prose.
     package static func links(in text: String) -> [Link] {
-        scanLinks(in: text, trackUnclosed: false).links
+        MarkdownLinkScanner.links(in: text)
     }
 
-    /// Full-line syntax runs for a long deferred line, resolving closed inline code/math before
-    /// detecting unclosed `[alt](...` destination tails so code spans containing link-like literals
-    /// remain protected and never suppress trailing prose.
+    /// Full-line syntax runs for a long deferred line, coordinating inline code, math, and
+    /// links/images in source order so link openers inside code/math stay protected while
+    /// delimiters inside real link/image destinations never bleed into surrounding prose.
     package static func deferredLineRuns(in line: String) -> [Run] {
-        let spans = MarkdownInlineScanner.scan(line)
         let ns = line as NSString
-        let codeRanges = spans.filter { $0.style.code }.map(\.sourceRange)
-        let mathRanges = ns.range(of: "$", options: .literal).location != NSNotFound
-            ? MathScanner.regions(in: line, skipping: codeRanges).map(\.range)
-            : []
-        let protectedRanges = protectedRanges(code: codeRanges, math: mathRanges)
-        let linkReport = scanLinks(in: line, trackUnclosed: true, protectedRanges: protectedRanges)
+        let linkReport = ns.range(of: "](", options: .literal).location != NSNotFound
+            ? MarkdownLinkScanner.scan(in: line, trackUnclosed: true)
+            : LinkScanResult(links: [], unclosedDestinationStart: nil)
+        let spans = MarkdownInlineScanner.scan(line, links: linkReport.links)
+        let mathRanges: [NSRange]
+        if ns.range(of: "$", options: .literal).location != NSNotFound {
+            let codeRanges = spans.filter { $0.style.code }.map(\.sourceRange)
+            let mathSkips = linkReport.links.isEmpty ? codeRanges : (codeRanges + linkReport.links.map(\.opaqueRange))
+            mathRanges = MathScanner.regions(in: line, skipping: mathSkips).map(\.range)
+        } else {
+            mathRanges = []
+        }
         return finalizeDeferredRuns(
             lineLength: ns.length,
             spans: spans,
@@ -805,26 +345,41 @@ package enum WritingProseProjection {
         isolation: isolated (any Actor)? = #isolation,
         checkpoint: () async -> Bool
     ) async -> [Run]? {
-        guard let spans = await MarkdownInlineScanner.scan(line, isolation: isolation, checkpoint: checkpoint) else { return nil }
         let ns = line as NSString
-        let codeRanges = spans.filter { $0.style.code }.map(\.sourceRange)
+        let linkReport: LinkScanResult
+        if ns.range(of: "](", options: .literal).location != NSNotFound {
+            guard let resolved = await MarkdownLinkScanner.scan(
+                in: line,
+                trackUnclosed: true,
+                isolation: isolation,
+                checkpoint: checkpoint
+            ) else { return nil }
+            linkReport = resolved
+        } else {
+            linkReport = LinkScanResult(links: [], unclosedDestinationStart: nil)
+        }
+        guard let spans = await MarkdownInlineScanner.scan(
+            line,
+            links: linkReport.links,
+            isolation: isolation,
+            checkpoint: checkpoint
+        ) else { return nil }
         let mathRanges: [NSRange]
         if ns.range(of: "$", options: .literal).location != NSNotFound {
-            guard let regions = await MathScanner.regions(in: line, skipping: codeRanges, isolation: isolation, checkpoint: checkpoint) else {
+            let codeRanges = spans.filter { $0.style.code }.map(\.sourceRange)
+            let mathSkips = linkReport.links.isEmpty ? codeRanges : (codeRanges + linkReport.links.map(\.opaqueRange))
+            guard let regions = await MathScanner.regions(
+                in: line,
+                skipping: mathSkips,
+                isolation: isolation,
+                checkpoint: checkpoint
+            ) else {
                 return nil
             }
             mathRanges = regions.map(\.range)
         } else {
             mathRanges = []
         }
-        let protectedRanges = protectedRanges(code: codeRanges, math: mathRanges)
-        guard let linkReport = await scanLinksAsync(
-            in: line,
-            trackUnclosed: true,
-            protectedRanges: protectedRanges,
-            isolation: isolation,
-            checkpoint: checkpoint
-        ) else { return nil }
         return finalizeDeferredRuns(
             lineLength: ns.length,
             spans: spans,

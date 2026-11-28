@@ -180,50 +180,56 @@ extension BlockTextView {
         let caretInPara = sel.location - para.location
 
         // "$…$" 닫기 타이핑 — 인라인 수식 원자로 즉시 전환 (이슈 #20).
-        // 코드 스팬에 걸친 쌍은 변환하지 않는다 — 코드는 문자 그대로다.
-        if let region = MathScanner.closingInline(in: text, atCaret: caretInPara) {
-            let skips = inlineCodeSkips(in: para)
-            if !skips.contains(where: { NSIntersectionRange($0, region.range).length > 0 }) {
+        // 코드 스팬·링크 목적지에 걸친 쌍은 변환하지 않는다.
+        if lastChar == 0x24 {
+            let skips = inlineCodeSkips(in: para, content: text)
+            if MathScanner.closingInline(in: text, atCaret: caretInPara, skipping: skips) != nil {
                 convertInlineMath(in: para)
                 return
             }
         }
 
-        for rule in InlineMarkdown.typingRules {
-            let matches = rule.pattern.matches(
-                in: text, range: NSRange(location: 0, length: nsText.length))
-            // 방금 타이핑으로 닫힌 마커만 — 커서 위치에서 끝나는 매치.
-            guard let match = matches.first(where: { $0.range.upperBound == caretInPara })
-            else { continue }
-            let inner = nsText.substring(with: match.range(at: 1))
-            let markerRange = NSRange(
-                location: para.location + match.range.location, length: match.range.length)
-            isTransforming = true
-            if shouldChangeText(in: markerRange, replacementString: inner) {
-                storage.replaceCharacters(in: markerRange, with: inner)
-                storage.addAttributes(
-                    rule.attrs,
-                    range: NSRange(
-                        location: markerRange.location, length: (inner as NSString).length))
-                didChangeText()
+        if lastChar != 0x29 && lastChar != 0x24 {
+            let links = inlineLinks(in: para, content: text)
+            for rule in InlineMarkdown.typingRules {
+                let isCode = rule.attrs[.purloryCode] as? Bool == true
+                guard let match = MarkdownInlineScanner.closingTypingMatch(
+                    pattern: rule.pattern,
+                    isCode: isCode,
+                    in: text,
+                    atCaret: caretInPara,
+                    links: links
+                ) else { continue }
+                let inner = nsText.substring(with: match.body)
+                let markerRange = NSRange(
+                    location: para.location + match.range.location, length: match.range.length)
+                isTransforming = true
+                if shouldChangeText(in: markerRange, replacementString: inner) {
+                    storage.replaceCharacters(in: markerRange, with: inner)
+                    storage.addAttributes(
+                        rule.attrs,
+                        range: NSRange(
+                            location: markerRange.location, length: (inner as NSString).length))
+                    didChangeText()
+                }
+                isTransforming = false
+                let newPara = (string as NSString).paragraphRange(
+                    for: NSRange(location: para.location, length: 0))
+                applyBlock(
+                    info.block, checked: info.checked, marker: info.marker,
+                    indent: info.indent, codeLang: info.codeLang,
+                    to: newPara, registerUndo: false)
+                // 변환 직후 이어지는 타이핑은 일반 글씨 — 서식이 계속 번지지 않게.
+                var typing = styleAttributes(for: info.block, checked: info.checked, indent: info.indent)
+                typing[.purloryBlock] = info.block.rawValue
+                if info.checked { typing[.purloryChecked] = true }
+                if let marker = info.marker { typing[.purloryMarker] = marker }
+                if info.indent > 0 { typing[.purloryIndent] = info.indent }
+                if let codeLang = info.codeLang { typing[.purloryCodeLang] = codeLang }
+                typingAttributes = typing
+                updateTailSnapshot()
+                return
             }
-            isTransforming = false
-            let newPara = (string as NSString).paragraphRange(
-                for: NSRange(location: para.location, length: 0))
-            applyBlock(
-                info.block, checked: info.checked, marker: info.marker,
-                indent: info.indent, codeLang: info.codeLang,
-                to: newPara, registerUndo: false)
-            // 변환 직후 이어지는 타이핑은 일반 글씨 — 서식이 계속 번지지 않게.
-            var typing = styleAttributes(for: info.block, checked: info.checked, indent: info.indent)
-            typing[.purloryBlock] = info.block.rawValue
-            if info.checked { typing[.purloryChecked] = true }
-            if let marker = info.marker { typing[.purloryMarker] = marker }
-            if info.indent > 0 { typing[.purloryIndent] = info.indent }
-            if let codeLang = info.codeLang { typing[.purloryCodeLang] = codeLang }
-            typingAttributes = typing
-            updateTailSnapshot()
-            return
         }
 
         // `[텍스트](주소)` 닫는 `)` 타이핑 시 즉시 인라인 링크 장식 갱신.
@@ -693,7 +699,7 @@ extension BlockTextView {
         let text = paragraphContent(para)
         let localOffset = characterIndex - para.location
         guard localOffset >= 0, localOffset <= (text as NSString).length else { return false }
-        for link in WritingProseProjection.links(in: text) where !link.image {
+        for link in inlineLinks(in: para, content: text) where !link.image {
             guard NSLocationInRange(localOffset, link.source) else { continue }
             let rawSpan = (text as NSString).substring(with: link.source)
             guard let openParen = rawSpan.range(of: "](") else { continue }
