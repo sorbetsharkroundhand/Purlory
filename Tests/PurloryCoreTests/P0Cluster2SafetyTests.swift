@@ -219,6 +219,92 @@ final class P0Cluster2SafetyTests: XCTestCase {
         XCTAssertEqual(loadsAfterNotification, loadsAfterShutdown, "shutdown() must remove didResignActive observer")
     }
 
+    @MainActor
+    func testBackgroundIndexerResumesPendingIdleAndHydrationAfterForegroundCompletion() async throws {
+        let key = ProjectDocumentKey(projectID: WritingProjectID(), documentID: WritingDocumentID())
+        let document = ProjectDocumentSnapshot(
+            identity: ProjectRuntimeIdentity(key: key, generation: 1),
+            title: "Draft",
+            body: "# Chapter\nThe lighthouse keeper locks the door for the night.",
+            kind: .manuscript,
+            mode: .fiction
+        )
+        let hydrateStarted = expectation(description: "Initial hydration began")
+        let persistence = YieldTestPersistence(passStarted: hydrateStarted)
+        let settings = CompletionSettings(defaults: UserDefaults(suiteName: "Purlory.P0Cluster2.Resume.\(UUID().uuidString)")!)
+        settings.autocompleteEnabled = true
+        let indexer = BackgroundIndexer(engine: CompletionEngine(), settings: settings, sidecarPersistence: persistence)
+        defer { indexer.shutdown() }
+        // Gate inference off while observing real timer scheduling and hydration.
+        indexer._testGateStateProvider = { (.critical, false) }
+        indexer.attach(documentProvider: { document })
+
+        indexer.noteDocumentChange(document)
+        await fulfillment(of: [hydrateStarted], timeout: 3)
+
+        indexer.setForegroundCompletionBusy(true)
+        await persistence.release()
+        let generationAfterYield = indexer.passGeneration
+
+        indexer.setForegroundCompletionBusy(false)
+
+        // Wait up to 6.5s for both restarted hydration and the 5s fast idle pass.
+        var hydrated = false
+        var resumedPass = false
+        for _ in 0..<65 {
+            hydrated = indexer.snapshot != nil
+            resumedPass = indexer.passGeneration > generationAfterYield
+            if hydrated && resumedPass { break }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        XCTAssertTrue(hydrated, "Canceled hydration must restart when foreground completion becomes idle")
+        XCTAssertTrue(resumedPass, "Pending idle indexing must resume after foreground completion finishes")
+    }
+
+    @MainActor
+    func testBackgroundIndexerRetainsResignActiveObserverAfterMemoryPressureRecovery() async throws {
+        let key = ProjectDocumentKey(projectID: WritingProjectID(), documentID: WritingDocumentID())
+        let document = ProjectDocumentSnapshot(
+            identity: ProjectRuntimeIdentity(key: key, generation: 1),
+            title: "Draft",
+            body: "# Chapter\nThe lighthouse keeper locks the door for the night.",
+            kind: .manuscript,
+            mode: .fiction
+        )
+        let persistence = YieldTestPersistence(passStarted: nil)
+        let settings = CompletionSettings(defaults: UserDefaults(suiteName: "Purlory.P0Cluster2.Pressure.\(UUID().uuidString)")!)
+        settings.autocompleteEnabled = true
+        let indexer = BackgroundIndexer(engine: CompletionEngine(), settings: settings, sidecarPersistence: persistence)
+        defer { indexer.shutdown() }
+        indexer._testGateStateProvider = { (.critical, false) }
+        indexer.attach(documentProvider: { document })
+
+        indexer.setMemoryPressurePaused(true)
+        let generationWhilePaused = indexer.passGeneration
+        NotificationCenter.default.post(name: NSApplication.didResignActiveNotification, object: nil)
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(indexer.passGeneration, generationWhilePaused, "Deactivation must not start a pass while memory pressure is active")
+
+        indexer.setMemoryPressurePaused(false)
+        let generationAfterRecovery = indexer.passGeneration
+        NotificationCenter.default.post(name: NSApplication.didResignActiveNotification, object: nil)
+        for _ in 0..<20 {
+            if indexer.passGeneration > generationAfterRecovery { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertGreaterThan(
+            indexer.passGeneration,
+            generationAfterRecovery,
+            "Deactivation observer must still fire after recovering from memory pressure"
+        )
+
+        indexer.shutdown()
+        let generationAfterShutdown = indexer.passGeneration
+        NotificationCenter.default.post(name: NSApplication.didResignActiveNotification, object: nil)
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(indexer.passGeneration, generationAfterShutdown, "Terminal shutdown() must remove the deactivation observer")
+    }
+
     // MARK: - 5. CompletionEngine.instructPromptCost handles MLXLMCommon.TokenizerError.missingChatTemplate
 
     func testInstructPromptCostFallsBackOnMLXLMCommonMissingChatTemplate() {
@@ -309,18 +395,18 @@ private final class RetainmentTestKoreanFactory: KoreanNativeFactory, @unchecked
 }
 
 private actor YieldTestPersistence: KnowledgeSidecarPersisting {
-    private let passStarted: XCTestExpectation
+    private let passStarted: XCTestExpectation?
     private var paused = false
     private var continuation: CheckedContinuation<Void, Never>?
     private(set) var loadCount = 0
 
-    init(passStarted: XCTestExpectation) {
+    init(passStarted: XCTestExpectation?) {
         self.passStarted = passStarted
     }
 
     func load(scope: StoryMemoryScope) async -> KnowledgeSidecar {
         loadCount += 1
-        if !paused {
+        if let passStarted, !paused {
             paused = true
             passStarted.fulfill()
             await withCheckedContinuation { continuation = $0 }

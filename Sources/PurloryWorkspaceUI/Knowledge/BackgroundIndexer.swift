@@ -128,14 +128,14 @@ public final class BackgroundIndexer {
     @ObservationIgnored private var profileGeneration = 0
     private static let memoryPressureReason = "메모리가 부족해 읽기를 쉬고 있어요 — 여유가 생기면 다시 시도해 주세요"
 
-    /// Recovery only admits a later edit or explicit request; it never reloads a model.
+    /// Recovery only admits a later edit, deactivation, or explicit request; it never reloads a model.
     public func setMemoryPressurePaused(_ paused: Bool) {
         guard memoryPressurePaused != paused else { return }
         memoryPressurePaused = paused
         if paused {
             setContinuityCandidates([])
             let hadManualWork = manualPassToken != nil
-            shutdown()
+            cancelActiveWork()
             manualPassToken = nil
             transientClearTask?.cancel()
             manualPhase = hadManualWork ? .blocked(reason: Self.memoryPressureReason) : .idle
@@ -177,27 +177,59 @@ public final class BackgroundIndexer {
     }
     @ObservationIgnored private var resignActiveObserver: NSObjectProtocol?
     @ObservationIgnored private var foregroundCompletionBusy = false
+    @ObservationIgnored private var pendingIdleReschedule = false
+    @ObservationIgnored private var activeHydrateEntryID: UUID?
+    @ObservationIgnored private var activeHydrateForce = false
+    @ObservationIgnored private var pendingHydrateEntryID: UUID?
+    @ObservationIgnored private var pendingHydrateForce = false
 
     public func setForegroundCompletionBusy(_ busy: Bool) {
         foregroundCompletionBusy = busy
         originalNamePreparation.setForegroundBusy(busy)
-        guard busy else { return }
-        // Yield background indexing/profiling immediately so foreground Ghost never contends on GPU.
-        cancelProfiles()
-        passGeneration += 1
-        hydrateGeneration += 1
-        fastTimer?.cancel()
-        fastTimer = nil
-        deepTimer?.cancel()
-        deepTimer = nil
-        hydrateTask?.cancel()
-        hydrateTask = nil
-        passTask?.cancel()
-        passTask = nil
-        manualPassToken = nil
-        if case .queued = manualPhase { manualPhase = .idle }
-        else if case .reading = manualPhase { manualPhase = .idle }
-        setIsIndexing(false)
+        if busy {
+            // Yield background indexing/profiling immediately so foreground Ghost never contends on GPU,
+            // while preserving pending idle work and in-flight hydration to resume once Ghost finishes.
+            if !memoryPressurePaused {
+                if fastTimer != nil || deepTimer != nil || (passTask != nil && manualPassToken == nil) {
+                    pendingIdleReschedule = true
+                }
+                if hydrateTask != nil, let entryID = activeHydrateEntryID {
+                    pendingHydrateEntryID = entryID
+                    pendingHydrateForce = pendingHydrateForce || activeHydrateForce
+                }
+            }
+            cancelProfiles()
+            passGeneration += 1
+            hydrateGeneration += 1
+            fastTimer?.cancel()
+            fastTimer = nil
+            deepTimer?.cancel()
+            deepTimer = nil
+            hydrateTask?.cancel()
+            hydrateTask = nil
+            activeHydrateEntryID = nil
+            activeHydrateForce = false
+            passTask?.cancel()
+            passTask = nil
+            manualPassToken = nil
+            if case .queued = manualPhase { manualPhase = .idle }
+            else if case .reading = manualPhase { manualPhase = .idle }
+            setIsIndexing(false)
+            return
+        }
+        guard !memoryPressurePaused else { return }
+        let shouldReschedule = pendingIdleReschedule
+        pendingIdleReschedule = false
+        let hydrateEntryID = pendingHydrateEntryID
+        let hydrateForce = pendingHydrateForce
+        pendingHydrateEntryID = nil
+        pendingHydrateForce = false
+        if let hydrateEntryID {
+            hydrateIfNeeded(entryID: hydrateEntryID, force: hydrateForce)
+        }
+        if shouldReschedule, settings.autocompleteEnabled {
+            armIdleTimers()
+        }
     }
     private func prepareOriginalNameAnchors() {
         guard !memoryPressurePaused, originalNameAnchorsEnabled, let document = currentDocument(), document.isFiction else {
@@ -400,14 +432,9 @@ public final class BackgroundIndexer {
         }
     }
 
-    /// 앱 종료 직전 호출 — 유휴 타이머와 진행 패스를 접어, 엔진의 드레인이
-    /// 길어지지 않게 한다 (이슈 #65 Gate 0 teardown 세그폴트 수정). 종료 시점의
-    /// 백그라운드 이해는 어차피 버려질 결과다 — 원문은 flush로 이미 안전하다.
-    public func shutdown() {
-        if let resignActiveObserver {
-            NotificationCenter.default.removeObserver(resignActiveObserver)
-            self.resignActiveObserver = nil
-        }
+    /// Cancels in-flight tasks and timers without removing lifecycle observers so recoverable
+    /// pauses (such as memory pressure) can resume listening when pressure clears.
+    private func cancelActiveWork() {
         cancelProfiles()
         originalNamePreparation.shutdown()
         passGeneration += 1
@@ -418,11 +445,51 @@ public final class BackgroundIndexer {
         deepTimer = nil
         hydrateTask?.cancel()
         hydrateTask = nil
+        activeHydrateEntryID = nil
+        activeHydrateForce = false
+        pendingHydrateEntryID = nil
+        pendingHydrateForce = false
+        pendingIdleReschedule = false
         passTask?.cancel()
         passTask = nil
         resetTask?.cancel()
         resetTask = nil
         setIsIndexing(false)
+    }
+
+    /// 앱 종료 직전 호출 — 유휴 타이머와 진행 패스를 접어, 엔진의 드레인이
+    /// 길어지지 않게 한다 (이슈 #65 Gate 0 teardown 세그폴트 수정). 종료 시점의
+    /// 백그라운드 이해는 어차피 버려질 결과다 — 원문은 flush로 이미 안전하다.
+    public func shutdown() {
+        if let resignActiveObserver {
+            NotificationCenter.default.removeObserver(resignActiveObserver)
+            self.resignActiveObserver = nil
+        }
+        cancelActiveWork()
+    }
+
+    private func armIdleTimers() {
+        fastTimer?.cancel()
+        fastTimer = nil
+        deepTimer?.cancel()
+        deepTimer = nil
+        guard !memoryPressurePaused, settings.autocompleteEnabled else { return }
+        if foregroundCompletionBusy {
+            pendingIdleReschedule = true
+            return
+        }
+        fastTimer = Task { [weak self] in
+            try? await Task.sleep(for: Self.fastPassIdle)
+            guard !Task.isCancelled else { return }
+            self?.fastTimer = nil
+            self?.startPass(deep: false)
+        }
+        deepTimer = Task { [weak self] in
+            try? await Task.sleep(for: Self.deepPassIdle)
+            guard !Task.isCancelled else { return }
+            self?.deepTimer = nil
+            self?.startPass(deep: true)
+        }
     }
 
     // MARK: - 트리거
@@ -468,23 +535,11 @@ public final class BackgroundIndexer {
         // 디스크엔 있는데 UI가 못 본 것. 스냅샷 entryID 비교라 타이핑 중엔 O(1).
         hydrateIfNeeded(entryID: entryID)
 
-        fastTimer?.cancel()
-        deepTimer?.cancel()
         // 자동완성이 꺼져 있으면 타이머조차 감지 않는다 — 어차피 패스가 거부되고,
         // 키 입력 경로에 태스크 생성 비용을 남길 이유가 없다 (랙 진단의 대조군:
         // 스위치를 끄면 백그라운드 이해 관련 작업이 문자 그대로 0이어야 한다).
         // (웜 로드는 위에서 이미 했다 — 읽기 전용이라 스위치와 무관.)
-        guard settings.autocompleteEnabled else { return }
-        fastTimer = Task { [weak self] in
-            try? await Task.sleep(for: Self.fastPassIdle)
-            guard !Task.isCancelled else { return }
-            self?.startPass(deep: false)
-        }
-        deepTimer = Task { [weak self] in
-            try? await Task.sleep(for: Self.deepPassIdle)
-            guard !Task.isCancelled else { return }
-            self?.startPass(deep: true)
-        }
+        armIdleTimers()
     }
 
     /// Project/document selection changes invalidate ownership even when the editor text
@@ -511,8 +566,15 @@ public final class BackgroundIndexer {
         resetTask = nil
         hydrateTask?.cancel()
         hydrateTask = nil
+        activeHydrateEntryID = nil
+        activeHydrateForce = false
+        pendingHydrateEntryID = nil
+        pendingHydrateForce = false
+        pendingIdleReschedule = false
         fastTimer?.cancel()
+        fastTimer = nil
         deepTimer?.cancel()
+        deepTimer = nil
         setIsIndexing(false)
         snapshot = nil
         snapshotRuntimeIdentity = nil
@@ -552,6 +614,11 @@ public final class BackgroundIndexer {
     /// 조립해 수정이 즉시 보이게 한다 (LLM 없음, 결정적 재조립).
     private func hydrateIfNeeded(entryID: UUID, force: Bool = false) {
         guard !memoryPressurePaused else { return }
+        if foregroundCompletionBusy {
+            pendingHydrateEntryID = entryID
+            pendingHydrateForce = pendingHydrateForce || force
+            return
+        }
         guard let entry = currentDocument(), entry.id == entryID else { return }
         let scope = entry.scope
         let runtimeIdentity = entry.runtimeIdentity
@@ -571,19 +638,38 @@ public final class BackgroundIndexer {
         hydrateGeneration += 1
         let token = hydrateGeneration
         hydrateTask?.cancel()
+        activeHydrateEntryID = entryID
+        activeHydrateForce = force
         // 파싱·디스크 읽기를 메인에서 떼어낸다 (30만 자 파싱이 메인을 막지 않게).
         let persistence = sidecarPersistence
         hydrateTask = Task.detached(priority: .utility) { [weak self] in
+            func clearActiveHydrate() async {
+                await MainActor.run { [weak self] in
+                    guard let self, self.hydrateGeneration == token else { return }
+                    self.hydrateTask = nil
+                    self.activeHydrateEntryID = nil
+                    self.activeHydrateForce = false
+                }
+            }
             // Repeated typing cancels preparation before any whole-source read. Load/recovery
             // still hydrates immediately; foreground completion retains its existing priority.
             if waitForIdle {
-                do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
+                do { try await Task.sleep(for: .milliseconds(200)) } catch {
+                    await clearActiveHydrate()
+                    return
+                }
             }
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled else { await clearActiveHydrate(); return }
             let body = source.string
-            guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                await clearActiveHydrate()
+                return
+            }
             let outline = DocumentOutline.parse(body)
-            guard !outline.scenes.isEmpty, !Task.isCancelled else { return }
+            guard !outline.scenes.isEmpty, !Task.isCancelled else {
+                await clearActiveHydrate()
+                return
+            }
             let loadStart = CFAbsoluteTimeGetCurrent()
             let sidecar: KnowledgeSidecar
             if let prepared {
@@ -591,7 +677,10 @@ public final class BackgroundIndexer {
             } else {
                 sidecar = await persistence.load(scope: scope)
             }
-            guard !Task.isCancelled, sidecar.scope == scope else { return }
+            guard !Task.isCancelled, sidecar.scope == scope else {
+                await clearActiveHydrate()
+                return
+            }
             let loadMs = (CFAbsoluteTimeGetCurrent() - loadStart) * 1000
             let utterances = DialogueAttribution.utterances(in: body, cards: characters)
             let deriveStart = CFAbsoluteTimeGetCurrent()
@@ -610,6 +699,9 @@ public final class BackgroundIndexer {
                 guard let self else { return }
                 // 늦은 이전 hydrate는 현재 문서에만, 자기 토큰이 유효할 때만 (#82).
                 guard self.hydrateGeneration == token else { return }
+                self.hydrateTask = nil
+                self.activeHydrateEntryID = nil
+                self.activeHydrateForce = false
                 guard let current = self.currentDocument(), current.id == entryID,
                     current.scope == scope, current.runtimeIdentity == runtimeIdentity,
                     current.source.isSameVersion(as: source) || current.body == body
@@ -804,7 +896,13 @@ public final class BackgroundIndexer {
     }
 
     private func startPass(deep: Bool, userInitiated: Bool = false) {
-        guard !memoryPressurePaused, !foregroundCompletionBusy else { return }
+        guard !memoryPressurePaused else { return }
+        if foregroundCompletionBusy {
+            if !userInitiated, settings.autocompleteEnabled {
+                pendingIdleReschedule = true
+            }
+            return
+        }
         guard passTask == nil else { return }  // 이미 도는 중 — 중복 금지
         // 자동완성이 꺼져 있으면 지식도 만들지 않는다 — 백그라운드 이해가
         // 대용량 모델 다운로드를 유발해서는 안 된다 (폴더 명명과 같은 규칙).
