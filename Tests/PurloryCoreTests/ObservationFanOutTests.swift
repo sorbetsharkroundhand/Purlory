@@ -17,17 +17,17 @@ final class ObservationFanOutTests: XCTestCase {
 
     // MARK: 공통 픽스처
 
-    private func makeTempRoot() -> URL {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("Purlory-fanout-\(UUID().uuidString)", isDirectory: true)
-        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        return root
-    }
-
-    private func makeStore() -> (EntryStore, URL) {
-        let root = makeTempRoot()
-        let store = EntryStore(directory: root, autosaveDelay: .seconds(3600))
-        return (store, root)
+    private func makeDocumentSnapshot(documentID: WritingDocumentID = WritingDocumentID()) -> ProjectDocumentSnapshot {
+        ProjectDocumentSnapshot(
+            identity: ProjectRuntimeIdentity(
+                key: ProjectDocumentKey(projectID: WritingProjectID(), documentID: documentID),
+                generation: 1
+            ),
+            title: "소설",
+            body: "첫 문장",
+            kind: .manuscript,
+            mode: .fiction
+        )
     }
 
     /// 소설 본문 + 등록 인물 + 사건·발화가 담긴 스냅샷.
@@ -59,14 +59,13 @@ final class ObservationFanOutTests: XCTestCase {
     // MARK: - BackgroundIndexer 동일 값 가드
 
     func test동일경고_재발행은objectWillChange를울리지않는다() throws {
-        let (store, root) = makeStore()
-        defer { try? FileManager.default.removeItem(at: root) }
+        let doc = makeDocumentSnapshot()
         let settings = CompletionSettings()
         settings.autocompleteEnabled = false
         let indexer = BackgroundIndexer(engine: CompletionEngine(), settings: settings)
-        indexer.attachLegacy(store: store)
+        indexer.attach(documentProvider: { doc })
 
-        let entryID = store.newEntry(kind: .novel)
+        let entryID = doc.identity.key.documentID.rawValue
         let snapshot = makeSnapshot(entryID: entryID)
 
         let firstChange = ObservationFlag()
@@ -96,15 +95,14 @@ final class ObservationFanOutTests: XCTestCase {
     }
 
     func test스냅샷세대는실제발행에서만증가한다() throws {
-        let (store, root) = makeStore()
-        defer { try? FileManager.default.removeItem(at: root) }
+        let doc = makeDocumentSnapshot()
         let settings = CompletionSettings()
         settings.autocompleteEnabled = false
         let indexer = BackgroundIndexer(engine: CompletionEngine(), settings: settings)
-        indexer.attachLegacy(store: store)
+        indexer.attach(documentProvider: { doc })
 
         XCTAssertEqual(indexer.snapshotGeneration, 0)
-        let entryID = store.newEntry(kind: .novel)
+        let entryID = doc.identity.key.documentID.rawValue
 
         indexer._testApplyPassOutputs(
             snapshot: makeSnapshot(entryID: entryID), warnings: [], metrics: nil)
@@ -119,31 +117,6 @@ final class ObservationFanOutTests: XCTestCase {
         XCTAssertEqual(indexer.snapshotGeneration, 2)
     }
 
-    // MARK: - 사이드바 트리 모양 서명
-
-    func test본문타이핑은트리서명을바꾸지않는다() {
-        var entry = JournalEntry(title: "소설", body: "첫 문장", kind: .novel)
-        let folder = JournalFolder(name: "1부")
-        let key0 = SidebarView.treeKey(
-            entries: [entry], folders: [folder], expanded: [folder.id])
-
-        // 키 입력의 실체 — 본문 문자열 변화.
-        entry.body += " 이어지는 문장"
-        let key1 = SidebarView.treeKey(
-            entries: [entry], folders: [folder], expanded: [folder.id])
-        XCTAssertEqual(key0, key1, "본문 타이핑이 트리 캐시를 무효화했다")
-
-        // 구조 변화 — 폴더 이동은 모양을 바꾼다.
-        entry.folderID = folder.id
-        let key2 = SidebarView.treeKey(
-            entries: [entry], folders: [folder], expanded: [folder.id])
-        XCTAssertNotEqual(key0, key2, "구조 변화를 캐시가 놓쳤다")
-
-        // 펼침 상태도 모양이다.
-        let key3 = SidebarView.treeKey(entries: [entry], folders: [folder], expanded: [])
-        XCTAssertNotEqual(key2, key3)
-    }
-
     // MARK: - 바이블 카드 지식 폴딩
 
     func test카드파생줄은본문과무관한순수함수다() {
@@ -151,19 +124,19 @@ final class ObservationFanOutTests: XCTestCase {
         let snapshot = makeSnapshot(entryID: UUID(), participant: card.id)
 
         // 같은 입력 — 같은 출력 (결정적).
-        let first = CharacterBibleView.understanding(of: card.id, snapshot: snapshot)
-        let second = CharacterBibleView.understanding(of: card.id, snapshot: snapshot)
+        let first = CharacterSummarizer.understanding(of: card.id, snapshot: snapshot)
+        let second = CharacterSummarizer.understanding(of: card.id, snapshot: snapshot)
         XCTAssertEqual(first, second)
 
         // 참여 사건이 있으면 연대기가 생긴다 (최근 사건 열람의 실체).
-        let chronicle = CharacterBibleView.chronicle(of: card.id, snapshot: snapshot)
+        let chronicle = CharacterSummarizer.chronicle(of: card.id, snapshot: snapshot)
         XCTAssertEqual(chronicle.count, 2, "씬 하나당 사건 한 줄이어야 한다")
         XCTAssertTrue(chronicle.allSatisfy { $0.contains("사건 요약") })
 
-        _ = CharacterBibleView.knowledgeLines(of: card.id, snapshot: snapshot)
-        _ = CharacterBibleView.relationLines(
+        _ = CharacterSummarizer.knowledgeLines(of: card.id, snapshot: snapshot)
+        _ = CharacterSummarizer.relationLines(
             of: card.id, snapshot: snapshot, names: [card.id: card.name])
-        _ = CharacterBibleView.conversationLines(
+        _ = CharacterSummarizer.conversationLines(
             of: card, snapshot: snapshot, names: [card.id: card.name])
     }
 

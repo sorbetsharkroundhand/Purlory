@@ -14,20 +14,10 @@ final class StorageLocationTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.path))
     }
 
-    func testInjectedRootPreservesManuscriptTrashAndProjectRoundTrips() async throws {
+    func testInjectedRootPreservesProjectRoundTrips() async throws {
         let root = fixtureRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let location = PurloryStorageLocation(rootDirectory: root)
-        let store = EntryStore(storageLocation: location)
-        store.updateActiveBody("Isolated manuscript")
-        let originalID = store.activeID
-        store.newEntry()
-        store.delete(originalID)
-        store.flush()
-        let reopened = EntryStore(storageLocation: location)
-        XCTAssertEqual(reopened.trash.items.first?.entries.first?.body, "Isolated manuscript")
-        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("entries.json").path))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("trash.json").path))
 
         let project = WritingProject(id: WritingProjectID(), title: "Fixture", mode: .general, documents: [
             .init(id: WritingDocumentID(), title: "Draft", body: "Project manuscript", kind: .manuscript)

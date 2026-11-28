@@ -203,7 +203,6 @@ final class ProjectEditorTransitionTests: XCTestCase {
 private final class ProjectPositionViewHarness {
     let fixture: LegacyBoundaryFixture
     let positionStore: WritingPositionStore
-    let legacyWorkspace: LegacyWorkspaceController
     let completion: CompletionController
     let indexer: BackgroundIndexer
     let window: LegacyUndoWindow
@@ -213,7 +212,6 @@ private final class ProjectPositionViewHarness {
         fixture = try await LegacyBoundaryFixture()
         positionStore = WritingPositionStore(
             defaults: fixture.defaults, persistDelay: .seconds(3600))
-        legacyWorkspace = LegacyWorkspaceController(session: fixture.session)
         let settings = CompletionSettings(defaults: fixture.defaults)
         completion = CompletionController(settings: settings)
         indexer = BackgroundIndexer(engine: CompletionEngine(), settings: settings)

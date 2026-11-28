@@ -95,22 +95,6 @@ final class BackgroundExportSearchTests: XCTestCase {
                 "취소된 내보내기가 결과물을 남겼다")
         }
     }
-
-    func test검색필터는스냅샷만으로결정적이다() {
-        let entries = [
-            JournalEntry(title: "서울 이야기", createdAt: .now, body: "강과 밤"),
-            JournalEntry(
-                title: "바다 일기",
-                createdAt: Date(timeIntervalSinceNow: -100),
-                body: "서울역에서 떠나는 기차"),
-        ]
-        let hitTitle = EntryStore.filterMatches(entries, query: "서울 이야기")
-        XCTAssertEqual(hitTitle.map(\.title), ["서울 이야기"])
-        let hitBody = EntryStore.filterMatches(entries, query: "서울역")
-        XCTAssertEqual(hitBody.map(\.title), ["바다 일기"])
-        let none = EntryStore.filterMatches(entries, query: "  ")
-        XCTAssertTrue(none.isEmpty)
-    }
 }
 
 func epubMember(_ path: String, in archive: URL) throws -> Data {

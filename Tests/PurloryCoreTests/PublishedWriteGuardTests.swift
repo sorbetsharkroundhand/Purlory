@@ -15,16 +15,22 @@ import XCTest
 final class PublishedWriteGuardTests: XCTestCase {
 
     func test유휴상태선점은published변화를만들지않는다() throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("Purlory-pub-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-
-        let store = EntryStore(directory: root, autosaveDelay: .seconds(3600))
         let settings = CompletionSettings()
         settings.autocompleteEnabled = false
+        let projectID = WritingProjectID()
+        let documentID = WritingDocumentID()
+        let snapshot = ProjectDocumentSnapshot(
+            identity: ProjectRuntimeIdentity(
+                key: ProjectDocumentKey(projectID: projectID, documentID: documentID),
+                generation: 1
+            ),
+            title: "소설",
+            body: "초판",
+            kind: .manuscript,
+            mode: .fiction
+        )
         let indexer = BackgroundIndexer(engine: CompletionEngine(), settings: settings)
-        indexer.attachLegacy(store: store)
+        indexer.attach(documentProvider: { snapshot })
 
         let change = ObservationFlag()
         withObservationTracking {
@@ -33,7 +39,7 @@ final class PublishedWriteGuardTests: XCTestCase {
         } onChange: { change.mark() }
 
         // 패스가 도는 중이 아닐 때의 연속 선점 — 상태 변화가 없어야 한다.
-        let id = store.newEntry(kind: .novel)
+        let id = documentID.rawValue
         indexer.noteChange(entryID: id)
         indexer.noteChange(entryID: id)
 

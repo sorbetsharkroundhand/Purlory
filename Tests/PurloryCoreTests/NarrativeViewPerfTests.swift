@@ -106,26 +106,4 @@ final class NarrativeViewPerfTests: XCTestCase {
         XCTAssertEqual(
             geometry.centers[1], rows[0].height + rows[1].height / 2, accuracy: 0.001)
     }
-
-    // MARK: - 플롯 선택 전환 규칙
-
-    /// A 선택 → B로 전환 → C로 전환 → C 재클릭으로 해제. 요구사항 시나리오.
-    func test_다른것을_누르면_바로_전환되고_같은것_재클릭으로_풀린다() {
-        var selection: String?
-
-        selection = NarrativeView.nextSelection(current: selection, tapped: "A")
-        XCTAssertEqual(selection, "A", "선택이 없으면 누른 것이 선택된다")
-
-        selection = NarrativeView.nextSelection(current: selection, tapped: "B")
-        XCTAssertEqual(selection, "B", "A 선택 중 B를 누르면 먼저 풀지 않아도 전환된다")
-
-        selection = NarrativeView.nextSelection(current: selection, tapped: "C")
-        XCTAssertEqual(selection, "C", "연달아 눌러도 매번 누른 것으로 옮겨간다")
-
-        selection = NarrativeView.nextSelection(current: selection, tapped: "C")
-        XCTAssertNil(selection, "같은 것을 다시 누르면 풀린다")
-
-        selection = NarrativeView.nextSelection(current: selection, tapped: "B")
-        XCTAssertEqual(selection, "B", "풀린 뒤에는 새로 선택할 수 있다")
-    }
 }

@@ -218,45 +218,62 @@ final class IndexerOwnershipTests: XCTestCase {
         withExtendedLifetime(subscription) {}
     }
 
-    private var root: URL!
-    private var store: EntryStore!
+    @MainActor
+    private final class DocumentBox {
+        var value: ProjectDocumentSnapshot?
+    }
+
+    private var activeDocumentBox: DocumentBox!
     private var indexer: BackgroundIndexer!
 
     override func setUpWithError() throws {
-        root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("Purlory-own-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         // 동기 XCTest 훅의 실행 순서를 유지하며 액터 소유 객체만 지역 값으로 넘긴다.
-        let directory = root!
         let fixture = MainActor.assumeIsolated {
-            let store = EntryStore(directory: directory, autosaveDelay: .seconds(3600))
+            let box = DocumentBox()
             let settings = CompletionSettings()
             settings.autocompleteEnabled = false  // 네트워크 유발 방지
             let indexer = BackgroundIndexer(engine: CompletionEngine(), settings: settings)
-            indexer.attachLegacy(store: store)
-            return (store, indexer)
+            indexer.attach(documentProvider: { box.value })
+            return (box, indexer)
         }
-        store = fixture.0
+        activeDocumentBox = fixture.0
         indexer = fixture.1
     }
 
     override func tearDownWithError() throws {
-        try? FileManager.default.removeItem(at: root)
+        let currentIndexer = indexer
+        let currentBox = activeDocumentBox
+        indexer = nil
+        activeDocumentBox = nil
+        MainActor.assumeIsolated {
+            currentIndexer?.shutdown()
+            currentBox?.value = nil
+        }
     }
 
     @discardableResult
     @MainActor
-    private func makeNovel() -> UUID {
-        let id = store.newEntry(kind: .novel)
-        store.select(id)
-        return id
+    private func makeNovel(body: String = "") -> UUID {
+        let projectID = WritingProjectID()
+        let documentID = WritingDocumentID()
+        activeDocumentBox.value = ProjectDocumentSnapshot(
+            identity: ProjectRuntimeIdentity(
+                key: ProjectDocumentKey(projectID: projectID, documentID: documentID),
+                generation: 1
+            ),
+            title: "소설",
+            body: body,
+            kind: .manuscript,
+            mode: .fiction
+        )
+        return documentID.rawValue
     }
 
     // MARK: - 세대 증가 (선점)
 
     @MainActor
     func test선점마다세대가올라간다() {
-        let id = store.newEntry(kind: .novel)
+        let id = makeNovel()
         let before = indexer.passGeneration
 
         indexer.noteChange(entryID: id)
@@ -323,13 +340,21 @@ final class IndexerOwnershipTests: XCTestCase {
 
     @MainActor
     func test같은문서v1_v2편집은v1발행을막는다() {
-        let id = makeNovel()
+        let id = makeNovel(body: "# 1장\n초판")
         let v1 = "# 1장\n초판"
         let token1 = indexer._testBeginPassForOwnership(entryID: id, body: v1)
         let hashV1 = indexer.passBodyHash
 
         // 본문 편집 → noteChange 재진입 (실제 편집 경로).
-        store.updateActiveBody("# 1장\n개정판")
+        if let current = activeDocumentBox.value {
+            activeDocumentBox.value = ProjectDocumentSnapshot(
+                identity: ProjectRuntimeIdentity(key: current.identity.key, generation: current.identity.generation + 1),
+                title: current.title,
+                body: "# 1장\n개정판",
+                kind: current.kind,
+                mode: current.mode
+            )
+        }
         indexer.noteChange(entryID: id)
         let token2 = indexer._testBeginPassForOwnership(entryID: id, body: "# 1장\n개정판")
 
@@ -366,22 +391,32 @@ final class IndexerOwnershipTests: XCTestCase {
 
     @MainActor
     func test프로젝트전환후늦은결과는sidecar를쓰지않는다() async {
-        let id = makeNovel()
-        let scopeA = StoryMemoryScope.project(
-            projectID: WritingProjectID(), documentID: WritingDocumentID(rawValue: id))
-        let scopeB = StoryMemoryScope.project(
-            projectID: WritingProjectID(), documentID: WritingDocumentID(rawValue: id))
+        let documentID = WritingDocumentID()
+        let projectA = WritingProjectID()
+        let projectB = WritingProjectID()
+        let scopeA = StoryMemoryScope.project(projectID: projectA, documentID: documentID)
         let persistence = RecordingSidecarPersistence()
         let settings = CompletionSettings()
         settings.autocompleteEnabled = false
-        var currentScope = scopeA
+        var currentProject = projectA
         let scopedIndexer = BackgroundIndexer(
             engine: CompletionEngine(), settings: settings, sidecarPersistence: persistence)
-        scopedIndexer.attachLegacy(store: store) { _ in currentScope }
+        scopedIndexer.attach(documentProvider: {
+            ProjectDocumentSnapshot(
+                identity: ProjectRuntimeIdentity(
+                    key: ProjectDocumentKey(projectID: currentProject, documentID: documentID),
+                    generation: 1
+                ),
+                title: "소설",
+                body: "draft",
+                kind: .manuscript,
+                mode: .fiction
+            )
+        })
         let identity = scopedIndexer._testBeginPassForOwnership(scope: scopeA, body: "draft")
 
-        currentScope = scopeB
-        scopedIndexer.noteScopeChange(entryID: id)
+        currentProject = projectB
+        scopedIndexer.noteScopeChange(entryID: documentID.rawValue)
         let committed = await scopedIndexer._testCommitSidecar(
             KnowledgeSidecar(scope: scopeA), identity: identity)
         let saveCount = await persistence.saveCount
@@ -392,15 +427,26 @@ final class IndexerOwnershipTests: XCTestCase {
 
     @MainActor
     func test취소후늦은결과는sidecar를쓰지않는다() async {
-        let id = makeNovel()
-        let scope = StoryMemoryScope.legacy(
-            documentID: WritingDocumentID(rawValue: id))
+        let projectID = WritingProjectID()
+        let documentID = WritingDocumentID()
+        let scope = StoryMemoryScope.project(projectID: projectID, documentID: documentID)
         let persistence = RecordingSidecarPersistence()
         let settings = CompletionSettings()
         settings.autocompleteEnabled = false
         let scopedIndexer = BackgroundIndexer(
             engine: CompletionEngine(), settings: settings, sidecarPersistence: persistence)
-        scopedIndexer.attachLegacy(store: store) { _ in scope }
+        scopedIndexer.attach(documentProvider: {
+            ProjectDocumentSnapshot(
+                identity: ProjectRuntimeIdentity(
+                    key: ProjectDocumentKey(projectID: projectID, documentID: documentID),
+                    generation: 1
+                ),
+                title: "소설",
+                body: "draft",
+                kind: .manuscript,
+                mode: .fiction
+            )
+        })
         let identity = scopedIndexer._testBeginPassForOwnership(scope: scope, body: "draft")
         scopedIndexer._testSetManualPhase(.queued, token: identity.generation)
 
@@ -417,8 +463,7 @@ final class IndexerOwnershipTests: XCTestCase {
 
     @MainActor
     func testhydrate세대도요청마다올라간다() {
-        let id = makeNovel()
-        store.updateActiveBody("# 1장\n내용이 충분히 긴 본문")
+        let id = makeNovel(body: "# 1장\n내용이 충분히 긴 본문")
         let before = indexer.hydrateGeneration
         indexer.rehydrate(entryID: id)
         XCTAssertEqual(indexer.hydrateGeneration, before + 1)
